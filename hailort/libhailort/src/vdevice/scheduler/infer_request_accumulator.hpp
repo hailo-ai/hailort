@@ -11,7 +11,7 @@
 #ifndef _HAILO_INFER_REQUEST_ACCUMULATOR_HPP_
 #define _HAILO_INFER_REQUEST_ACCUMULATOR_HPP_
 
-#include "vdma/channel/transfer_common.hpp"
+#include "vdma/transfer_common.hpp"
 
 #include <mutex>
 #include <condition_variable>

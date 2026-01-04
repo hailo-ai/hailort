@@ -38,7 +38,7 @@ def _verify_pyhailort_lib_exists():
         raise MissingPyHRTLib(f"{path} should include a _pyhailort library (_pyhailort*{python_version}*.{lib_extension}). Includes: {pprint.pformat(list(pathlib.Path(path).iterdir()))}")
 _verify_pyhailort_lib_exists()
 
-__version__ = "5.1.1"
+__version__ = "5.2.0"
 def _verify_version():
     if _pyhailort.__version__ != __version__:
         raise ImportError(

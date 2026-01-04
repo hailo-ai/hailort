@@ -112,7 +112,7 @@ Expected<ConfiguredInferModel> InferModelHrpcClient::configure()
         "Lost comunication with the server. This may happen if VDevice is released while the InferModel is in use.");
     TRY(auto result, client->execute_request(static_cast<uint32_t>(HailoRpcActionID::INFER_MODEL__CREATE_CONFIGURED_INFER_MODEL),
         MemoryView(request_buffer->data(), request_size), {}, {}, LONG_RPC_ACTION_TIMEOUT));
-    TRY(auto tuple, CreateConfiguredInferModelSerializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size)));
+    TRY(auto tuple, CreateConfiguredInferModelSerializer::deserialize_reply(MemoryView(result.body.data(), result.header.size)));
     auto configured_infer_model_handle = std::get<0>(tuple);
     auto async_queue_size = std::get<1>(tuple);
 

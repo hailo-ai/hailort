@@ -31,6 +31,9 @@ public:
     void mark_vdevice_for_close(uint32_t client_id);
     void remove_vdevice(uint32_t client_id);
 
+    hailo_status mark_kv_cache_in_use();
+    void unmark_kv_cache_in_use();
+
 private:
     std::string m_active_vdevice_group_id;
     std::set<uint32_t> m_active_clients_with_vdevice;
@@ -38,6 +41,9 @@ private:
     std::queue<uint32_t> m_requesting_clients_queue;
     std::mutex m_vdevice_clients_mutex;
     std::condition_variable m_vdevice_clients_cv;
+
+    bool m_is_kv_cache_in_use;
+    std::mutex m_kv_cache_mutex;
 };
 
 struct RunAsyncInfo
@@ -97,6 +103,7 @@ public:
     hailo_status handle_device_set_notification_callback(const MemoryView&, ClientConnectionPtr, ResponseWriter);
     hailo_status handle_device_remove_notification_callback(const MemoryView&, ClientConnectionPtr, ResponseWriter);
     hailo_status handle_device_fetch_logs(const MemoryView&, ClientConnectionPtr, ResponseWriter);
+    hailo_status handle_system_reset(const MemoryView&, ClientConnectionPtr, ResponseWriter);
 
     friend class ConfiguredInferModelRunAsyncHandler;
     friend class ConfiguredInferModelRunAsyncForDurationHandler;

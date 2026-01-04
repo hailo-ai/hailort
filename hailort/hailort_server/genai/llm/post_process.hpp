@@ -15,7 +15,7 @@
 
 #include "hailo/genai/llm/llm.hpp"
 
-#include "eigen.hpp"
+#include "common/genai/eigen.hpp"
 #include <vector>
 #include <unordered_set>
 #include <random>

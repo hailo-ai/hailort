@@ -45,7 +45,7 @@ public:
 private:
     const uint32_t m_framerate;
     const std::chrono::duration<double> m_framerate_interval;
-    decltype(std::chrono::steady_clock::now()) m_last_write_time;
+    std::chrono::time_point<std::chrono::steady_clock> m_next_time;
 };
 
 // Wrapper for InputStream or InputVStream objects.

@@ -12,7 +12,7 @@
 
 #include "hailo/infer_model.hpp"
 #include "hrpc_protocol/serializer.hpp"
-#include "vdma/channel/transfer_common.hpp"
+#include "vdma/transfer_common.hpp"
 #include "hrpc/rpc_connection.hpp"
 
 namespace hailort

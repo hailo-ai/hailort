@@ -38,12 +38,8 @@ std::string_view Speech2TextParams::hef() const
     return m_hef_path;
 }
 
-Speech2TextGeneratorParams::Speech2TextGeneratorParams() :
-    m_task(Speech2TextTask::TRANSCRIBE), m_language(SPEECH2TEXT_DEFAULT_LANGUAGE)
-{}
-
-Speech2TextGeneratorParams::Speech2TextGeneratorParams(Speech2TextTask task, std::string_view language) :
-    m_task(task), m_language(language)
+Speech2TextGeneratorParams::Speech2TextGeneratorParams(Speech2TextTask task, std::string_view language, float32_t repetition_penalty) :
+    m_task(task), m_language(language), m_repetition_penalty(repetition_penalty)
 {}
 
 hailo_status Speech2TextGeneratorParams::set_task(Speech2TextTask task)
@@ -54,8 +50,13 @@ hailo_status Speech2TextGeneratorParams::set_task(Speech2TextTask task)
 
 hailo_status Speech2TextGeneratorParams::set_language(std::string_view language)
 {
-    // TODO: HRT-18727 - Add language validation
     m_language = language;
+    return HAILO_SUCCESS;
+}
+
+hailo_status Speech2TextGeneratorParams::set_repetition_penalty(float32_t repetition_penalty)
+{
+    m_repetition_penalty = repetition_penalty;
     return HAILO_SUCCESS;
 }
 
@@ -67,6 +68,11 @@ Speech2TextTask Speech2TextGeneratorParams::task() const
 std::string_view Speech2TextGeneratorParams::language() const
 {
     return m_language;
+}
+
+float32_t Speech2TextGeneratorParams::repetition_penalty() const
+{
+    return m_repetition_penalty;
 }
 
 Speech2Text::Speech2Text(std::unique_ptr<Impl> pimpl) :
@@ -111,8 +117,8 @@ Expected<std::vector<int>> Speech2Text::tokenize(const std::string &text)
     return m_pimpl->tokenize(text);
 }
 
-Speech2Text::Impl::Impl(std::shared_ptr<SessionWrapper> session, const Speech2TextParams &speech2text_params) :
-    m_session(session), m_speech2text_params(speech2text_params)
+Speech2Text::Impl::Impl(std::shared_ptr<SessionWrapper> session, const Speech2TextParams &speech2text_params, Speech2TextGeneratorParams &&default_generator_params) :
+    m_session(session), m_speech2text_params(speech2text_params), m_default_generator_params(std::move(default_generator_params))
 {}
 
 Speech2Text::Impl::~Impl()
@@ -146,16 +152,16 @@ Expected<std::unique_ptr<Speech2Text::Impl>> Speech2Text::Impl::create_unique(st
     TRY(auto hef_data, read_binary_file(std::string(speech2text_params.hef()), BufferStorageParams::create_dma()));
     write_buffers.push_back(MemoryView(hef_data));
     TRY(auto create_speech2text_reply, session_wrapper->execute(write_buffers));
-    CHECK_SUCCESS_AS_EXPECTED(Speech2TextCreateSerializer::deserialize_reply(MemoryView(*create_speech2text_reply)), "Failed to create Speech2Text");
+    TRY(auto default_generator_params, Speech2TextCreateSerializer::deserialize_reply(MemoryView(*create_speech2text_reply)));
 
-    auto speech2text_ptr = make_unique_nothrow<Impl>(session_wrapper, speech2text_params);
+    auto speech2text_ptr = make_unique_nothrow<Impl>(session_wrapper, speech2text_params, std::move(default_generator_params));
     CHECK_NOT_NULL_AS_EXPECTED(speech2text_ptr, HAILO_OUT_OF_HOST_MEMORY);
     return speech2text_ptr;
 }
 
 Expected<Speech2TextGeneratorParams> Speech2Text::Impl::create_generator_params()
 {
-    Speech2TextGeneratorParams generator_params;
+    Speech2TextGeneratorParams generator_params = m_default_generator_params;
     return generator_params;
 }
 
@@ -185,6 +191,8 @@ Expected<std::vector<Speech2Text::SegmentInfo>> Speech2Text::Impl::generate_impl
     const Speech2TextGeneratorParams &generator_params, std::chrono::milliseconds timeout)
 {
     (void)timeout; // TODO: HRT-18570 - Support timeout
+
+    CHECK(generator_params.repetition_penalty() > 0.0f, HAILO_INVALID_ARGUMENT, "Repetition penalty must be greater than 0. Got {}", generator_params.repetition_penalty());
 
     TRY(auto generate_request, Speech2TextGenerateSerializer::serialize_request(generator_params));
     std::vector<MemoryView> write_buffers = { MemoryView(generate_request) };

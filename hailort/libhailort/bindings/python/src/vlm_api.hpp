@@ -33,10 +33,10 @@ public:
 
     std::shared_ptr<LLMGeneratorCompletionWrapper> generate(const genai::LLMGeneratorParams &params,
         const std::vector<std::string> &messages_json_strings,
-        std::vector<py::array> &input_frames);
+        std::vector<py::array> &input_frames, std::vector<std::vector<py::array>> &input_videos);
 
     std::shared_ptr<LLMGeneratorCompletionWrapper> generate(const genai::LLMGeneratorParams &params,
-        const std::string &prompt, std::vector<py::array> &input_frames);
+        const std::string &prompt, std::vector<py::array> &input_frames, std::vector<std::vector<py::array>> &input_videos);
 
     // Misc controls
     std::vector<int> tokenize(const std::string &prompt);

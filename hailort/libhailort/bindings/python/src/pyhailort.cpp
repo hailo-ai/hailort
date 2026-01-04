@@ -190,10 +190,7 @@ PYBIND11_MODULE(_pyhailort, m) {
         .def_readonly("mask_size", &hailo_detection_with_byte_mask_t::mask_size)
         .def_readonly("score", &hailo_detection_with_byte_mask_t::score)
         .def_readonly("class_id", &hailo_detection_with_byte_mask_t::class_id)
-        .def("mask", [](const hailo_detection_with_byte_mask_t &detection) -> py::array {
-            auto shape = *py::array::ShapeContainer({detection.mask_size});
-            return py::array(py::dtype("uint8"), shape, detection.mask);
-        })
+        .def_readonly("mask_offset", &hailo_detection_with_byte_mask_t::mask_offset)
         ;
 
     py::class_<hailo_detection_t>(m, "Detection")
@@ -213,6 +210,7 @@ PYBIND11_MODULE(_pyhailort, m) {
         .value("HAILO15L", HAILO_ARCH_HAILO15L)
         .value("HAILO15M", HAILO_ARCH_HAILO15M)
         .value("HAILO10H", HAILO_ARCH_HAILO10H)
+        .value("HAILO12L", HAILO_ARCH_HAILO12L)
     ;
 
     /* TODO: SDK-15648 */
@@ -282,6 +280,7 @@ PYBIND11_MODULE(_pyhailort, m) {
         UNION_PROPERTY(hailo_notification_message_parameters_t, hailo_health_monitor_lcu_ecc_error_notification_message_t, health_monitor_lcu_ecc_error_notification)
         UNION_PROPERTY(hailo_notification_message_parameters_t, hailo_health_monitor_cpu_ecc_notification_message_t, health_monitor_cpu_ecc_notification)
         UNION_PROPERTY(hailo_notification_message_parameters_t, hailo_health_monitor_clock_changed_notification_message_t, health_monitor_clock_changed_notification)
+        UNION_PROPERTY(hailo_notification_message_parameters_t, hailo_throttling_state_change_message_t, throttling_state_change)
         ;
 
     py::enum_<hailo_overcurrent_protection_overcurrent_zone_t>(m, "OvercurrentAlertState")
@@ -340,6 +339,10 @@ PYBIND11_MODULE(_pyhailort, m) {
         .def_readonly("current_clock", &hailo_health_monitor_clock_changed_notification_message_t::current_clock)
         ;
 
+    py::class_<hailo_throttling_state_change_message_t>(m, "ThrottlingStateChangeMessage")
+        .def_readonly("new_state", &hailo_throttling_state_change_message_t::new_state)
+        ;
+
     py::enum_<hailo_notification_id_t>(m, "NotificationId")
         .value("ETHERNET_RX_ERROR", HAILO_NOTIFICATION_ID_ETHERNET_RX_ERROR)
         .value("HEALTH_MONITOR_TEMPERATURE_ALARM", HAILO_NOTIFICATION_ID_HEALTH_MONITOR_TEMPERATURE_ALARM)
@@ -351,6 +354,8 @@ PYBIND11_MODULE(_pyhailort, m) {
         .value("HEALTH_MONITOR_CPU_ECC_FATAL",  HAILO_NOTIFICATION_ID_CPU_ECC_FATAL)
         .value("DEBUG", HAILO_NOTIFICATION_ID_DEBUG)
         .value("CONTEXT_SWITCH_BREAKPOINT_REACHED", HAILO_NOTIFICATION_ID_CONTEXT_SWITCH_BREAKPOINT_REACHED)
+        .value("THROTTLING_STATE_CHANGE_EVENT", HAILO_NOTIFICATION_ID_THROTTLING_STATE_CHANGE_EVENT)
+        .value("NN_CORE_CRC_ERROR_EVENT", HAILO_NOTIFICATION_ID_NN_CORE_CRC_ERROR_EVENT)
         .value("HEALTH_MONITOR_CLOCK_CHANGED_EVENT", HAILO_NOTIFICATION_ID_HEALTH_MONITOR_CLOCK_CHANGED_EVENT)
         ;
 
@@ -429,6 +434,7 @@ PYBIND11_MODULE(_pyhailort, m) {
         .value("NN_CORE", HAILO_RESET_DEVICE_MODE_NN_CORE)
         .value("SOFT", HAILO_RESET_DEVICE_MODE_SOFT)
         .value("FORCED_SOFT", HAILO_RESET_DEVICE_MODE_FORCED_SOFT)
+        .value("REBOOT", HAILO_RESET_DEVICE_MODE_REBOOT)
         ;
 
     py::enum_<hailo_stream_direction_t>(m, "StreamDirection")
@@ -871,9 +877,9 @@ PYBIND11_MODULE(_pyhailort, m) {
         .def_readwrite("sin_port", &sockaddr_in::sin_port)
         ;
 
-    py::register_exception<HailoRTException>(m, "HailoRTException");
-    py::register_exception<HailoRTCustomException>(m, "HailoRTCustomException");
-    py::register_exception<HailoRTStatusException>(m, "HailoRTStatusException");
+    auto hailo_rt_exception = py::register_exception<HailoRTException>(m, "HailoRTException");
+    py::register_exception<HailoRTCustomException>(m, "HailoRTCustomException", hailo_rt_exception);
+    py::register_exception<HailoRTStatusException>(m, "HailoRTStatusException", hailo_rt_exception);
 
     py::enum_<hailo_cpu_id_t>(m, "CpuId")
         .value("CPU0", HAILO_CPU_ID_0)

@@ -290,6 +290,8 @@ NetworkApp::NetworkApp(const std::string &description, const std::string &name) 
 
     auto run_params = add_option_group("Run Parameters");
     run_params->add_option("--framerate", m_params.framerate, "Input vStreams framerate")->default_val(UNLIMITED_FRAMERATE);
+    run_params->add_flag("--print-ops", m_params.should_print_ops, "Print NN-Core OPS (Operations Per Second)")
+        ->default_val(false);
 
     auto vstream_subcommand = add_io_app_subcom<VStreamApp>("Set vStream", "set-vstream", hef_path_option, net_group_name_option);
     auto stream_subcommand = add_io_app_subcom<StreamApp>("Set Stream", "set-stream", hef_path_option, net_group_name_option);
@@ -346,10 +348,8 @@ private:
     void add_measure_fw_actions_subcom();
     void add_net_app_subcom();
 
-    bool is_ethernet_device() const;
     void validate_and_set_scheduling_algorithm();
     void validate_mode_supports_service();
-    void validate_measurements_supported();
 
     std::vector<NetworkParams> m_network_params;
     uint32_t m_time_to_run;
@@ -447,7 +447,6 @@ Run2::Run2() : CLI::App("Run networks", "run2")
     parse_complete_callback([this]() {
         validate_and_set_scheduling_algorithm();
         validate_mode_supports_service();
-        validate_measurements_supported();
     });
 }
 
@@ -604,22 +603,6 @@ const std::string &Run2::get_output_json_path()
     return m_stats_json_path;
 }
 
-static bool is_valid_ip(const std::string &ip)
-{
-    int a,b,c,d;
-    return (4 == sscanf(ip.c_str(),"%d.%d.%d.%d", &a, &b, &c, &d)) &&
-        IS_FIT_IN_UINT8(a) && IS_FIT_IN_UINT8(b) && IS_FIT_IN_UINT8(c) && IS_FIT_IN_UINT8(d);
-}
-
-bool Run2::is_ethernet_device() const
-{
-    if (m_device_ids.empty()) {
-        // By default, if no device ids are given we don't scan for ethernet devices.
-        return false;
-    }
-    return is_valid_ip(m_device_ids[0]);
-}
-
 void Run2::validate_mode_supports_service()
 {
     if (m_multi_process_service) {
@@ -628,14 +611,6 @@ void Run2::validate_mode_supports_service()
     }
 }
 
-void Run2::validate_measurements_supported()
-{
-    if (is_ethernet_device()) {
-        PARSE_CHECK(!m_measure_power, "Power measurement is not supported on Ethernet devices");
-        PARSE_CHECK(!m_measure_current, "Current measurement is not supported on Ethernet devices");
-        PARSE_CHECK(!m_measure_temp, "Temperature measurement is not supported on Ethernet devices");
-    }
-}
 
 void Run2::validate_and_set_scheduling_algorithm()
 {

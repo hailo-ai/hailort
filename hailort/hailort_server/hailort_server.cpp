@@ -64,15 +64,11 @@ Expected<std::unique_ptr<VDevice>> VDeviceManager::create_vdevice(const hailo_vd
 
         if ((no_active_clients && has_pending_close_clients && is_same_vdevice_group) || is_unique_vdevice_group) {
             m_requesting_clients_queue.push(client_id);
-            auto wait_result = m_vdevice_clients_cv.wait_for(lock, WAIT_FOR_VDEVICE_TIMEOUT, [this, client_id, is_unique_vdevice_group] () {
-                // If creating a unique VDevice, wait for no active clients
-                if (is_unique_vdevice_group) {
-                    return (m_active_clients_with_vdevice.size() == 0);
-                }
-                return (m_pending_close_clients_with_vdevice.size() == 0) && (m_requesting_clients_queue.front() == client_id);
+            auto wait_result = m_vdevice_clients_cv.wait_for(lock, WAIT_FOR_VDEVICE_TIMEOUT, [this, client_id] () {
+                return (m_active_clients_with_vdevice.size() == 0) && (m_pending_close_clients_with_vdevice.size() == 0) && (m_requesting_clients_queue.front() == client_id);
             });
             m_requesting_clients_queue.pop();
-            CHECK_AS_EXPECTED(wait_result, HAILO_DEVICE_IN_USE, "VDevice is in use");
+            CHECK(wait_result, HAILO_DEVICE_IN_USE, "VDevice is in use, timed out waiting for it");
         }
 
         auto vdevice_expected = VDevice::create(params);
@@ -118,6 +114,28 @@ void VDeviceManager::remove_vdevice(uint32_t client_id)
         }
     }
     m_vdevice_clients_cv.notify_all();
+}
+
+hailo_status VDeviceManager::mark_kv_cache_in_use()
+{
+    std::lock_guard<std::mutex> lock(m_kv_cache_mutex);
+    if (m_is_kv_cache_in_use) {
+        LOGGER__ERROR("KV-Cache is already in use!");
+        return HAILO_INVALID_OPERATION;
+    }
+
+    LOGGER__INFO("Marking KV-Cache in use");
+    m_is_kv_cache_in_use = true;
+    return HAILO_SUCCESS;
+}
+
+void VDeviceManager::unmark_kv_cache_in_use()
+{
+    std::lock_guard<std::mutex> lock(m_kv_cache_mutex);
+    if (m_is_kv_cache_in_use) {
+        LOGGER__INFO("Unmarking KV-Cache in use");
+        m_is_kv_cache_in_use = false;
+    }
 }
 
 void HailoRTServer::cleanup_infer_model_infos(const std::vector<uint32_t> &infer_model_handles)
@@ -687,6 +705,8 @@ hailo_status ConfiguredInferModelRunAsyncHandler::do_action(ResponseWriter respo
         auto outputs = std::move(run_async_info->buffer_outputs);
         run_async_info->buffer_inputs.clear();
         run_async_info->buffer_outputs.clear();
+        run_async_info->fd_inputs.clear();
+        run_async_info->fd_outputs.clear();
 
         auto status = response_writer.write(completion_info.status, {}, std::move(outputs));
         if (HAILO_SUCCESS != status) {
@@ -771,6 +791,8 @@ hailo_status ConfiguredInferModelRunAsyncForDurationHandler::do_action(ResponseW
         auto outputs = std::move(run_async_info->buffer_outputs);
         run_async_info->buffer_inputs.clear();
         run_async_info->buffer_outputs.clear();
+        run_async_info->fd_inputs.clear();
+        run_async_info->fd_outputs.clear();
 
         auto infer_status = completion_info.status;
         Buffer serialized_reply;
@@ -779,7 +801,7 @@ hailo_status ConfiguredInferModelRunAsyncForDurationHandler::do_action(ResponseW
             LOGGER__ERROR("Failed to serialize reply with status: {}", expected_reply.status());
             infer_status = expected_reply.status();
         } else {
-            serialized_reply = std::move(expected_reply.release());
+            serialized_reply = expected_reply.release();
         }
         auto status = response_writer.write(infer_status, std::move(serialized_reply), std::move(outputs));
         if (HAILO_SUCCESS != status) {
@@ -1089,7 +1111,7 @@ hailo_status HailoRTServer::handle_device_remove_notification_callback(const Mem
     };
     auto status = manager.execute<hailo_status>(device_handle, device_lambda);
     CHECK_SUCCESS(status);
-    
+
     TRY(auto reply, Serializer::serialize_reply());
     return response_writer.write(HAILO_SUCCESS, std::move(reply));
 }
@@ -1117,6 +1139,13 @@ hailo_status HailoRTServer::handle_device_fetch_logs(const MemoryView &request, 
     buffer_outputs.push_back(syslog_buffer);
 
     return response_writer.write(HAILO_SUCCESS, std::move(reply), std::move(buffer_outputs));
+}
+
+hailo_status HailoRTServer::handle_system_reset(const MemoryView&, ClientConnectionPtr, ResponseWriter)
+{
+    int ret = system("reboot");
+    CHECK(0 == ret, HAILO_INTERNAL_FAILURE);
+    return HAILO_SUCCESS;
 }
 
 hailo_status DeviceEchoBufferHandler::parse_request(const MemoryView &request, ClientConnectionPtr client_connection)
@@ -1183,5 +1212,6 @@ Expected<Dispatcher> HailoRTServer::create_dispatcher()
     REGISTER_ACTION(dispatcher, DEVICE__REMOVE_NOTIFICATION_CALLBACK, handle_device_remove_notification_callback);
     REGISTER_ACTION(dispatcher, DEVICE__FETCH_LOGS, handle_device_fetch_logs);
     REGISTER_ACTION_WITH_READS(dispatcher, DEVICE__ECHO_BUFFER, DeviceEchoBufferHandler);
+    REGISTER_ACTION(dispatcher, SYSTEM__RESET, handle_system_reset);
     return dispatcher;
 }

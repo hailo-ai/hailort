@@ -16,7 +16,7 @@ namespace hailort
 {
 
 constexpr std::chrono::seconds TRANSFER_TIMEOUT(10);
-constexpr size_t READ_RPC_BUFFER_MAX_SIZE(2048);
+constexpr size_t MAX_BODY_SIZE(2048);
 constexpr size_t MAX_READ_TRANSFERS(2);
 
 Expected<RpcConnection::Params> RpcConnection::Params::create(std::shared_ptr<Session> raw)
@@ -27,44 +27,54 @@ Expected<RpcConnection::Params> RpcConnection::Params::create(std::shared_ptr<Se
         });
     };
 
-    TRY(auto write_rpc_headers_allocator, create_dma_allocator(PcieSession::MAX_ONGOING_TRANSFERS, sizeof(rpc_message_header_t),
+    constexpr size_t MESSAGE_SIZE = sizeof(rpc_message_header_t) + MAX_BODY_SIZE;
+    TRY(auto write_messages_allocator, create_dma_allocator(PcieSession::MAX_ONGOING_TRANSFERS, MESSAGE_SIZE,
         HAILO_DMA_BUFFER_DIRECTION_H2D));
-    TRY(auto read_rpc_headers_allocator, create_dma_allocator(MAX_READ_TRANSFERS, sizeof(rpc_message_header_t), HAILO_DMA_BUFFER_DIRECTION_D2H));
-    TRY(auto read_rpc_body_allocator, create_dma_allocator(MAX_READ_TRANSFERS, READ_RPC_BUFFER_MAX_SIZE, HAILO_DMA_BUFFER_DIRECTION_D2H));
+    TRY(auto read_messages_allocator, create_dma_allocator(MAX_READ_TRANSFERS, MESSAGE_SIZE, HAILO_DMA_BUFFER_DIRECTION_D2H));
 
-    RpcConnection::Params params = { raw, write_rpc_headers_allocator, read_rpc_headers_allocator, read_rpc_body_allocator };
+    RpcConnection::Params params = { raw, write_messages_allocator, read_messages_allocator };
     return params;
 }
 
-Expected<rpc_message_t> RpcConnection::read_message()
+Expected<BufferPtr> RpcConnection::allocate_message_buffer()
 {
-    TRY(auto dma_header_ptr, m_read_rpc_headers_allocator->allocate());
-    rpc_message_header_t &dma_header = *reinterpret_cast<rpc_message_header_t*>(dma_header_ptr->data());
+    TRY(auto buffer, m_write_messages_allocator->allocate());
+    return buffer;
+}
 
-    auto status = m_session->read(reinterpret_cast<uint8_t*>(&dma_header), sizeof(dma_header));
+void RpcConnection::fill_message_buffer(BufferPtr buffer, const rpc_message_header_t &header, const MemoryView &body)
+{
+    auto &dma_header = *reinterpret_cast<rpc_message_header_t*>(buffer->data());
+    dma_header.magic = RPC_MESSAGE_MAGIC;
+    dma_header.size = static_cast<uint32_t>(body.size());
+    dma_header.message_id = header.message_id;
+    dma_header.action_id = header.action_id;
+    dma_header.status = header.status;
+    memcpy(buffer->data() + sizeof(header), body.data(), body.size());
+}
+
+Expected<BufferPtr> RpcConnection::read_message()
+{
+    TRY(auto buffer, m_read_messages_allocator->allocate());
+    auto status = m_session->read(buffer->data(), buffer->size());
     if (HAILO_COMMUNICATION_CLOSED == status) {
         return make_unexpected(status);
     }
     CHECK_SUCCESS(status);
+
+    rpc_message_header_t &dma_header = *reinterpret_cast<rpc_message_header_t*>(buffer->data());
     CHECK(RPC_MESSAGE_MAGIC == dma_header.magic, HAILO_INTERNAL_FAILURE, "Invalid magic! {} != {}",
         dma_header.magic, RPC_MESSAGE_MAGIC);
-    CHECK(dma_header.size <= READ_RPC_BUFFER_MAX_SIZE, HAILO_INTERNAL_FAILURE, "Invalid size! {} > {}",
-        dma_header.size, READ_RPC_BUFFER_MAX_SIZE);
+    CHECK(dma_header.size <= MAX_BODY_SIZE, HAILO_INTERNAL_FAILURE, "Invalid size! {} > {}",
+        dma_header.size, MAX_BODY_SIZE);
 
-    TRY(auto buffer, m_read_rpc_body_allocator->allocate());
-    if (dma_header.size > 0) {
-        status = m_session->read(buffer->data(), dma_header.size);
-        if (HAILO_COMMUNICATION_CLOSED == status) {
-            return make_unexpected(status);
-        }
-        CHECK_SUCCESS(status);
-    }
+    return buffer;
+}
 
-    rpc_message_t rpc_message = {};
-    rpc_message.header = dma_header;
-    rpc_message.buffer = std::move(buffer);
-
-    return rpc_message;
+std::tuple<rpc_message_header_t, MemoryView> RpcConnection::parse_message(BufferPtr buffer)
+{
+    rpc_message_header_t &header = *reinterpret_cast<rpc_message_header_t*>(buffer->data());
+    return std::make_tuple(header, MemoryView(buffer->data() + sizeof(rpc_message_header_t), header.size));
 }
 
 hailo_status RpcConnection::read_buffer(MemoryView buffer)
@@ -132,36 +142,8 @@ hailo_status RpcConnection::wait_for_write_message_async_ready(size_t buffer_siz
     return m_session->wait_for_write_async_ready(sizeof(rpc_message_header_t) + buffer_size, timeout);
 }
 
-hailo_status RpcConnection::write_message_async(const rpc_message_header_t &header, const MemoryView &buffer,
-    std::function<void(hailo_status)> &&callback)
+hailo_status RpcConnection::write_message_async(TransferRequest &&transfer_request)
 {
-    TransferRequest transfer_request;
-    transfer_request.callback = std::move(callback);
-    if (buffer.size() > 0) {
-        transfer_request.transfer_buffers.emplace_back(buffer);
-    }
-
-    return write_message_async(header, std::move(transfer_request));
-}
-
-hailo_status RpcConnection::write_message_async(const rpc_message_header_t &header, TransferRequest &&transfer_request)
-{
-    TRY(auto dma_header_ptr, m_write_rpc_headers_allocator->allocate());
-    rpc_message_header_t &dma_header = *reinterpret_cast<rpc_message_header_t*>(dma_header_ptr->data());
-    memcpy(&dma_header, &header, sizeof(header));
-    dma_header.magic = RPC_MESSAGE_MAGIC;
-
-    // Insert the dma_header before all other buffers
-    transfer_request.transfer_buffers.insert(transfer_request.transfer_buffers.begin(),
-        MemoryView(reinterpret_cast<uint8_t*>(&dma_header), sizeof(dma_header)));
-
-    // Callback should capture the dma_header_ptr
-    transfer_request.callback = [dma_header_ptr,
-                                 original_callback=transfer_request.callback](hailo_status status) mutable {
-        dma_header_ptr.reset();
-        original_callback(status);
-    };
-
     return m_session->write_async(std::move(transfer_request));
 }
 

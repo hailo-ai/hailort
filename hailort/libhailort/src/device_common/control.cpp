@@ -8,6 +8,7 @@
  **/
 
 #include "common/utils.hpp"
+#include "common/filesystem.hpp"
 #include "common/logger_macros.hpp"
 #include "common/internal_env_vars.hpp"
 #include "common/process.hpp"
@@ -40,9 +41,41 @@ namespace hailort
         "If only taking one measurement, the protection will resume automatically.\n" \
         "If doing continuous measurement, to enable overcurrent protection again you have to stop the power measurement on this dvm." \
     )
+constexpr const char* DEVICE_ARCHITECTURE_FILE_PATH = "/sys/devices/soc0/product";
 
 typedef std::array<std::array<float64_t, CONTROL_PROTOCOL__POWER_MEASUREMENT_TYPES__COUNT>, CONTROL_PROTOCOL__DVM_OPTIONS_COUNT> power_conversion_multiplier_t;
 
+Expected<hailo_device_architecture_t> control__get_device_architecture(hailo_device_architecture_t fw_device_architecture)
+{
+    CHECK((fw_device_architecture != HAILO_ARCH_HAILO8_A0) && (fw_device_architecture != HAILO_ARCH_HAILO8) && (fw_device_architecture != HAILO_ARCH_HAILO8L), 
+        HAILO_NOT_SUPPORTED, "Hailo8 devices are only supported in versions 4.x.x and earlier");
+    
+    CHECK(Filesystem::does_file_exists(std::string(DEVICE_ARCHITECTURE_FILE_PATH)), HAILO_FILE_OPERATION_FAILURE, 
+        "Device architecture file {} does not exist", DEVICE_ARCHITECTURE_FILE_PATH);
+    // The file contains the device architecture in string (e.g. "Hailo15H"), convert it to the enum value
+    std::ifstream architecture_file(DEVICE_ARCHITECTURE_FILE_PATH);
+    CHECK(architecture_file.good(), HAILO_FILE_OPERATION_FAILURE, "Failed to open device architecture file {}",
+        DEVICE_ARCHITECTURE_FILE_PATH);
+    std::string architecture_str;
+    std::getline(architecture_file, architecture_str);
+    CHECK(architecture_file.good() || (architecture_file.eof() && !architecture_str.empty()), HAILO_FILE_OPERATION_FAILURE,
+        "Failed to read device architecture file {}", DEVICE_ARCHITECTURE_FILE_PATH);
+    
+    if ("Hailo-15H" == architecture_str) {
+        return HAILO_ARCH_HAILO15H;
+    } else if ("Hailo-15M" == architecture_str) {
+        return HAILO_ARCH_HAILO15M;
+    } else if ("Hailo-15L" == architecture_str) {
+        return HAILO_ARCH_HAILO15L;
+    } else if ("Hailo-10H" == architecture_str) {
+        return HAILO_ARCH_HAILO10H;
+    } else if ("Hailo-12L" == architecture_str) {
+        return HAILO_ARCH_HAILO12L;
+    } else {
+        LOGGER__ERROR("Invalid device architecture string: {}", architecture_str);
+        return make_unexpected(HAILO_NOT_SUPPORTED);
+    }
+}
 
 Expected<hailo_device_identity_t> control__parse_identify_results(CONTROL_PROTOCOL_identify_response_t *identify_response)
 {
@@ -89,14 +122,10 @@ Expected<hailo_device_identity_t> control__parse_identify_results(CONTROL_PROTOC
     // Keep the revision number only
     board_info.fw_version.revision = GET_REVISION_NUMBER_VALUE(board_info.fw_version.revision);
 
-    board_info.device_architecture = static_cast<hailo_device_architecture_t>(BYTE_ORDER__ntohl(identify_response->device_architecture));
-
-    // Device architecture can be HAILO_ARCH_HAILO15H or HAILO_ARCH_HAILO15M - but the FW will always return HAILO_ARCH_HAILO15H
-    // Based on a file the SCU gives us we can deduce the actual type
-    if (HAILO_ARCH_HAILO15H == board_info.device_architecture) {
-        TRY(const auto dev_arch, PartialClusterReader::get_actual_dev_arch_from_fuse(board_info.device_architecture));
-        board_info.device_architecture = dev_arch;
-    }
+    TRY(board_info.device_architecture,
+        control__get_device_architecture(static_cast<hailo_device_architecture_t>(BYTE_ORDER__ntohl(identify_response
+                ->device_architecture))),
+        "Failed to get device architecture");
 
     /* Write identify results to log */
     LOGGER__INFO("firmware_version is: {}.{}.{}",

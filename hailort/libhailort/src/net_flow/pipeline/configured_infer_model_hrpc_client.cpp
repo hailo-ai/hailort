@@ -45,11 +45,6 @@ Expected<std::shared_ptr<ConfiguredInferModelHrpcClient>> ConfiguredInferModelHr
     std::vector<hailo_vstream_info_t> &&output_vstream_infos, uint32_t max_ongoing_transfers, rpc_object_handle_t infer_model_id,
     const std::unordered_map<std::string, size_t> inputs_frame_sizes, const std::unordered_map<std::string, size_t> outputs_frame_sizes)
 {
-    for (const auto &vstream_info : output_vstream_infos) {
-        CHECK(vstream_info.format.order != HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK, HAILO_INVALID_ARGUMENT,
-            "Format order HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK of '{}' is not supported for Hailo-15 devices with multi_process or Hailo-10H devices", vstream_info.name);
-    }
-    // TODO: consider create a separate client object here - HRT-13687
     auto ptr = make_shared_nothrow<ConfiguredInferModelHrpcClient>(client, handle_id, std::move(input_vstream_infos),
         std::move(output_vstream_infos), max_ongoing_transfers, infer_model_id, inputs_frame_sizes,
         outputs_frame_sizes);
@@ -415,7 +410,7 @@ Expected<LatencyMeasurementResult> ConfiguredInferModelHrpcClient::get_hw_latenc
             MemoryView(serialized_request->data(), request_size)));
 
     TRY(auto avg_hw_latency,
-        GetHwLatencyMeasurementSerializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size)));
+        GetHwLatencyMeasurementSerializer::deserialize_reply(MemoryView(result.body.data(), result.header.size)));
 
     return LatencyMeasurementResult{avg_hw_latency};
 };
@@ -647,7 +642,7 @@ Expected<AsyncInferJob> ConfiguredInferModelHrpcClient::run_async_for_duration(c
     CHECK_SUCCESS(status);
 
     TRY(auto job, AsyncInferJobHrpcClient::create_shared());
-    auto wrapped_callback = [this, request_buffer, job, callback] (rpc_message_t reply) {
+    auto wrapped_callback = [request_buffer, job, callback] (rpc_message_t reply) {
         auto status = static_cast<hailo_status>(reply.header.status);
 
         if (callback) {

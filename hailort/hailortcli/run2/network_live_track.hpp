@@ -26,7 +26,8 @@ class NetworkLiveTrack : public LiveStats::Track
 public:
     NetworkLiveTrack(const std::string &name, std::shared_ptr<hailort::ConfiguredNetworkGroup> cng,
         std::shared_ptr<hailort::ConfiguredInferModel> configured_infer_model,
-        hailort::LatencyMeterPtr overall_latency_meter, bool measure_fps, const std::string &hef_path);
+        hailort::LatencyMeterPtr overall_latency_meter, bool measure_fps, const std::string &hef_path,
+        bool should_print_ops, uint64_t computational_ops);
     virtual ~NetworkLiveTrack() = default;
     virtual hailo_status start_impl() override;
     virtual uint32_t push_text_impl(std::stringstream &ss) override;
@@ -34,10 +35,11 @@ public:
 
     void progress();
 
-    hailort::Expected<double> get_last_measured_fps();
+    hailort::Expected<double> get_last_measured_fps() override;
 
 private:
     double get_fps();
+    std::string prettify_ops(double ops);
 
     static size_t max_ng_name;
     static std::mutex mutex;
@@ -50,6 +52,8 @@ private:
     hailort::LatencyMeterPtr m_overall_latency_meter;
     const bool m_measure_fps;
     const std::string &m_hef_path;
+    const bool m_should_print_ops;
+    const uint64_t m_computational_ops;
 
     double m_last_measured_fps;
 };

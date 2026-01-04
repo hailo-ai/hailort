@@ -318,13 +318,18 @@ public:
      *                                   (e.g., {R"({"role": "system", "content": "You are a helpful assistant"})", R"({"role": "user", "content": "Hello"})"}).
      *                                   This structured input is combined with the model's prompt template (retrievable via `LLM::prompt_template()`).
      *                                   Each element in the vector represents a message in JSON format.
+     * @param[in] tools_json_strings     A vector of JSON strings representing the tools, defaults to empty vector. If provided, the tools will be used to generate the response.
+     *                                   Each string should be a valid JSON string representing a tool
+     *                                   (e.g., [{"name": "tool1", "description": "Tool 1", "parameters": {"param1": "value1", "param2": "value2"}}]).
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      * @note In case a given key is not supported by the model's template, or if an expected key is missing (e.g., "content" without "role"), the word `None` will replace it.
      * @note Multiple consecutive writes will concatenate prompts without adding separators.
      * @note Writing while the model is actively generating content can result in undefined behavior.
      * @note If the LLMGenerator is destructed before generate() is called, all inputs written to it will be discarded.
+     * @note Tools and system role messages can only be provided on a fresh context.
+     *       Providing them on consecutive calls will result in an error.
      */
-    hailo_status write(const std::vector<std::string> &prompt_json_strings);
+    hailo_status write(const std::vector<std::string> &prompt_json_strings, const std::vector<std::string> &tools_json_strings = {});
 
     /**
      * Marks the end of input and initiates the generation process.
@@ -395,6 +400,9 @@ public:
      * This is a convenience method that creates a generator with default parameters, writes the structured prompt, and initiates generation.
      *
      * @param[in] prompt_json_strings    A vector of JSON strings representing the structured prompt.
+     * @param[in] tools_json_strings     A vector of JSON strings representing the tools, defaults to empty vector. If provided, the tools will be used to generate the response.
+     *                                   Each string should be a valid JSON string representing a tool
+     *                                   (e.g., [{"name": "tool1", "description": "Tool 1", "parameters": {"param1": "value1", "param2": "value2"}}]).
      * @return Upon success, returns Expected of LLMGeneratorCompletion. Otherwise, returns Unexpected of ::hailo_status error.
      * @note This method uses the model's default generation parameters.
      * @note This method is equivalent to: create_generator() -> write(prompt_json_strings) -> generate().
@@ -402,8 +410,10 @@ public:
      *       no other generator can be created while this function is running.
      * @note Only one `LLMGeneratorCompletion` instance should exist at a time. Creating multiple instances concurrently may lead to undefined behavior.
      *       A subsequent LLMGeneratorCompletion must only be created once the previous one has been fully destructed.
+     * @note Tools and system role messages can only be provided on a fresh context.
+     *       Providing them on consecutive calls will result in an error.
      */
-    Expected<LLMGeneratorCompletion> generate(const std::vector<std::string> &prompt_json_strings);
+    Expected<LLMGeneratorCompletion> generate(const std::vector<std::string> &prompt_json_strings, const std::vector<std::string> &tools_json_strings = {});
 
     /**
      * Generates text directly using structured JSON prompts without explicitly creating a generator.
@@ -411,14 +421,20 @@ public:
      *
      * @param[in] params                 The LLMGeneratorParams used to configure generation.
      * @param[in] prompt_json_strings    A vector of JSON strings representing the structured prompt.
+     * @param[in] tools_json_strings     A vector of JSON strings representing the tools, defaults to empty vector. If provided, the tools will be used to generate the response.
+     *                                   Each string should be a valid JSON string representing a tool
+     *                                   (e.g., [{"name": "tool1", "description": "Tool 1", "parameters": {"param1": "value1", "param2": "value2"}}]).
      * @return Upon success, returns Expected of LLMGeneratorCompletion. Otherwise, returns Unexpected of ::hailo_status error.
      * @note This method is equivalent to: create_generator(params) -> write(prompt_json_strings) -> generate().
      * @note Since this function creates a generator, and only one generator can be active at a time,
      *       no other generator can be created while this function is running.
      * @note Only one `LLMGeneratorCompletion` instance should exist at a time. Creating multiple instances concurrently may lead to undefined behavior.
      *       A subsequent LLMGeneratorCompletion must only be created once the previous one has been fully destructed.
+     * @note Tools and system role messages can only be provided on a fresh context.
+     *       Providing them on consecutive calls will result in an error.
      */
-    Expected<LLMGeneratorCompletion> generate(const LLMGeneratorParams &params, const std::vector<std::string> &prompt_json_strings);
+    Expected<LLMGeneratorCompletion> generate(const LLMGeneratorParams &params, const std::vector<std::string> &prompt_json_strings,
+        const std::vector<std::string> &tools_json_strings = {});
 
     /**
      * Tokenizes a given string into a vector of integers representing the tokens.

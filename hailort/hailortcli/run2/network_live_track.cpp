@@ -12,13 +12,14 @@
 
 #include <spdlog/fmt/fmt.h>
 #include <sstream>
+#include <iomanip>
 
 size_t NetworkLiveTrack::max_ng_name = 0;
 std::mutex NetworkLiveTrack::mutex;
 
 NetworkLiveTrack::NetworkLiveTrack(const std::string &name, std::shared_ptr<ConfiguredNetworkGroup> cng,
     std::shared_ptr<ConfiguredInferModel> configured_infer_model, LatencyMeterPtr overall_latency_meter,
-    bool measure_fps, const std::string &hef_path) :
+    bool measure_fps, const std::string &hef_path, bool should_print_ops, uint64_t computational_ops) :
     m_name(name),
     m_count(0),
     m_last_get_time(),
@@ -27,6 +28,8 @@ NetworkLiveTrack::NetworkLiveTrack(const std::string &name, std::shared_ptr<Conf
     m_overall_latency_meter(overall_latency_meter),
     m_measure_fps(measure_fps),
     m_hef_path(hef_path),
+    m_should_print_ops(should_print_ops),
+    m_computational_ops(computational_ops),
     m_last_measured_fps(0)
 {
     std::lock_guard<std::mutex> lock(mutex);
@@ -55,6 +58,22 @@ Expected<double> NetworkLiveTrack::get_last_measured_fps()
     return Expected<double>(m_last_measured_fps);
 }
 
+std::string NetworkLiveTrack::prettify_ops(double ops)
+{
+    static constexpr double GIGA = 1e9;
+    static constexpr double TERA = 1e12;
+    std::ostringstream out;
+    out << std::fixed << std::setprecision(2);
+    if (ops >= TERA) {
+        out << (ops / TERA) << " TOPS";
+    } else if (ops >= GIGA) {
+        out << (ops / GIGA) << " GOPS";
+    } else {
+        out << ops << " OPS";
+    }
+    return out.str();
+}
+
 uint32_t NetworkLiveTrack::push_text_impl(std::stringstream &ss)
 {
     ss << fmt::format("{}:", m_name);
@@ -70,6 +89,16 @@ uint32_t NetworkLiveTrack::push_text_impl(std::stringstream &ss)
     if (m_measure_fps) {
         auto fps = get_fps();
         ss << fmt::format("{}fps: {:.2f}", get_separator(), fps);
+        
+        if (m_should_print_ops) {
+            const double ops_value = static_cast<double>(m_computational_ops) * fps;
+            if (0.0 == ops_value) {
+                // In old Hefs we don't have computational ops, so we print N/A
+                ss << fmt::format("{} OPS: N/A", get_separator());
+            } else {
+                ss << fmt::format("{}{}", get_separator(), prettify_ops(ops_value));
+            }
+        }
     }
 
     if (m_cng) {

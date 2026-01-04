@@ -73,6 +73,8 @@ constexpr uint8_t MIN_ENHANCED_D2H_CHANNEL_INDEX_H12L    = MIN_D2H_CHANNEL_INDEX
 
 constexpr size_t MAX_TRANSFER_BUFFERS_IN_REQUEST = 8;
 
+class TransferBuffer;
+
 // NOTE: don't change members from this struct without updating all code using it (platform specific)
 struct ChannelInterruptTimestamp {
     std::chrono::nanoseconds timestamp;
@@ -116,7 +118,7 @@ struct DescriptorsListInfo {
     uint64_t dma_address;
 };
 
-struct ContinousBufferInfo {
+struct CmaBufferInfo {
     uintptr_t handle;  // Unique identifer for the driver.
     uint64_t dma_address;
     size_t size;
@@ -300,12 +302,6 @@ public:
         size_t buffer_offset, size_t transfer_size, uint32_t transfers_count, uint8_t channel_index,
         uint32_t starting_desc, InterruptsDomain last_desc_interrupts);
 
-    struct TransferBuffer {
-        bool is_dma_buf;
-        uintptr_t addr_or_fd;
-        size_t size;
-    };
-
     /**
      * Prepares a transfer for launch.
      * Mapping the transfer buffers
@@ -332,12 +328,12 @@ public:
      * @param[in] size - Buffer size
      * @return pair <buffer_handle, dma_address>.
      */
-    Expected<ContinousBufferInfo> vdma_continuous_buffer_alloc(size_t size);
+    Expected<CmaBufferInfo> vdma_continuous_buffer_alloc(size_t size);
 
     /**
      * Frees a vdma continuous buffer allocated by 'vdma_continuous_buffer_alloc'.
      */
-    hailo_status vdma_continuous_buffer_free(const ContinousBufferInfo &buffer_info);
+    hailo_status vdma_continuous_buffer_free(const CmaBufferInfo &buffer_info);
 
     /**
      * Marks the device as used for vDMA operations. Only one open FD can be marked at once.
@@ -389,7 +385,7 @@ public:
     }
 
     DescSizesParams get_sg_desc_params() const;
-    DescSizesParams get_ccb_desc_params() const;
+    DescSizesParams get_continuous_desc_params() const;
 
     HailoRTDriver(const HailoRTDriver &other) = delete;
     HailoRTDriver &operator=(const HailoRTDriver &other) = delete;

@@ -318,19 +318,20 @@ Expected<HailoRTDriver::AcceleratorType> VDeviceBase::get_accelerator_type(hailo
 hailo_status VDeviceBase::validate_params(const hailo_vdevice_params_t &params)
 {
     CHECK(0 != params.device_count, HAILO_INVALID_ARGUMENT,
-        "VDevice creation failed. invalid device_count ({}).", params.device_count);
+        "VDevice creation failed. Invalid device_count ({}).", params.device_count);
 
     TRY(auto do_device_ids_contain_eth, do_device_ids_contain_eth(params));
     CHECK(!(do_device_ids_contain_eth && (1 != params.device_count)), HAILO_INVALID_ARGUMENT,
-        "VDevice over ETH is supported for 1 device. Passed device_count: {}", params.device_count);
+        "VDevice over ETH is supported for one device only. Passed device_count: {}", params.device_count);
     CHECK(!(do_device_ids_contain_eth && params.multi_process_service), HAILO_INVALID_ARGUMENT,
-        "Multi process service is only supported with local devices");
+        "Multi process service is only supported with locally connected devices");
 
     if (params.multi_process_service) {
         auto acc_type = HailoRTDriver::AcceleratorType::ACC_TYPE_MAX_VALUE;
         TRY(acc_type, get_accelerator_type(params.device_ids, params.device_count));
         CHECK(acc_type != HailoRTDriver::AcceleratorType::SOC_ACCELERATOR, HAILO_INVALID_OPERATION,
-            "Multi process service is supported only on Hailo15 devices. Other devices support multi-process functionality without requiring a service");
+            "Using the Multi Process Service is needed only on Hailo-8 and Hailo-15 devices. "
+            "Hailo-10H supports multi-process functionality without requiring a service");
     }
 
     return HAILO_SUCCESS;

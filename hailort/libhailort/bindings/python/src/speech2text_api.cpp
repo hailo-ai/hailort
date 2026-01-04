@@ -28,7 +28,7 @@ Speech2TextWrapper::Speech2TextWrapper(std::unique_ptr<genai::Speech2Text> speec
 {}
 
 std::string Speech2TextWrapper::generate_all_text(py::array audio_data,
-    genai::Speech2TextTask task, std::string_view language, uint32_t timeout_ms)
+    const genai::Speech2TextGeneratorParams &generator_params, uint32_t timeout_ms)
 {
     // Convert numpy array to MemoryView
     auto buffer_info = audio_data.request();
@@ -43,14 +43,13 @@ std::string Speech2TextWrapper::generate_all_text(py::array audio_data,
 
     auto audio_buffer = hailort::MemoryView(audio_data.mutable_data(), static_cast<size_t>(audio_data.nbytes()));
 
-    auto generator_params = genai::Speech2TextGeneratorParams(task, language);
     auto expected_result = m_speech2text->generate_all_text(audio_buffer, generator_params, std::chrono::milliseconds(timeout_ms));
     VALIDATE_EXPECTED(expected_result);
     return expected_result.release();
 }
 
 std::vector<genai::Speech2Text::SegmentInfo> Speech2TextWrapper::generate_all_segments(
-    py::array audio_data, genai::Speech2TextTask task, std::string_view language, uint32_t timeout_ms)
+    py::array audio_data, const genai::Speech2TextGeneratorParams &generator_params, uint32_t timeout_ms)
 {
     // Convert numpy array to MemoryView
     auto buffer_info = audio_data.request();
@@ -65,7 +64,6 @@ std::vector<genai::Speech2Text::SegmentInfo> Speech2TextWrapper::generate_all_se
 
     auto audio_buffer = hailort::MemoryView(audio_data.mutable_data(), static_cast<size_t>(audio_data.nbytes()));
 
-    auto generator_params = genai::Speech2TextGeneratorParams(task, language);
     auto expected_result = m_speech2text->generate_all_segments(audio_buffer, generator_params,
         std::chrono::milliseconds(timeout_ms));
     VALIDATE_EXPECTED(expected_result);
@@ -77,6 +75,13 @@ std::vector<int> Speech2TextWrapper::tokenize(const std::string &text)
     auto expected_result = m_speech2text->tokenize(text);
     VALIDATE_EXPECTED(expected_result);
     return expected_result.release();
+}
+
+genai::Speech2TextGeneratorParams Speech2TextWrapper::create_generator_params()
+{
+    auto params = m_speech2text->create_generator_params();
+    VALIDATE_EXPECTED(params);
+    return params.release();
 }
 
 void Speech2TextWrapper::release()
@@ -97,6 +102,23 @@ void Speech2TextWrapper::bind(py::module &m)
                    ", text='" + self.text + "')";
         });
 
+    py::class_<genai::Speech2TextGeneratorParams>(m, "Speech2TextGeneratorParams")
+        .def("task", &genai::Speech2TextGeneratorParams::task)
+        .def("language", &genai::Speech2TextGeneratorParams::language)
+        .def("repetition_penalty", &genai::Speech2TextGeneratorParams::repetition_penalty)
+        .def("set_task", [](genai::Speech2TextGeneratorParams &self, genai::Speech2TextTask task) {
+            auto status = self.set_task(task);
+            VALIDATE_STATUS(status);
+        })
+        .def("set_language", [](genai::Speech2TextGeneratorParams &self, std::string_view lang) {
+            auto status = self.set_language(lang);
+            VALIDATE_STATUS(status);
+        })
+        .def("set_repetition_penalty", [](genai::Speech2TextGeneratorParams &self, float rep_penalty) {
+            auto status = self.set_repetition_penalty(rep_penalty);
+            VALIDATE_STATUS(status);
+        });
+
     // Bind Speech2TextTask enum
     py::enum_<genai::Speech2TextTask>(m, "Speech2TextTask")
         .value("TRANSCRIBE", genai::Speech2TextTask::TRANSCRIBE)
@@ -108,5 +130,6 @@ void Speech2TextWrapper::bind(py::module &m)
         .def("generate_all_text", &Speech2TextWrapper::generate_all_text)
         .def("generate_all_segments", &Speech2TextWrapper::generate_all_segments)
         .def("tokenize", &Speech2TextWrapper::tokenize)
+        .def("create_generator_params", &Speech2TextWrapper::create_generator_params)
         .def("release", &Speech2TextWrapper::release);
 }

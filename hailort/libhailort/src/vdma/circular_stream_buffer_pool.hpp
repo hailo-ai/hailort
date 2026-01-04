@@ -37,9 +37,9 @@ public:
     virtual size_t max_queue_size() const override;
     size_t buffers_ready_to_dequeue() const;
 
-    virtual Expected<TransferBuffer> dequeue() override;
+    virtual Expected<StreamBuffer> dequeue() override;
 
-    virtual hailo_status enqueue(TransferBuffer &&buffer_info) override;
+    virtual hailo_status enqueue(StreamBuffer &&buffer_info) override;
 
     vdma::MappedBufferPtr get_base_buffer() { return m_mapped_buffer; }
 

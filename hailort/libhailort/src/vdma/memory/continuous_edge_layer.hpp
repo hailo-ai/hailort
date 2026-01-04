@@ -10,9 +10,7 @@
 #ifndef _HAILO_VDMA_CONTINUOUS_EDGE_LAYER_HPP_
 #define _HAILO_VDMA_CONTINUOUS_EDGE_LAYER_HPP_
 
-#include "vdma/driver/hailort_driver.hpp"
 #include "vdma/memory/vdma_edge_layer.hpp"
-#include "vdma/memory/continuous_buffer.hpp"
 
 
 namespace hailort {
@@ -20,31 +18,45 @@ namespace vdma {
 
 class ContinuousEdgeLayer final : public VdmaEdgeLayer {
 public:
-    static Expected<ContinuousEdgeLayer> create(std::shared_ptr<ContinuousBuffer> &&buffer, size_t size, size_t offset,
-        uint16_t page_size, uint32_t num_pages);
+    static Expected<std::unique_ptr<VdmaEdgeLayer>> create_unique(std::shared_ptr<ContinuousVdmaBuffer> &&buffer,
+        size_t size, size_t offset, uint16_t page_size, uint32_t num_pages);
 
     virtual ~ContinuousEdgeLayer() = default;
 
-    ContinuousEdgeLayer(const ContinuousEdgeLayer &) = delete;
     ContinuousEdgeLayer(ContinuousEdgeLayer &&) = default;
-    ContinuousEdgeLayer& operator=(const ContinuousEdgeLayer &) = delete;
-    ContinuousEdgeLayer& operator=(ContinuousEdgeLayer &&) = delete;
 
-    virtual Type type() const override
+    virtual DmaType type() const override
     {
-        return Type::CONTINUOUS;
+        return DmaType::CONTINUOUS;
     }
 
-    virtual uint64_t dma_address() const override;
-    virtual uint16_t desc_page_size() const override;
-    virtual uint32_t descs_count() const override;
+    uint64_t dma_address() const override
+    {
+        return (std::dynamic_pointer_cast<ContinuousVdmaBuffer>(m_buffer))->dma_address() + m_offset;
+    }
 
-    virtual Expected<uint32_t> program_descriptors(size_t transfer_size, size_t desc_offset,
-        size_t buffer_offset = 0, uint32_t batch_size = 1) override;
+    uint16_t desc_page_size() const override
+    {
+        return m_page_size;
+    }
+
+    uint32_t descs_count() const override
+    {
+        return m_num_pages;
+    }
+
+    Expected<uint32_t> program_descriptors(size_t transfer_size,
+        size_t /* desc_offset */, size_t /* buffer_offset */, uint32_t /* batch_size */) override
+    {
+        // No need to program descriptors in continuous mode.
+        return descriptors_in_buffer(transfer_size);
+    }
 
 private:
-    ContinuousEdgeLayer(std::shared_ptr<ContinuousBuffer> &&buffer, size_t size, size_t offset,
-        uint16_t page_size, uint32_t num_pages);
+    ContinuousEdgeLayer(std::shared_ptr<ContinuousVdmaBuffer> &&buffer, size_t size, size_t offset, uint16_t page_size,
+        uint32_t num_pages) :
+        VdmaEdgeLayer(std::move(buffer), size, offset), m_page_size(page_size), m_num_pages(num_pages)
+    {}
 
     const uint16_t m_page_size;
     const uint32_t m_num_pages;

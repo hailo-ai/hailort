@@ -24,12 +24,6 @@ inline static std::chrono::milliseconds get_request_timeout(const std::chrono::m
     return default_timeout;
 }
 
-inline static void request_sent_callback(hailo_status status) {
-    if (HAILO_SUCCESS != status) {
-        LOGGER__ERROR("Failed to send request, status = {}", status);
-    }
-}
-
 Client::~Client()
 {
     m_is_running = false;
@@ -47,8 +41,8 @@ hailo_status Client::connect(bool is_localhost)
     m_callback_dispatcher_manager = make_shared_nothrow<ClientCallbackDispatcherManager>();
     CHECK_NOT_NULL(m_callback_dispatcher_manager, HAILO_OUT_OF_HOST_MEMORY);
 
-    std::string device_id = is_localhost ? SERVER_ADDR_USE_UNIX_SOCKET : m_device_id;
-    TRY(m_conn_context, ConnectionContext::create_client_shared(device_id));
+    m_device_id = is_localhost ? SERVER_ADDR_USE_UNIX_SOCKET : m_device_id;
+    TRY(m_conn_context, ConnectionContext::create_client_shared(m_device_id));
     TRY(auto conn, Session::connect(m_conn_context, HAILORT_SERVER_PORT));
 
     // TODO: Use conn.max_ongoing_transfers() function (HRT-16534)
@@ -72,7 +66,7 @@ hailo_status Client::connect(bool is_localhost)
         rpc_message_header_t status_header {};
         status_header.status = HAILO_COMMUNICATION_CLOSED;
         m_reply_data.for_each([status_header] (reply_data_t reply_data) {
-            reply_data.callback({status_header, {}});
+            reply_data.callback(rpc_message_t{nullptr, status_header, {}});
         });
     });
     return HAILO_SUCCESS;
@@ -81,25 +75,27 @@ hailo_status Client::connect(bool is_localhost)
 hailo_status Client::message_loop()
 {
     while (m_is_running) {
-        TRY_WITH_ACCEPTABLE_STATUS(HAILO_COMMUNICATION_CLOSED, auto message, m_connection->read_message());
+        TRY_WITH_ACCEPTABLE_STATUS(HAILO_COMMUNICATION_CLOSED, auto reply_buffer, m_connection->read_message());
+        auto [reply_header, reply_body] = m_connection->parse_message(reply_buffer);
 
-        if (HailoRpcActionID::NOTIFICATION == static_cast<HailoRpcActionID>(message.header.action_id)) {
-            auto status = m_notification_callback(MemoryView(message.buffer->data(), message.header.size));
+        if (HailoRpcActionID::NOTIFICATION == static_cast<HailoRpcActionID>(reply_header.action_id)) {
+            auto status = m_notification_callback(reply_body);
             CHECK_SUCCESS(status);
         }
 
-        auto pop_result = m_reply_data.pop(message.header.message_id);
+        auto pop_result = m_reply_data.pop(reply_header.message_id);
         if (!pop_result.first) {
             continue;
         }
         auto reply_data = pop_result.second;
 
         // Read additional buffers only if message returned success status.
-        if ((HAILO_SUCCESS == message.header.status) && (reply_data.read_buffers.size() > 0)) {
+        if ((HAILO_SUCCESS == reply_header.status) && (reply_data.read_buffers.size() > 0)) {
             auto status = m_connection->read_buffers(std::move(reply_data.read_buffers));
             CHECK_SUCCESS_WITH_ACCEPTABLE_STATUS(HAILO_COMMUNICATION_CLOSED, status);
         }
 
+        rpc_message_t message = {reply_buffer, reply_header, reply_body};
         reply_data.callback(std::move(message));
     }
 
@@ -163,18 +159,24 @@ Expected<message_id_t> Client::execute_request_async_impl(uint32_t action_id, co
     header.action_id = static_cast<uint32_t>(action_id);
     header.status = HAILO_UNINITIALIZED;
 
+    TRY(auto message_buffer, m_connection->allocate_message_buffer());
+    RpcConnection::fill_message_buffer(message_buffer, header, request);
+
     TransferRequest transfer_request;
-    transfer_request.callback = request_sent_callback;
-    transfer_request.transfer_buffers.reserve(write_buffers.size() + 1); // Request buffer + additional writes.
-    if (request.size() > 0) {
-        transfer_request.transfer_buffers.emplace_back(request);
-    }
+    transfer_request.callback = [message_buffer] (hailo_status status) {
+        if (HAILO_SUCCESS != status) {
+            LOGGER__ERROR("Failed to send request, status = {}", status);
+        }
+    };
+
+    transfer_request.transfer_buffers.reserve(1 + write_buffers.size()); // Request buffer + additional writes.
+    transfer_request.transfer_buffers.emplace_back(message_buffer->as_view());
     transfer_request.transfer_buffers.insert(transfer_request.transfer_buffers.end(),
         write_buffers.begin(), write_buffers.end());
 
     m_reply_data.emplace(message_id, reply_data_t{callback, std::move(read_buffers)});
 
-    auto status = m_connection->write_message_async(header, std::move(transfer_request));
+    auto status = m_connection->write_message_async(std::move(transfer_request));
     if ((HAILO_SUCCESS != status) || (!m_is_running)) {
         (void)m_reply_data.pop(message_id);
     }

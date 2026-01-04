@@ -13,7 +13,7 @@
 #include "hailo/hailort.h"
 #include "hailo/buffer.hpp"
 #include "hailo/expected.hpp"
-#include "eigen.hpp"
+#include "common/genai/eigen.hpp"
 
 
 namespace hailort
@@ -23,17 +23,21 @@ namespace genai
 
 using token_t = int;
 constexpr size_t CONTEXT_TOKENS_COUNT = 3; // <sot><language_id><task> - after these tokens, the sample actually begins
+constexpr float32_t NEGATIVE_INFINITY = -std::numeric_limits<float32_t>::infinity();
 
 class Speech2TextPostProcess
 {
 public:
+    static constexpr float32_t NO_REPETITION_PENALTY_VALUE = 1.0f;
+
     Speech2TextPostProcess(size_t chunk_size_sec, token_t timestamp_begin_token_id, token_t eot_token_id, std::vector<token_t> &&blank_token_ids,
-        std::vector<token_t> &&suppress_tokens_ids, float32_t time_precision, token_t max_initial_timestamp = 0);
+        const std::vector<token_t> &suppress_tokens_ids, float32_t time_precision, token_t max_initial_timestamp = 0);
 
     // next_token_scores: A tensor representing the raw output scores for each token in the vocabulary.
     // generated_tokens: A vector of token IDs representing the current sequence of tokens generated so far.
     // returns: A pair of the next token and its log probability
-    std::pair<token_t, float32_t> get_next_token(Eigen::Map<Eigen::VectorXf> next_token_scores, const std::vector<token_t> &generated_tokens);
+    std::pair<token_t, float32_t> get_next_token(Eigen::Map<Eigen::VectorXf> next_token_scores, const std::vector<token_t> &generated_tokens,
+        float32_t repetition_penalty, uint32_t repetition_penalty_window_size);
 
     Speech2TextPostProcess() = default;
     Speech2TextPostProcess(Speech2TextPostProcess &&) = delete;
@@ -45,6 +49,8 @@ public:
 private:
     void suppress_tokens(Eigen::Map<Eigen::VectorXf> &next_token_scores, const Eigen::Map<const Eigen::VectorXi> &generated_tokens);
     void apply_timestamps_rules(Eigen::Map<Eigen::VectorXf> &next_token_scores, const Eigen::Map<const Eigen::VectorXi> &generated_tokens);
+    void apply_repetition_penalty(Eigen::Map<Eigen::VectorXf> &next_token_scores, const Eigen::Map<const Eigen::VectorXi> &generated_tokens,
+        float32_t repetition_penalty, uint32_t repetition_penalty_window_size);
 
     size_t m_chunk_size_sec;
     token_t m_timestamp_begin_token_id;

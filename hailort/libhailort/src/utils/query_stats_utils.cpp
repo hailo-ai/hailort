@@ -99,7 +99,7 @@ Expected<std::tuple<int64_t, int64_t>> QueryStatsUtils::calculate_ram_sizes()
     // function is based on Linux 'free' command
     int64_t total_ram = -1;
     int64_t used_ram = -1;
-    TRY(const auto output, Process::create_and_wait_for_output("free -b", MAX_COMMAND_OUTPUT_LENGTH));
+    TRY(const auto output, Process::create_and_wait_for_output("free", MAX_COMMAND_OUTPUT_LENGTH));
 
     std::istringstream stream(output.second);
 
@@ -110,7 +110,7 @@ Expected<std::tuple<int64_t, int64_t>> QueryStatsUtils::calculate_ram_sizes()
         if (label == "Mem:") {
             if (stream >> total >> used >> freeMem >> shared >> buffCache >> available) {
                 total_ram = static_cast<int64_t>(total);
-                used_ram = static_cast<int64_t>(used);
+                used_ram = total_ram - static_cast<int64_t>(freeMem);
             }
             break;
         }
@@ -192,7 +192,7 @@ hailo_status QueryStatsUtils::execute_noc_command(const std::string &command)
     CHECK(Filesystem::does_file_exists(HAILO_NOC_PERF_FILE_PATH), HAILO_FILE_OPERATION_FAILURE,
           "File {} does not exist", HAILO_NOC_PERF_FILE_PATH);
 
-    const std::string command_with_source = std::string(". ") + HAILO_NOC_PERF_FILE_PATH + " && " + command;
+    const std::string command_with_source = std::string(". ") + HAILO_NOC_PERF_FILE_PATH + " && " + "cd /tmp && " + command;
     LOGGER__INFO("Run the following DDR NOC command: {}", command_with_source);
 
     auto ret_val = system(command_with_source.c_str());

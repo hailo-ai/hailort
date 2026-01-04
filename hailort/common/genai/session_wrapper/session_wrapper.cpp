@@ -117,13 +117,15 @@ hailo_status SessionWrapper::close()
     return HAILO_SUCCESS;
 }
 
-hailo_status SessionWrapper::send_file_chunked(const std::string &file_path, size_t file_size_to_send, std::chrono::milliseconds timeout)
+hailo_status SessionWrapper::send_file_chunked(const std::string &file_path, size_t file_size_to_send, uint32_t offset, std::chrono::milliseconds timeout)
 {
     std::unique_lock<std::mutex> lock(m_mutex);
     TimeoutGuard timeout_guard(timeout);
 
     std::ifstream file(file_path, std::ios::binary);
     CHECK(file.is_open(), HAILO_OPEN_FILE_FAILURE, "Failed to open file: {}", file_path);
+    file.seekg(offset, std::ios::beg);
+    CHECK(file.good(), HAILO_FILE_OPERATION_FAILURE, "Failed to seek to offset {} in file: {}", offset, file_path);
 
     // Calculate number of chunks
     size_t chunk_size = CHUNKED_TRANSFER_CHUNK_SIZE;
@@ -134,7 +136,7 @@ hailo_status SessionWrapper::send_file_chunked(const std::string &file_path, siz
     TRY(auto buffer_b, Buffer::create_shared(chunk_size, BufferStorageParams::create_dma()));
 
     TRY(auto shutdown_event, Event::create_shared(Event::State::not_signalled));
-    TRY(auto buffer_queue, SpscQueue<BufferPtr>::create(2, shutdown_event));
+    TRY(auto buffer_queue, SpscQueue<BufferPtr>::create(2, shutdown_event, timeout_guard.get_remaining_timeout()));
 
     // Initially enqueue both buffers - they're ready for use
     CHECK_SUCCESS(buffer_queue.enqueue(buffer_a));
@@ -145,7 +147,7 @@ hailo_status SessionWrapper::send_file_chunked(const std::string &file_path, siz
         uint64_t remaining_bytes = file_size_to_send - chunk_offset;
         uint32_t current_chunk_size = static_cast<uint32_t>(std::min(static_cast<uint64_t>(chunk_size), remaining_bytes));
 
-        TRY(auto current_buffer, buffer_queue.dequeue());
+        TRY(auto current_buffer, buffer_queue.dequeue(timeout_guard.get_remaining_timeout()));
 
         file.read(reinterpret_cast<char*>(current_buffer->data()), current_chunk_size);
         CHECK(file.gcount() == current_chunk_size, HAILO_FILE_OPERATION_FAILURE,
@@ -153,10 +155,19 @@ hailo_status SessionWrapper::send_file_chunked(const std::string &file_path, siz
 
         CHECK_SUCCESS(m_session->wait_for_write_async_ready(current_chunk_size, timeout_guard.get_remaining_timeout()));
         CHECK_SUCCESS(m_session->write_async(current_buffer->data(), current_chunk_size,
-            [&buffer_queue, current_buffer](hailo_status status) {
-                assert(HAILO_SUCCESS == status);
-                (void)status; // Mark as used to avoid compiler warning
-                buffer_queue.enqueue(current_buffer);
+            [&buffer_queue, current_buffer, shutdown_event, chunk_index, total_chunks, current_chunk_size, timeout_guard](hailo_status status) {
+                if (HAILO_SUCCESS != status) {
+                    LOGGER__ERROR("Failed to write chunk file {}/{} to session (Trying to write {} bytes), status = {}",
+                        (chunk_index + 1), total_chunks, current_chunk_size, status);
+                    shutdown_event->signal();
+                    return;
+                }
+                status = buffer_queue.enqueue(current_buffer, timeout_guard.get_remaining_timeout());
+                if (HAILO_SUCCESS != status) {
+                    LOGGER__ERROR("Failed to enqueue buffer to queue, status = {}", status);
+                    shutdown_event->signal();
+                    return;
+                }
             }));
     }
 
@@ -168,16 +179,16 @@ hailo_status SessionWrapper::send_file_chunked(const std::string &file_path, siz
     return HAILO_SUCCESS;
 }
 
-Expected<std::shared_ptr<Buffer>> SessionWrapper::receive_file_chunked(uint64_t expected_file_size, std::chrono::milliseconds timeout)
+hailo_status SessionWrapper::receive_file_chunked(uint64_t expected_file_size, MemoryView buffer, std::chrono::milliseconds timeout)
 {
     std::unique_lock<std::mutex> lock(m_mutex);
     TimeoutGuard timeout_guard(timeout);
 
+    CHECK(buffer.size() >= expected_file_size, HAILO_INSUFFICIENT_BUFFER,
+        "Buffer size {} is smaller than expected file size {}", buffer.size(), expected_file_size);
 
     uint64_t chunk_size = CHUNKED_TRANSFER_CHUNK_SIZE;
     uint64_t total_chunks = (expected_file_size + chunk_size - 1) / chunk_size;
-
-    TRY(auto complete_file_buffer, Buffer::create_shared(expected_file_size, BufferStorageParams::create_dma()));
 
     uint64_t total_bytes_received = 0;
     for (uint64_t chunk_index = 0; chunk_index < total_chunks; ++chunk_index) {
@@ -185,8 +196,9 @@ Expected<std::shared_ptr<Buffer>> SessionWrapper::receive_file_chunked(uint64_t 
         uint64_t remaining_bytes = expected_file_size - chunk_offset;
         uint64_t current_chunk_size = std::min(chunk_size, remaining_bytes);
 
-        CHECK_SUCCESS(m_session->read(complete_file_buffer->data() + chunk_offset, 
-            current_chunk_size, timeout_guard.get_remaining_timeout()));
+        CHECK_SUCCESS(m_session->read(buffer.data() + chunk_offset,
+            current_chunk_size, timeout_guard.get_remaining_timeout()), "Reading chunk {}/{} failed (Trying to read {} bytes)",
+                (chunk_index + 1), total_chunks, current_chunk_size);
 
         total_bytes_received += current_chunk_size;
     }
@@ -196,7 +208,7 @@ Expected<std::shared_ptr<Buffer>> SessionWrapper::receive_file_chunked(uint64_t 
     uint8_t ack = 1;
     CHECK_SUCCESS(m_session->write(&ack, sizeof(ack), timeout_guard.get_remaining_timeout()));
     
-    return complete_file_buffer;
+    return HAILO_SUCCESS;
 }
 
 } /* namespace genai */

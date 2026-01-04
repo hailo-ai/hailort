@@ -24,14 +24,14 @@ static std::pair<uint8_t, uint8_t> get_min_max_channel_index(hailo_device_archit
     uint8_t max_channel_index;
     if (HailoRTDriver::DmaDirection::H2D == direction) {
         min_channel_index = MIN_H2D_CHANNEL_INDEX;
-        max_channel_index = (device_arch == HAILO_ARCH_MARS) ? MAX_H2D_CHANNEL_INDEX_H12L : MAX_H2D_CHANNEL_INDEX;
+        max_channel_index = (device_arch == HAILO_ARCH_HAILO12L) ? MAX_H2D_CHANNEL_INDEX_H12L : MAX_H2D_CHANNEL_INDEX;
     } else {
-        min_channel_index = (device_arch == HAILO_ARCH_MARS) ? MIN_D2H_CHANNEL_INDEX_H12L : MIN_D2H_CHANNEL_INDEX;
-        max_channel_index = (device_arch == HAILO_ARCH_MARS) ? MAX_D2H_CHANNEL_INDEX_H12L : MAX_D2H_CHANNEL_INDEX;
+        min_channel_index = (device_arch == HAILO_ARCH_HAILO12L) ? MIN_D2H_CHANNEL_INDEX_H12L : MIN_D2H_CHANNEL_INDEX;
+        max_channel_index = (device_arch == HAILO_ARCH_HAILO12L) ? MAX_D2H_CHANNEL_INDEX_H12L : MAX_D2H_CHANNEL_INDEX;
     }
 
     if ((LayerType::BOUNDARY == std::get<0>(layer_identifier)) && use_enhanced_channel) {
-        min_channel_index = (device_arch == HAILO_ARCH_MARS) ? MIN_ENHANCED_D2H_CHANNEL_INDEX_H12L : MIN_ENHANCED_D2H_CHANNEL_INDEX;
+        min_channel_index = (device_arch == HAILO_ARCH_HAILO12L) ? MIN_ENHANCED_D2H_CHANNEL_INDEX_H12L : MIN_ENHANCED_D2H_CHANNEL_INDEX;
     }
 
     return std::make_pair(min_channel_index, max_channel_index);

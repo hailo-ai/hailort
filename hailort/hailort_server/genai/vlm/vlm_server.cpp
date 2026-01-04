@@ -14,21 +14,21 @@
 #include "hailo/quantization.hpp"
 
 #include "common/file_utils.hpp"
+#include "common/genai/constants.hpp"
 
 #include "utils.hpp"
 
 #include <nlohmann/json.hpp>
+#include <future>
 
 
 using namespace hailort::genai;
 using namespace hailort;
 
-static const std::string PREFILL_MODEL_NAME_SUFFIX = "prefill";
-static const std::string TBT_MODEL_NAME_SUFFIX = "tbt";
 static const std::string FRAME_ENCODER_MODEL_NAME_SUFFIX = "encoder";
-static const std::string VIS_SPECIAL_TOKEN_RESOURCE_NAME = "special_token__vision";
 
-constexpr uint32_t VLMServer::MAX_FRAMES_IN_SINGLE_GENERATION;
+static const std::string ENCODER_FIRST_INPUT_NAME_SUFF = "input_layer1";
+static const std::string ENCODER_SECOND_INPUT_NAME_SUFF = "input_layer2";
 
 Expected<std::unique_ptr<LLMServer>> VLMServer::create_unique(std::shared_ptr<Session> session, std::shared_ptr<VDeviceManager> vdevice_manager)
 {
@@ -56,211 +56,338 @@ hailo_status VLMServer::parse_config_json(const MemoryView &config_json)
 
     CHECK(hailo_config_json.contains("image_pad"), HAILO_INVALID_ARGUMENT);
     m_image_pad_token_id = hailo_config_json["image_pad"].get<int>();
+    m_video_pad_token_id = 151656; // "<|video_pad|>" - default value for qwen family models
+    if (hailo_config_json.contains("video_pad")) {
+        m_video_pad_token_id = hailo_config_json["video_pad"].get<int>();
+    }
 
     return LLMServer::parse_config_json(hailo_config_json);
 }
 
+std::future<hailo_status> VLMServer::create_pre_process_future(const Hef &hef,
+    std::shared_ptr<Event> inference_models_created_event, std::future<Expected<Eigen::VectorXf>> &external_resources_future,
+    std::shared_ptr<Event> pre_process_created_event, std::shared_ptr<Event> shutdown_event)
+{
+    return std::async(std::launch::async, [this, hef, inference_models_created_event, &external_resources_future, pre_process_created_event, shutdown_event]() -> hailo_status {
+        CHECK_SUCCESS(WaitOrShutdown(inference_models_created_event, shutdown_event).wait(WAIT_FOR_OPERATION_TIMEOUT));
+        TRY(auto theta, wait_for_future_value(external_resources_future));
+
+        LOGGER__GENAI_STATS_START("[create] create PreProcess");
+        auto prefill_inputs_frame_size = m_inference_manager_prefill->get_inputs_frame_size();
+        auto tbt_inputs_frame_size = m_inference_manager_tbt ? m_inference_manager_tbt->get_inputs_frame_size() : std::map<std::string, size_t>();
+        TRY(auto embeddings_input_name, get_layer_name_from_suffix<size_t>(m_input_layers_names_suffixes.embeddings, prefill_inputs_frame_size));
+        TRY(auto embeddings_input, m_inference_manager_prefill->get_model()->input(embeddings_input_name));
+        m_embeddings_features = embeddings_input.shape().features;
+
+        // Get scaled-mask value
+        TRY(auto mask_input_name, get_layer_name_from_suffix<size_t>(m_input_layers_names_suffixes.attention_mask, prefill_inputs_frame_size));
+        TRY(auto mask_input, m_inference_manager_prefill->get_model()->input(mask_input_name));
+        auto mask_quant_infos = mask_input.get_quant_infos();
+        CHECK(1 == mask_quant_infos.size(), HAILO_INTERNAL_FAILURE);
+        float32_t dequantized_mask_value = 1;
+        uint8_t scaled_mask_value = 0;
+        Quantization::quantize_input_buffer<float32_t, uint8_t>(&dequantized_mask_value, &scaled_mask_value, 1, mask_quant_infos[0]);
+
+        // Create VLMPreProcess (different from LLM - needs encoder_input_shape)
+        TRY(m_pre_process, VLMPreProcess::create(prefill_inputs_frame_size, tbt_inputs_frame_size,
+            std::move(theta), m_embeddings_features, m_encoder_input_shape, scaled_mask_value, m_input_layers_names_suffixes, m_pre_process_params));
+        LOGGER__GENAI_STATS_END("[create] create PreProcess");
+        pre_process_created_event->signal();
+
+        return HAILO_SUCCESS;
+    });
+}
+
+std::future<hailo_status> VLMServer::create_token_embedder_future(const Hef &hef,
+    std::shared_ptr<Event> embeddings_arrived_event, std::shared_ptr<Event> pre_process_created_event, std::shared_ptr<Event> shutdown_event)
+{
+    return std::async(std::launch::async, [this, hef, embeddings_arrived_event, pre_process_created_event, shutdown_event]() -> hailo_status {
+        CHECK_SUCCESS(WaitOrShutdown(pre_process_created_event, shutdown_event).wait(WAIT_FOR_OPERATION_TIMEOUT));
+        CHECK_SUCCESS(WaitOrShutdown(embeddings_arrived_event, shutdown_event).wait(LONG_TIMEOUT)); // Waiting for data over the session
+
+        LOGGER__GENAI_STATS_START("[create] create token embedder");
+        const auto embeddings_per_frame = dynamic_cast<VLMPreProcess*>(m_pre_process.get())->embeddings_per_frame();
+        TRY(auto embeddings_view, hef.get_external_resources(INPUT_EMB_BINARY));
+
+        TRY(m_token_embedder, TokenEmbedder<uint16_t>::create(embeddings_view,
+            embeddings_view.size() / (sizeof(uint16_t) * m_embeddings_features), m_embeddings_features,
+            m_image_pad_token_id, m_video_pad_token_id, embeddings_per_frame));
+        LOGGER__GENAI_STATS_END("[create] create token embedder");
+
+        return HAILO_SUCCESS;
+    });
+}
+
+// VLM-specific: Create frame encoder asynchronously
+std::future<hailo_status> VLMServer::create_frame_encoder_future(std::shared_ptr<VDevice> vdevice, const Hef &hef,
+    std::shared_ptr<Event> frame_encoder_created_event)
+{
+    return std::async(std::launch::async, [this, vdevice, hef, frame_encoder_created_event]() -> hailo_status {
+        LOGGER__GENAI_STATS_START("[create] create vision encoder model");
+        TRY(auto frame_encoder_model_name, get_model_name_from_suffix(hef, FRAME_ENCODER_MODEL_NAME_SUFFIX));
+        TRY(m_inference_manager_frame_encoder, InferenceManager::create(vdevice, hef, frame_encoder_model_name));
+
+        auto model_encoder = m_inference_manager_frame_encoder->get_model();
+        auto &encoder_input_config = *model_encoder->inputs().begin(); // All inputs are the same shape
+
+        // Store encoder input shape for VLMPreProcess creation
+        m_encoder_input_shape = encoder_input_config.shape();
+        frame_encoder_created_event->signal();  // Signal that encoder_input_shape is ready
+        LOGGER__GENAI_STATS_END("[create] create vision encoder model");
+
+        // Configure vision encoder
+        LOGGER__GENAI_STATS_START("[create] configure vision encoder model");
+        CHECK_SUCCESS(m_inference_manager_frame_encoder->configure());
+        LOGGER__GENAI_STATS_END("[create] configure vision encoder model");
+
+        return HAILO_SUCCESS;
+    });
+}
+
+Expected<std::future<hailo_status>> VLMServer::create_resources_async(std::shared_ptr<VDevice> vdevice, std::shared_ptr<Buffer> hef_buffer,
+    bool tokenizer_on_host, std::shared_ptr<Event> theta_arrived_event, std::shared_ptr<Event> hailo_config_json_arrived_event,
+    std::shared_ptr<Event> tokenizer_arrived_event, std::shared_ptr<Event> embeddings_arrived_event, std::shared_ptr<Event> shutdown_event)
+{
+    TRY(auto inference_models_created_event , Event::create_shared(Event::State::not_signalled));
+    TRY(auto external_resources_created_event, Event::create_shared(Event::State::not_signalled));
+    TRY(auto pre_process_created_event, Event::create_shared(Event::State::not_signalled));
+    TRY(auto frame_encoder_created_event, Event::create_shared(Event::State::not_signalled));
+
+    return std::async(std::launch::async, [this, vdevice, hef_buffer, tokenizer_on_host, theta_arrived_event,
+        hailo_config_json_arrived_event, tokenizer_arrived_event, embeddings_arrived_event, inference_models_created_event,
+        external_resources_created_event, pre_process_created_event, frame_encoder_created_event, shutdown_event]() -> hailo_status {
+
+        // Create HEF
+        LOGGER__GENAI_STATS_START("[create] create HEF");
+        TRY(auto hef, Hef::create(hef_buffer));
+        hef.set_memory_footprint_optimization(true);
+        LOGGER__GENAI_STATS_END("[create] create HEF");
+
+        // Spawn all async creation tasks
+        auto external_resources_future = parse_external_resources_future(hef, hailo_config_json_arrived_event,
+            theta_arrived_event, external_resources_created_event, shutdown_event);
+
+        auto inference_managers_future = create_inference_managers_future(vdevice, hef, "",
+            external_resources_created_event, inference_models_created_event, shutdown_event);
+
+        auto frame_encoder_future = create_frame_encoder_future(vdevice, hef, frame_encoder_created_event);
+
+        // Wait for frame encoder to set m_encoder_input_shape before creating PreProcess
+        CHECK_SUCCESS(WaitOrShutdown(frame_encoder_created_event, shutdown_event).wait(WAIT_FOR_OPERATION_TIMEOUT));
+
+        auto pre_process_future = create_pre_process_future(hef, inference_models_created_event, external_resources_future, pre_process_created_event, shutdown_event);
+
+        if (!tokenizer_on_host) {
+            auto tokenizer_future = create_tokenizer_future(hef, tokenizer_arrived_event, shutdown_event);
+            auto token_embedder_future = create_token_embedder_future(hef,
+                embeddings_arrived_event, pre_process_created_event, shutdown_event);
+            CHECK_SUCCESS(wait_for_future_status_or_shutdown(tokenizer_future, shutdown_event));
+            CHECK_SUCCESS(wait_for_future_status_or_shutdown(token_embedder_future, shutdown_event));
+        }
+
+        // Wait for all async tasks to complete
+        CHECK_SUCCESS(wait_for_future_status_or_shutdown(pre_process_future, shutdown_event));
+        CHECK_SUCCESS(wait_for_future_status_or_shutdown(inference_managers_future, shutdown_event));
+        CHECK_SUCCESS(wait_for_future_status_or_shutdown(frame_encoder_future, shutdown_event));
+
+        return HAILO_SUCCESS;
+    });
+}
+
 Expected<Buffer> VLMServer::handle_create_vlm_request(const MemoryView &request)
 {
-    LOGGER__GENAI_STATS_START("[create-vlm] create vdevice");
+    LOGGER__GENAI_STATS_START("[create] create vdevice");
     TRY_AS_HRPC_STATUS(auto tuple, VLMCreateSerializer::deserialize_request(request), VLMCreateSerializer);
     auto &group_id = std::get<0>(tuple);
     auto &hef_path = std::get<1>(tuple);
-    auto file_size = std::get<2>(tuple);
+    auto &chunks_to_transfer = std::get<2>(tuple);
     auto tokenizer_on_host = std::get<3>(tuple);
+    auto total_hef_size = std::get<4>(tuple);
 
     auto params = HailoRTDefaults::get_vdevice_params();
     if (!group_id.empty()) {
         params.group_id = group_id.c_str();
     }
     TRY_AS_HRPC_STATUS(auto vdevice, m_vdevice_manager->create_shared_vdevice(params, DEFAULT_LLM_CONNECTION_PORT), VLMCreateSerializer);
-    LOGGER__GENAI_STATS_END("[create-vlm] create vdevice");
+    LOGGER__GENAI_STATS_END("[create] create vdevice");
 
-    LOGGER__GENAI_STATS_START("[create-vlm] transfer HEF");
+    LOGGER__GENAI_STATS_START("[create] transfer HEF");
     std::shared_ptr<Buffer> hef_buffer_ptr;
+    std::future<hailo_status> resources_creation_future;
+    std::future<hailo_status> ccws_future;
+    TRY_AS_HRPC_STATUS(auto theta_arrived_event, Event::create_shared(Event::State::not_signalled), VLMCreateSerializer);
+    TRY_AS_HRPC_STATUS(auto hailo_config_json_arrived_event, Event::create_shared(Event::State::not_signalled), VLMCreateSerializer);
+    TRY_AS_HRPC_STATUS(auto tokenizer_arrived_event, Event::create_shared(Event::State::not_signalled), VLMCreateSerializer);
+    TRY_AS_HRPC_STATUS(auto embeddings_arrived_event, Event::create_shared(Event::State::not_signalled), VLMCreateSerializer);
+    TRY_AS_HRPC_STATUS(auto shutdown_event, Event::create_shared(Event::State::not_signalled), VLMCreateSerializer);
+
+    // Create EventGuard AFTER futures are declared but BEFORE any operations that might fail
+    // This ensures that if any error occurs, shutdown_event will be signaled on early return
+    // and any already-launched futures will be notified to stop waiting
+    EventGuard event_guard(shutdown_event);
+
     if (!hef_path.empty()) { // hef path is not none only if hef exists locally, so no need to transfer it over the session
         TRY_AS_HRPC_STATUS(auto buff, read_binary_file(hef_path, BufferStorageParams::create_dma()), VLMCreateSerializer);
         hef_buffer_ptr = make_shared_nothrow<Buffer>(std::move(buff));
-        CHECK_AS_HRPC_STATUS(nullptr != hef_buffer_ptr, HAILO_OUT_OF_HOST_MEMORY, VLMCreateSerializer); // Consider returning different status
+        CHECK_AS_HRPC_STATUS(nullptr != hef_buffer_ptr, HAILO_OUT_OF_HOST_MEMORY, VLMCreateSerializer);
+
+        // For local HEF, create resources immediately in async task
+        TRY_AS_HRPC_STATUS(resources_creation_future, create_resources_async(vdevice, hef_buffer_ptr, tokenizer_on_host, theta_arrived_event,
+            hailo_config_json_arrived_event, tokenizer_arrived_event, embeddings_arrived_event, shutdown_event), VLMCreateSerializer);
+        // Since all data is already in the buffer, signal the events
+        theta_arrived_event->signal();
+        hailo_config_json_arrived_event->signal();
+        tokenizer_arrived_event->signal();
+        embeddings_arrived_event->signal();
     } else {
-        // Empty string indicates that the HEF does not exist on the server
-        TRY_AS_HRPC_STATUS(hef_buffer_ptr, m_session.receive_file_chunked(file_size), VLMCreateSerializer);
-    }
+        // Use total HEF size from the request
+        LOGGER__INFO("hef buffer of size '{}'", total_hef_size);
+        TRY_AS_HRPC_STATUS(hef_buffer_ptr, Buffer::create_shared(total_hef_size, BufferStorageParams::create_dma()), VLMCreateSerializer);
 
-    LOGGER__GENAI_STATS_END("[create-vlm] transfer HEF");
-    LOGGER__INFO("hef buffer of size '{}'", hef_buffer_ptr->size());
-
-    LOGGER__GENAI_STATS_START("[create-vlm] create HEF");
-    TRY_AS_HRPC_STATUS(auto hef, Hef::create(hef_buffer_ptr), VLMCreateSerializer);
-    hef.set_memory_footprint_optimization(true); // zero-copy configuration if possible
-    LOGGER__GENAI_STATS_END("[create-vlm] create HEF");
-
-    LOGGER__GENAI_STATS_START("[create-vlm] parse GenAI resources");
-    TRY_AS_HRPC_STATUS(auto hailo_config_json_view, hef.get_external_resources(HAILO_CONFIG_JSON), VLMCreateSerializer);
-    CHECK_SUCCESS_AS_HRPC_STATUS(parse_config_json(hailo_config_json_view), VLMCreateSerializer);
-
-    TRY_AS_HRPC_STATUS(auto theta_view, hef.get_external_resources(THETA), VLMCreateSerializer);
-    auto theta = LLMPreProcess::generate_theta_from_memview(theta_view);
-    LOGGER__GENAI_STATS_END("[create-vlm] parse GenAI resources");
-
-    LOGGER__GENAI_STATS_START("[create-vlm] create vision encoder model");
-    TRY_AS_HRPC_STATUS(auto frame_encoder_model_name, get_model_name_from_suffix(hef, FRAME_ENCODER_MODEL_NAME_SUFFIX),
-        VLMCreateSerializer);
-    TRY_AS_HRPC_STATUS(m_inference_manager_frame_encoder, InferenceManager::create(vdevice, hef, frame_encoder_model_name),
-        VLMCreateSerializer);
-    LOGGER__GENAI_STATS_END("[create-vlm] create vision encoder model");
-
-    LOGGER__GENAI_STATS_START("[create-vlm] configure vision encoder model");
-    auto model_encoder = m_inference_manager_frame_encoder->get_model();
-    TRY_AS_HRPC_STATUS(auto encoder_output_config, model_encoder->output(),
-        VLMCreateSerializer);
-    m_frame_encoder_output_buffers.reserve(MAX_FRAMES_IN_SINGLE_GENERATION);
-    for (uint32_t i = 0; i < MAX_FRAMES_IN_SINGLE_GENERATION; ++i) {
-        TRY_AS_HRPC_STATUS(auto buffer, Buffer::create_shared(encoder_output_config.get_frame_size(), BufferStorageParams::create_dma()),
-            VLMCreateSerializer);
-        m_frame_encoder_output_buffers.push_back(buffer);
-    }
-    TRY_AS_HRPC_STATUS(auto encoder_input_config, model_encoder->input(), VLMCreateSerializer);
-    m_frame_encoder_input_buffers.reserve(MAX_FRAMES_IN_SINGLE_GENERATION);
-    for (uint32_t i = 0; i < MAX_FRAMES_IN_SINGLE_GENERATION; ++i) {
-        TRY_AS_HRPC_STATUS(auto buffer, Buffer::create_shared(encoder_input_config.get_frame_size(), BufferStorageParams::create_dma()),
-            VLMCreateSerializer);
-        m_frame_encoder_input_buffers.push_back(buffer);
-    }
-
-    CHECK_SUCCESS_AS_HRPC_STATUS(m_inference_manager_frame_encoder->configure(), VLMCreateSerializer);
-    LOGGER__GENAI_STATS_END("[create-vlm] configure vision encoder model");
-
-    LOGGER__GENAI_STATS_START("[create-vlm] create prefill model");
-    TRY_AS_HRPC_STATUS(m_inference_manager_prefill, LLMInferenceManager::create(vdevice, hef, PREFILL_MODEL_NAME_SUFFIX),
-        VLMCreateSerializer);
-    LOGGER__GENAI_STATS_END("[create-vlm] create prefill model");
-
-    LOGGER__GENAI_STATS_START("[create-vlm] configure prefill model");
-    auto model_prefill = m_inference_manager_prefill->get_model();
-    for (auto input : model_prefill->inputs()) {
-        if (LLMPreProcess::is_positional_embed_layer(input.name(), m_input_layers_names_suffixes)) {
-            input.set_format_type(HAILO_FORMAT_TYPE_FLOAT32);
-        }
-    }
-    for (auto output : model_prefill->outputs()) {
-        output.set_format_type(HAILO_FORMAT_TYPE_FLOAT32);
-    }
-    TRY_AS_HRPC_STATUS(m_prefill_buffers, m_inference_manager_prefill->allocate_buffers(),
-        VLMCreateSerializer);
-    m_prefill_inputs = buffers_to_memviews(m_prefill_buffers.first);
-    m_prefill_outputs = buffers_to_memviews(m_prefill_buffers.second);
-    CHECK_SUCCESS_AS_HRPC_STATUS(m_inference_manager_prefill->configure(), VLMCreateSerializer);
-    LOGGER__GENAI_STATS_END("[create-vlm] configure prefill model");
-
-    LOGGER__GENAI_STATS_START("[create-vlm] create tbt model");
-    m_inference_manager_tbt = nullptr;
-    auto inference_manager_tbt = LLMInferenceManager::create(vdevice, hef, TBT_MODEL_NAME_SUFFIX);
-    if (inference_manager_tbt) {
-        m_inference_manager_tbt = inference_manager_tbt.release();
-    }
-    LOGGER__GENAI_STATS_END("[create-vlm] create tbt model");
-
-    LOGGER__GENAI_STATS_START("[create-vlm] configure tbt model");
-    if (m_inference_manager_tbt) {
-        auto model_tbt = m_inference_manager_tbt->get_model();
-        for (auto input : model_tbt->inputs()) {
-            if (LLMPreProcess::is_positional_embed_layer(input.name(), m_input_layers_names_suffixes)) {
-                input.set_format_type(HAILO_FORMAT_TYPE_FLOAT32);
+        // Receive all chunks synchronously, spawning async creation tasks after key chunks arrive
+        for (const auto &chunk : chunks_to_transfer) {
+            // Receive all chunks synchronously, except for CCWs
+            if (chunk.name != CCWS) {
+                CHECK_SUCCESS_AS_HRPC_STATUS(receive_hef_chunk_sync(m_session, chunk, hef_buffer_ptr),
+                VLMCreateSerializer);
+            } else {
+                ccws_future = std::async(std::launch::async, [this, &chunk, &hef_buffer_ptr]() -> hailo_status {
+                    LOGGER__INFO("Receiving CCWs chunk '{}' (offset: {}, size: {} bytes) [ASYNC]", chunk.name, chunk.offset, chunk.size);
+                    auto status = receive_hef_chunk_sync(m_session, chunk, hef_buffer_ptr);
+	                LOGGER__GENAI_STATS_END("[create] transfer HEF");
+                    return status;
+                });
+            }
+            // After receiving HEADER_PROTO_PADDING, start HEF creation asynchronously
+            if (chunk.name == HEADER_PROTO_PADDING) {
+                LOGGER__INFO("{} received, starting async resources creation", HEADER_PROTO_PADDING);
+                TRY_AS_HRPC_STATUS(resources_creation_future, create_resources_async(vdevice, hef_buffer_ptr, tokenizer_on_host,
+                    theta_arrived_event, hailo_config_json_arrived_event, tokenizer_arrived_event, embeddings_arrived_event, shutdown_event), VLMCreateSerializer);
+            } else if (chunk.name == HAILO_CONFIG_JSON) {
+                hailo_config_json_arrived_event->signal();
+            } else if (chunk.name == THETA) {
+                theta_arrived_event->signal();
+            } else if (chunk.name == INPUT_EMB_BINARY) {
+                embeddings_arrived_event->signal();
+            } else if (chunk.name == TOKENIZER) {
+                tokenizer_arrived_event->signal();
             }
         }
-        for (auto output : model_tbt->outputs()) {
-            output.set_format_type(HAILO_FORMAT_TYPE_FLOAT32);
-        }
-        TRY_AS_HRPC_STATUS(m_tbt_buffers, m_inference_manager_tbt->allocate_buffers(), VLMCreateSerializer);
-        m_tbt_inputs = buffers_to_memviews(m_tbt_buffers.first);
-        m_tbt_outputs = buffers_to_memviews(m_tbt_buffers.second);
-        CHECK_SUCCESS_AS_HRPC_STATUS(m_inference_manager_tbt->configure(), VLMCreateSerializer);
     }
-    LOGGER__GENAI_STATS_END("[create-vlm] configure tbt model");
 
-    LOGGER__GENAI_STATS_START("[create-vlm] create PreProcess");
-    auto prefill_inputs_frame_size = m_inference_manager_prefill->get_inputs_frame_size();
-    auto tbt_inputs_frame_size = m_inference_manager_tbt ? m_inference_manager_tbt->get_inputs_frame_size() : std::map<std::string, size_t>();
-
-    // Extract embeddings layer info
-    // TODO: HRT-16646 - Add this to embeddings binary format in hef
-    TRY_AS_HRPC_STATUS(auto embeddings_input_name, get_layer_name_from_suffix<size_t>(m_input_layers_names_suffixes.embeddings, prefill_inputs_frame_size),
-        VLMCreateSerializer);
-    TRY_AS_HRPC_STATUS(auto embeddings_input, m_inference_manager_prefill->get_model()->input(embeddings_input_name),
-        VLMCreateSerializer);
-    auto embeddings_features = embeddings_input.shape().features;
-
-    // Get scaled-mask value
-    TRY_AS_HRPC_STATUS(auto mask_input_name, get_layer_name_from_suffix<size_t>(m_input_layers_names_suffixes.attention_mask, prefill_inputs_frame_size),
-        VLMCreateSerializer);
-    TRY(auto mask_input, m_inference_manager_prefill->get_model()->input(mask_input_name));
-    auto mask_quant_infos = mask_input.get_quant_infos();
-    CHECK_AS_HRPC_STATUS(1 == mask_quant_infos.size(), HAILO_INTERNAL_FAILURE, VLMCreateSerializer);
-    float32_t dequantized_mask_value = 1;
-    uint8_t scaled_mask_value = 0;
-    Quantization::quantize_input_buffer<float32_t, uint8_t>(&dequantized_mask_value, &scaled_mask_value, 1, mask_quant_infos[0]);
-
-    TRY_AS_HRPC_STATUS(m_pre_process, VLMPreProcess::create(prefill_inputs_frame_size, tbt_inputs_frame_size,
-        std::move(theta), embeddings_features, encoder_input_config.shape(), scaled_mask_value, m_input_layers_names_suffixes, m_pre_process_params),
-        VLMCreateSerializer);
-    LOGGER__GENAI_STATS_END("[create-vlm] create PreProcess");
-
-    LOGGER__GENAI_STATS_START("[create-vlm] create tokenizer");
-    const auto embeddings_per_frame = dynamic_cast<VLMPreProcess*>(m_pre_process.get())->embeddings_per_frame();
-    if (!tokenizer_on_host) {
-        // create token_embedder
-        TRY_AS_HRPC_STATUS(auto embeddings_view, hef.get_external_resources(INPUT_EMB_BINARY), VLMCreateSerializer);
-        TRY_AS_HRPC_STATUS(m_token_embedder, TokenEmbedder<uint16_t>::create(embeddings_view,
-            embeddings_view.size() / (sizeof(uint16_t) * embeddings_features), embeddings_features,
-            m_image_pad_token_id, embeddings_per_frame), VLMCreateSerializer);
-
-        TRY_AS_HRPC_STATUS(auto tokenizer_view, hef.get_external_resources(TOKENIZER), VLMCreateSerializer);
-
-        // HRT-16824 - HailoTokenizer should get memview in the c'tor and convert to string if neccesary inside
-        std::string tokenizer_blob(tokenizer_view.size(), '\0');
-        std::memcpy(const_cast<char*>(tokenizer_blob.data()), tokenizer_view.data(), tokenizer_blob.size());
-        TRY_AS_HRPC_STATUS(m_tokenizer, HailoTokenizer::create(tokenizer_blob), VLMCreateSerializer);
+    CHECK_SUCCESS_AS_HRPC_STATUS(wait_for_future_status(resources_creation_future), VLMCreateSerializer);
+    if (ccws_future.valid()) { // In case HEF exists locally, dont need to wait for CCWs
+        CHECK_SUCCESS_AS_HRPC_STATUS(wait_for_future_status(ccws_future), VLMCreateSerializer);
     }
-    LOGGER__GENAI_STATS_END("[create-vlm] create tokenizer");
 
     m_recovery.tokens = {m_end_of_sentence_token_id};
 
+    // Get encoder input config from the created frame encoder
+    auto model_encoder = m_inference_manager_frame_encoder->get_model();
+    auto &encoder_input_config = *model_encoder->inputs().begin(); // All inputs are the same format and shape
     hailo_format_t input_frame_format = encoder_input_config.format();
     hailo_3d_image_shape_t input_frame_shape = encoder_input_config.shape();
 
-    TRY_AS_HRPC_STATUS(auto reply, VLMCreateSerializer::serialize_reply(HAILO_SUCCESS, input_frame_shape, input_frame_format, m_chat_template, embeddings_features,
-        m_image_pad_token_id, embeddings_per_frame), VLMCreateSerializer);
+    // Get embeddings_per_frame from VLMPreProcess
+    const auto embeddings_per_frame = dynamic_cast<VLMPreProcess*>(m_pre_process.get())->embeddings_per_frame();
+
+    TRY_AS_HRPC_STATUS(auto reply, VLMCreateSerializer::serialize_reply(HAILO_SUCCESS, input_frame_shape, input_frame_format, m_chat_template, m_embeddings_features,
+        m_image_pad_token_id, m_video_pad_token_id, embeddings_per_frame), VLMCreateSerializer);
+
     return reply;
 }
 
 Expected<Buffer> VLMServer::handle_vlm_generate_request(const MemoryView &request)
 {
-    TRY_AS_HRPC_STATUS(auto number_of_frames, VLMGeneratorGenerateSerializer::deserialize_request(request),
+    TRY_AS_HRPC_STATUS(auto request_info, VLMGeneratorGenerateSerializer::deserialize_request(request),
         VLMGeneratorGenerateSerializer);
-    CHECK_AS_HRPC_STATUS(number_of_frames <= MAX_FRAMES_IN_SINGLE_GENERATION, HAILO_INVALID_ARGUMENT,
-        VLMGeneratorGenerateSerializer);
+    auto &[number_of_standalone_frames, raw_video_frames_count_per_video] = request_info;
+
+    // Compute total number of video frames from the per-video counts
+    uint32_t number_of_video_frames = std::accumulate(raw_video_frames_count_per_video.begin(), raw_video_frames_count_per_video.end(), 0u);
+
+    auto total_number_of_frames = number_of_standalone_frames + number_of_video_frames;
 
     std::unique_lock<std::mutex> lock(m_generation_mutex);
 
-    LOGGER__INFO("Generate request received with {} frames", number_of_frames);
+    LOGGER__INFO("Generate request received with {} frames ({} standalone, {} video)", total_number_of_frames, number_of_standalone_frames, number_of_video_frames);
 
     prepare_for_new_generation();
 
-    for (uint32_t i = 0; i < number_of_frames; i++) {
-        TRY_AS_HRPC_STATUS(auto size_read, m_session.read(MemoryView(*m_frame_encoder_input_buffers[i])),
-            VLMGeneratorGenerateSerializer);
-        CHECK_AS_HRPC_STATUS(size_read == m_frame_encoder_input_buffers[i]->size(), HAILO_INVALID_ARGUMENT,
-            VLMGeneratorGenerateSerializer);
+    TRY(auto encoder_output_config, m_inference_manager_frame_encoder->get_model()->output());
+    auto encoder_output_frame_size = encoder_output_config.get_frame_size();
+    std::vector<BufferPtr> frame_encoder_input_buffers;
+    frame_encoder_input_buffers.reserve(total_number_of_frames);
+    // TODO (HRT-19393): Optimize the buffers allocations (pool? lazy allocation?)
+
+    // Handle standalone frames
+    for (uint32_t i = 0; i < number_of_standalone_frames; i++) {
+        TRY_AS_HRPC_STATUS(auto encoder_input_frame, m_session.read(), VLMGeneratorGenerateSerializer);
+        frame_encoder_input_buffers.push_back(encoder_input_frame);
+        TRY_AS_HRPC_STATUS(auto encoder_output_frame, Buffer::create_shared(encoder_output_frame_size, BufferStorageParams::create_dma()), VLMGeneratorGenerateSerializer);
+        m_current_standalone_frames_embeddings.push_back(encoder_output_frame);
     }
 
     // Process frames to get frame embeddings - TODO: HRT-17264 - Move to async generation
-    for (uint32_t i = 0; i < number_of_frames; i++) {
-        m_current_frame_embeddings.push_back(MemoryView(m_frame_encoder_output_buffers[i]));
-        LOGGER__GENAI_STATS_START("[vlm-generate-prefill] encode frame");
-        auto status = m_inference_manager_frame_encoder->generate(
-            MemoryView(m_frame_encoder_input_buffers[i]), MemoryView(m_frame_encoder_output_buffers[i]));
-        LOGGER__GENAI_STATS_END("[vlm-generate-prefill] encode frame");
+    for (uint32_t i = 0; i < number_of_standalone_frames; i++) {
+        LOGGER__GENAI_STATS_START("[generate-prefill] encode frame");
+        std::map<std::string, MemoryView> inputs;
+        for (auto &input_config : m_inference_manager_frame_encoder->get_model()->inputs()) {
+            inputs[input_config.name()] = MemoryView(frame_encoder_input_buffers[i]);
+        }
+        std::map<std::string, MemoryView> outputs {{encoder_output_config.name(), MemoryView(m_current_standalone_frames_embeddings[i])}};
+        CHECK_SUCCESS_AS_HRPC_STATUS(m_inference_manager_frame_encoder->generate(inputs, outputs), VLMGeneratorGenerateSerializer);
+        LOGGER__GENAI_STATS_END("[generate-prefill] encode frame");
+    }
+
+    // Handle video frames
+    // Raise errors in case the encoder has only 1 input and video frames are passed
+    if (0 != number_of_video_frames) {
+        CHECK_AS_HRPC_STATUS(m_inference_manager_frame_encoder->get_model()->inputs().size() == 2, HAILO_INVALID_OPERATION, VLMGeneratorGenerateSerializer);
+    }
+
+    for (uint32_t i = 0; i < number_of_video_frames; i++) {
+        TRY_AS_HRPC_STATUS(auto encoder_input_frame, m_session.read(), VLMGeneratorGenerateSerializer);
+        frame_encoder_input_buffers.push_back(encoder_input_frame);
+    }
+    uint32_t number_of_video_frames_to_process = 0;
+    // Build vector of processed frame counts per video (encoder outputs half the input frames, rounded up)
+    std::vector<size_t> processed_video_frames_count_per_video;
+    processed_video_frames_count_per_video.reserve(raw_video_frames_count_per_video.size());
+    for (auto raw_count : raw_video_frames_count_per_video) {
+        uint32_t processed_count = (raw_count + 1) / 2;
+        number_of_video_frames_to_process += processed_count;
+        processed_video_frames_count_per_video.push_back(processed_count);
+    }
+    if (m_token_embedder) {
+        m_token_embedder->set_video_frames_count(processed_video_frames_count_per_video);
+    }
+
+    m_current_videos_embeddings.reserve(number_of_video_frames_to_process);
+    for (uint32_t i = 0; i < number_of_video_frames_to_process; i++) {
+        TRY_AS_HRPC_STATUS(auto encoder_output_frame, Buffer::create_shared(encoder_output_frame_size, BufferStorageParams::create_dma()), VLMGeneratorGenerateSerializer);
+        m_current_videos_embeddings.push_back(encoder_output_frame);
+
+        auto input_index_first = number_of_standalone_frames + (2 * i);
+        auto input_index_second = ((2 * i) + 1 < number_of_video_frames) ? input_index_first + 1 :
+            input_index_first;
+
+        LOGGER__GENAI_STATS_START("[generate-prefill] encode frames");
+        std::map<std::string, MemoryView> inputs;
+        for (auto &input_config : m_inference_manager_frame_encoder->get_model()->inputs()) {
+            if (has_suffix(input_config.name(), ENCODER_FIRST_INPUT_NAME_SUFF)) {
+                inputs[input_config.name()] = MemoryView(frame_encoder_input_buffers[input_index_first]);
+            } else if (has_suffix(input_config.name(), ENCODER_SECOND_INPUT_NAME_SUFF)) {
+                inputs[input_config.name()] = MemoryView(frame_encoder_input_buffers[input_index_second]);
+            } else {
+                LOGGER__ERROR("Invalid input config name: '{}' for video processing - expecting suffixes '{}' or '{}'",
+                    input_config.name(), ENCODER_FIRST_INPUT_NAME_SUFF, ENCODER_SECOND_INPUT_NAME_SUFF);
+                CHECK_AS_HRPC_STATUS(false, HAILO_INVALID_ARGUMENT, VLMGeneratorGenerateSerializer);
+            }
+        }
+        std::map<std::string, MemoryView> outputs {{encoder_output_config.name(), MemoryView(m_current_videos_embeddings[i])}};
+        auto status = m_inference_manager_frame_encoder->generate(inputs, outputs);
+        LOGGER__GENAI_STATS_END("[generate-prefill] encode frames");
         CHECK_AS_HRPC_STATUS(status == HAILO_SUCCESS, status, VLMGeneratorGenerateSerializer);
     }
 
@@ -270,76 +397,97 @@ Expected<Buffer> VLMServer::handle_vlm_generate_request(const MemoryView &reques
 }
 
 hailo_status VLMServer::process_prefill_inputs_chunk(std::map<std::string, MemoryView> &prefill_inputs,
-    std::map<std::string, MemoryView> &prefill_outputs, const std::vector<MemoryView> &input_embeddings, const std::vector<MemoryView> &frame_embeddings,
-    uint32_t &current_frame_index, uint32_t &current_emb_index_in_frame)
+    std::map<std::string, MemoryView> &prefill_outputs, const std::vector<EmbeddingViewWrapper> &input_embeddings,
+    EmbeddingsVectorState &standalone_frame_embeddings_state, EmbeddingsVectorState &video_embeddings_state)
 {
-    LOGGER__GENAI_STATS_START("[vlm-generate-prefill] pre process");
+    LOGGER__GENAI_STATS_START("[generate-prefill] pre process");
     CHECK_SUCCESS(dynamic_cast<VLMPreProcess*>(m_pre_process.get())->prepare_inputs_prefill(prefill_inputs, input_embeddings,
-        frame_embeddings, current_frame_index, current_emb_index_in_frame));
-    LOGGER__GENAI_STATS_END("[vlm-generate-prefill] pre process");
+        standalone_frame_embeddings_state, video_embeddings_state));
+    LOGGER__GENAI_STATS_END("[generate-prefill] pre process");
 
-    LOGGER__GENAI_STATS_START("[vlm-generate-prefill] update cache offset");
+    LOGGER__GENAI_STATS_START("[generate-prefill] update cache offset");
     CHECK_SUCCESS(m_inference_manager_prefill->update_cache_offset(static_cast<int32_t>(input_embeddings.size())));
 
-    LOGGER__GENAI_STATS_END("[vlm-generate-prefill] update cache offset");
+    LOGGER__GENAI_STATS_END("[generate-prefill] update cache offset");
 
-    LOGGER__GENAI_STATS_START("[vlm-generate-prefill] hw-inference prefill");
+    LOGGER__GENAI_STATS_START("[generate-prefill] hw-inference prefill");
     CHECK_SUCCESS(m_inference_manager_prefill->generate(prefill_inputs, prefill_outputs));
-    LOGGER__GENAI_STATS_END("[vlm-generate-prefill] hw-inference prefill");
+    LOGGER__GENAI_STATS_END("[generate-prefill] hw-inference prefill");
 
     return HAILO_SUCCESS;
 }
 
 Expected<int> VLMServer::get_next_token_prefill(std::map<std::string, MemoryView> &prefill_inputs,
-    std::map<std::string, MemoryView> &prefill_outputs, const std::vector<MemoryView> &input_embeddings,
-    const std::vector<MemoryView> &frame_embeddings,
+    std::map<std::string, MemoryView> &prefill_outputs, const std::vector<EmbeddingViewWrapper> &input_embeddings,
+    const std::vector<BufferPtr> &standalone_frame_embeddings, const std::vector<BufferPtr> &video_embeddings,
     const LLMGeneratorParams &params)
 {
     size_t num_full_chunks = input_embeddings.size() / m_pre_process_params.prefill_input_tokens_count;
     size_t remainder_size = input_embeddings.size() % m_pre_process_params.prefill_input_tokens_count;
 
-    uint32_t current_frame_index = 0;
-    uint32_t current_emb_index_in_frame = 0;
+    EmbeddingsVectorState standalone_frame_embeddings_state(standalone_frame_embeddings, dynamic_cast<VLMPreProcess*>(m_pre_process.get())->embeddings_per_frame());
+    EmbeddingsVectorState video_embeddings_state(video_embeddings, dynamic_cast<VLMPreProcess*>(m_pre_process.get())->embeddings_per_frame());
 
     // Process the remainder first, if any
     if (remainder_size > 0) {
-        std::vector<MemoryView> first_prefill_embeddings(input_embeddings.begin(), input_embeddings.begin() + remainder_size);
-        CHECK_SUCCESS(process_prefill_inputs_chunk(prefill_inputs, prefill_outputs, first_prefill_embeddings, frame_embeddings,
-            current_frame_index, current_emb_index_in_frame));
+        std::vector<EmbeddingViewWrapper> first_prefill_embeddings(input_embeddings.begin(), input_embeddings.begin() + remainder_size);
+        CHECK_SUCCESS(process_prefill_inputs_chunk(prefill_inputs, prefill_outputs, first_prefill_embeddings,
+            standalone_frame_embeddings_state, video_embeddings_state));
     }
 
     // Process full prefill chunks
     size_t offset = remainder_size;
     for (size_t i = 0; i < num_full_chunks; ++i) {
-        std::vector<MemoryView> input_embeddings_chunk(input_embeddings.begin() + offset, input_embeddings.begin() + offset + m_pre_process_params.prefill_input_tokens_count);
-        CHECK_SUCCESS(process_prefill_inputs_chunk(prefill_inputs, prefill_outputs, input_embeddings_chunk, frame_embeddings,
-            current_frame_index, current_emb_index_in_frame));
+        std::vector<EmbeddingViewWrapper> input_embeddings_chunk(input_embeddings.begin() + offset, input_embeddings.begin() + offset + m_pre_process_params.prefill_input_tokens_count);
+        CHECK_SUCCESS(process_prefill_inputs_chunk(prefill_inputs, prefill_outputs, input_embeddings_chunk,
+            standalone_frame_embeddings_state, video_embeddings_state));
         offset += input_embeddings_chunk.size();
     }
 
-    LOGGER__GENAI_STATS_START("[vlm-generate-prefill] post process");
+    LOGGER__GENAI_STATS_START("[generate-prefill] post process");
     auto next_token = m_post_process.get_next_token(prefill_outputs.begin()->second, m_tokens_history, params);
-    LOGGER__GENAI_STATS_END("[vlm-generate-prefill] post process");
+    LOGGER__GENAI_STATS_END("[generate-prefill] post process");
 
     return next_token;
 }
 
 
 Expected<std::pair<int, LLMGeneratorCompletion::Status>> VLMServer::handle_prefill_phase(const std::vector<int> &tokens,
-    const std::vector<MemoryView> &embeddings)
+    const std::vector<EmbeddingViewWrapper> &embeddings)
 {
-    // VLM prefill phase: process input embeddings WITH frame embeddings
-    // Note: m_current_frame_embeddings should be already populated
+    // VLM prefill phase: process input embeddings WITH frame embeddings and video embeddings
+    // Note: m_current_standalone_frames_embeddings and m_current_videos_embeddings should be already populated
 
     // Use provided embeddings if available (client-side tokenizer), otherwise tokenize on server
-    // find the number of image pad tokens in the the tokens-vector
-    auto number_of_image_pad_tokens = std::count(tokens.begin(), tokens.end(), m_image_pad_token_id);
-    CHECK(static_cast<size_t>(number_of_image_pad_tokens) == m_current_frame_embeddings.size(), HAILO_INVALID_OPERATION);
+    // find the number of image pad tokens and video-pad tokens in the embeddings-vector,
+    // and check that they match the number of frames and video embeddings generated by the encoder
+    (void)tokens;
+
+    const auto embeddings_per_frame = dynamic_cast<VLMPreProcess*>(m_pre_process.get())->embeddings_per_frame();
+    const auto number_of_standalone_frames_embeddings = std::count_if(embeddings.begin(), embeddings.end(), [](auto embedding) {
+        return embedding.type() == EmbeddingViewWrapper::EmbeddingType::IMAGE;
+    });
+
+    assert(0 == (number_of_standalone_frames_embeddings % embeddings_per_frame));
+    CHECK(static_cast<size_t>(number_of_standalone_frames_embeddings / embeddings_per_frame) == m_current_standalone_frames_embeddings.size(),
+        HAILO_INVALID_OPERATION,
+        "Number of image-pad embeddings from prompt ({}) does not match the number of frames embeddings generated by the encoder ({})",
+            (number_of_standalone_frames_embeddings / embeddings_per_frame), m_current_standalone_frames_embeddings.size());
+
+    const auto number_of_video_embeddings = std::count_if(embeddings.begin(), embeddings.end(), [](auto embedding) {
+        return embedding.type() == EmbeddingViewWrapper::EmbeddingType::VIDEO;
+    });
+
+    assert(0 == (number_of_video_embeddings % embeddings_per_frame));
+    CHECK(static_cast<size_t>(number_of_video_embeddings / embeddings_per_frame) == m_current_videos_embeddings.size(), HAILO_INVALID_OPERATION,
+        "Number of video-pad embeddings from prompt ({}) does not match the number of video embeddings generated by the encoder ({})",
+            (number_of_video_embeddings / embeddings_per_frame), m_current_videos_embeddings.size());
 
     TRY(auto next_token, get_next_token_prefill(m_prefill_inputs, m_prefill_outputs,
-        embeddings, m_current_frame_embeddings, m_current_generation_params));
+        embeddings, m_current_standalone_frames_embeddings, m_current_videos_embeddings, m_current_generation_params));
 
-    m_current_frame_embeddings.clear();
+    m_current_standalone_frames_embeddings.clear();
+    m_current_videos_embeddings.clear();
     m_generated_token_count++;
 
     auto generation_status = get_current_generation_status(next_token);
@@ -348,12 +496,22 @@ Expected<std::pair<int, LLMGeneratorCompletion::Status>> VLMServer::handle_prefi
         TRY(generation_status, handle_generation_completion(generation_status, next_token));
     }
 
+    // If no tokens are expected back, override the generated token with 'INVALID_TOKEN_VALUE' - which will be ignored along the way
+    if (0 == m_current_generation_params.max_generated_tokens()) {
+        next_token = INVALID_TOKEN_VALUE;
+    }
     return std::make_pair(next_token, generation_status);
 }
 
 Expected<std::unique_ptr<LLMServerManager>> VLMServerManager::create(std::shared_ptr<Session> session, std::shared_ptr<VDeviceManager> vdevice_manager)
 {
+    // Check if KV-Cache is already in use
+    CHECK_SUCCESS(vdevice_manager->mark_kv_cache_in_use(), "Failed to acquire KV-Cache. KV-Cache is already in use by another model!");
+
     auto server = VLMServer::create_unique(session, vdevice_manager);
+    if (server.status() != HAILO_SUCCESS) {
+        vdevice_manager->unmark_kv_cache_in_use();
+    }
     CHECK_EXPECTED(server);
 
     auto ptr = std::make_unique<VLMServerManager>(session, std::move(server.value()));

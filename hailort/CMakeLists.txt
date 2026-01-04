@@ -33,8 +33,8 @@ endif()
 
 # Set firmware version
 add_definitions( -DFIRMWARE_VERSION_MAJOR=5 )
-add_definitions( -DFIRMWARE_VERSION_MINOR=1 )
-add_definitions( -DFIRMWARE_VERSION_REVISION=1 )
+add_definitions( -DFIRMWARE_VERSION_MINOR=2 )
+add_definitions( -DFIRMWARE_VERSION_REVISION=0 )
 
 # TODO: temporary hack to support offline builds. Remove HAILO_OFFLINE_COMPILATION and use FETCHCONTENT_FULLY_DISCONNECTED
 if(HAILO_OFFLINE_COMPILATION)

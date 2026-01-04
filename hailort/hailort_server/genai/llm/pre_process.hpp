@@ -13,7 +13,8 @@
 #include "hailo/hailort.h"
 #include "hailo/buffer.hpp"
 #include "common/utils.hpp"
-#include "eigen.hpp"
+#include "common/genai/eigen.hpp"
+#include "common/genai/tokenizer/token_embedder.hpp"
 
 namespace hailort
 {
@@ -53,7 +54,7 @@ using eigen_matrix_2d_u16_t = Eigen::Matrix<uint16_t, Eigen::Dynamic, Eigen::Dyn
 using eigen_map_2d_u16_t = Eigen::Map<eigen_matrix_2d_u16_t>;
 using eigen_tensor_4d_u32_t = Eigen::Tensor<uint32_t, 4, Eigen::RowMajor>;
 
-constexpr std::array<int, 6> MROPE_SECTION_ORIGINAL = {16, 24, 24, 16, 24, 24}; // TODO (HRT-17263): Get from HEF
+constexpr std::array<int, 3> MROPE_SECTION_ORIGINAL = {16, 24, 24};
 
 struct InputLayersNamesSuffixes {
     std::string embeddings = INPUT_LAYER_EMBEDDINGS_SUFF;
@@ -69,6 +70,8 @@ struct PreProcessParams {
     uint32_t num_attention_heads = NUM_ATTENTION_MASK;
     uint32_t num_key_value_heads = NUM_KEY_VALUE_HEADS;
     uint32_t prefill_input_tokens_count = PREFILL_INPUT_TOKENS_SIZE;
+    // Default value that is relevant for VLM only. for LLM we override it in LLMServer::create_pre_process
+    std::vector<int> mrope_section = std::vector<int>(MROPE_SECTION_ORIGINAL.begin(), MROPE_SECTION_ORIGINAL.end());
 };
 
 class LLMPreProcess
@@ -83,9 +86,9 @@ public:
     static Eigen::VectorXf generate_theta_from_memview(const MemoryView theta); // TODO: HRT-16646 - Move to c'tor (get theta memview)
 
     hailo_status prepare_inputs_prefill(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer,
-        const std::vector<MemoryView> &input_tokens_embeddings);
+        const std::vector<EmbeddingViewWrapper> &input_tokens_embeddings);
 
-    hailo_status prepare_inputs_tbt(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer, const std::vector<MemoryView> &input_token_embedding);
+    hailo_status prepare_inputs_tbt(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer, const std::vector<EmbeddingViewWrapper> &input_token_embedding);
     void reset_local_cache();
     static bool is_positional_embed_layer(const std::string &name, const InputLayersNamesSuffixes &input_layers_names_suffixes);
 
@@ -112,7 +115,7 @@ protected:
     static void tile_along_last_axis(const Eigen::Tensor<float32_t, 4, Eigen::RowMajor> &input, int groups, MemoryView &layer_buffer);
 
     hailo_status validate_inputs(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer, const std::map<std::string, size_t> &expected_sizes);
-    void update_cache_from_embeddings(const std::vector<MemoryView> &embedding_rows_views);
+    void update_cache_from_embeddings(const std::vector<EmbeddingViewWrapper> &embedding_rows_views);
     void prepare_embeddings_input(MemoryView &layer_buffer, uint32_t number_of_tokens);
     void prepare_attention_mask_input(MemoryView &layer_buffer, int layer_input_tokens_size);
     hailo_status prepare_positional_embed_inputs(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer, int layer_input_tokens_size,
@@ -136,7 +139,8 @@ protected:
     const std::map<std::string, size_t> m_prefill_inputs_frame_size;
     const std::map<std::string, size_t> m_tbt_inputs_frame_size;
 
-    std::vector<int> m_mrope_section;
+    std::vector<int> m_mrope_section_doubled;
+    std::vector<int> m_cumulative_mrope_section;
     int m_current_timestamp_value;
     uint8_t m_scaled_mask_value;
 

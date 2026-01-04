@@ -12,17 +12,18 @@
 #define _HAILO_VDMA_VDMA_EDGE_LAYER_HPP_
 
 #include "vdma/driver/hailort_driver.hpp"
-#include "vdma/memory/descriptor_list.hpp"
-#include "control_protocol.h"
 #include "vdma/memory/vdma_buffer.hpp"
 
 namespace hailort {
 namespace vdma {
 
+enum DmaType {
+    SCATTER_GATHER,
+    CONTINUOUS,
+};
+
 class VdmaEdgeLayer {
 public:
-
-    using Type = VdmaBuffer::Type;
 
     static Expected<std::unique_ptr<VdmaEdgeLayer>> create(HailoRTDriver &driver,
         std::shared_ptr<vdma::VdmaBuffer> backing_buffer, size_t buffer_offset, size_t size,
@@ -35,7 +36,7 @@ public:
     VdmaEdgeLayer& operator=(const VdmaEdgeLayer &) = delete;
     VdmaEdgeLayer& operator=(VdmaEdgeLayer &&) = delete;
 
-    virtual Type type() const = 0;
+    virtual DmaType type() const = 0;
     virtual uint64_t dma_address() const = 0;
     virtual uint16_t desc_page_size() const = 0;
     virtual uint32_t descs_count() const = 0;
@@ -57,17 +58,27 @@ public:
         return static_cast<uint32_t>(DIV_ROUND_UP(buffer_size, page_size));
     }
 
-    hailo_status read(void *buf_dst, size_t count, size_t offset);
-    hailo_status write(const void *buf_src, size_t count, size_t offset);
+    hailo_status read(void *buf_dst, size_t count, size_t offset)
+    {
+        return m_buffer->read(buf_dst, count, m_offset + offset);
+    }
+
+    hailo_status write(const void *buf_src, size_t count, size_t offset)
+    {
+        return m_buffer->write(buf_src, count, m_offset + offset);
+    }
 
     virtual Expected<uint32_t> program_descriptors(size_t transfer_size, size_t desc_offset,
         size_t buffer_offset = 0, uint32_t batch_size = 1) = 0;
 
     CONTROL_PROTOCOL__host_buffer_info_t get_host_buffer_info(uint32_t transfer_size);
-    static CONTROL_PROTOCOL__host_buffer_info_t get_host_buffer_info(Type type, uint64_t dma_address,
+    static CONTROL_PROTOCOL__host_buffer_info_t get_host_buffer_info(DmaType type, uint64_t dma_address,
         uint16_t desc_page_size, uint32_t total_desc_count, uint32_t transfer_size);
+
 protected:
-    VdmaEdgeLayer(std::shared_ptr<VdmaBuffer> &&buffer, const size_t size, const size_t offset);
+    VdmaEdgeLayer(std::shared_ptr<VdmaBuffer> &&buffer, const size_t size, const size_t offset) :
+        m_buffer(std::move(buffer)), m_size(size), m_offset(offset)
+    {}
 
     std::shared_ptr<VdmaBuffer> m_buffer;
     const size_t m_size;

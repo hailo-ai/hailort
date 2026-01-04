@@ -12,7 +12,7 @@
 #ifndef _HAILO_CALLBACK_REORDER_QUEUE_HPP_
 #define _HAILO_CALLBACK_REORDER_QUEUE_HPP_
 
-#include "vdma/channel/transfer_common.hpp"
+#include "vdma/transfer_common.hpp"
 
 #include <mutex>
 #include <queue>

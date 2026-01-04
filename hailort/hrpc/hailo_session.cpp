@@ -11,7 +11,7 @@
 #include "hrpc/raw_connection_internal/pcie/hailo_session_internal.hpp"
 #include "hrpc/raw_connection_internal/socket/hailo_session_internal.hpp"
 #include "connection_context.hpp"
-#include "vdma/channel/transfer_common.hpp"
+#include "vdma/transfer_common.hpp"
 
 namespace hailort
 {

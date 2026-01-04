@@ -150,26 +150,4 @@ Expected<uint32_t> PartialClusterReader::get_partial_clusters_layout_bitmap(hail
     return Expected<uint32_t>(fuse_file_data.first);
 }
 
-Expected<hailo_device_architecture_t> PartialClusterReader::get_actual_dev_arch_from_fuse(hailo_device_architecture_t fw_dev_arch)
-{
-    // If fuse file does not exist - and fw_dev_arch is HAILO_ARCH_HAILO15H - then it is HAILO_ARCH_HAILO15H
-    if (!Filesystem::does_file_exists(std::string(PARTIAL_CLUSTER_READER_CLUSTER_LAYOUT_FILE_PATH))
-        && (HAILO_ARCH_HAILO15H == fw_dev_arch)) {
-        return HAILO_ARCH_HAILO15H;
-    } else {
-        TRY(const auto fuse_file_data, read_fuse_file());
-        const auto sku_value = fuse_file_data.second;
-        if (HAILO15M_SKU_VALUE == sku_value) {
-            return HAILO_ARCH_HAILO15M;
-        } else if (HAILO15H_SKU_VALUE == sku_value) {
-            return HAILO_ARCH_HAILO15H;
-        } else if (HAILO10H_SKU_VALUE == sku_value) {
-            return HAILO_ARCH_HAILO10H;
-        } else {
-            LOGGER__ERROR("Error, Invalid sku received {}", sku_value);
-            return make_unexpected(HAILO_INVALID_ARGUMENT);
-        }
-    }
-}
-
 } /* namespace hailort */

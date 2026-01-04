@@ -35,7 +35,6 @@
 namespace hailort
 {
 
-
 #define MAX_LOG_FILE_SIZE (1024 * 1024) // 1MB
 
 #define HAILORT_NAME ("HailoRT")
@@ -220,6 +219,11 @@ void HailoRTLogger::set_levels(spdlog::level::level_enum console_level, spdlog::
 
     // Setting loggr level to min active level, as traces will only show if the sink level is set to their level
     m_hailort_logger->set_level(static_cast<spdlog::level::level_enum>(SPDLOG_ACTIVE_LEVEL));
+
+#ifdef __unix__
+    // We block certain signals in the flush thread so that a sigwait thread (if present) will be the one receiving them.
+    SigwaitThreadCreationContext sigwait_thread_creation_context;
+#endif
     spdlog::flush_every(std::chrono::seconds(PERIODIC_FLUSH_INTERVAL_IN_SECONDS));
 }
 

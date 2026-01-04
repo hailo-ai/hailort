@@ -267,8 +267,8 @@ public:
             return "HAILO15M";
         case HAILO_ARCH_HAILO10H:
             return "HAILO10H";
-        case HAILO_ARCH_MARS:
-            return "MARS";
+        case HAILO_ARCH_HAILO12L:
+            return "HAILO12L";
         default:
             return "UNKNOWN ARCHITECTURE";
         }
@@ -536,7 +536,7 @@ public:
     {
         // Compare with HAILO1X device archs
         return (HAILO_ARCH_HAILO15H == dev_arch) || (HAILO_ARCH_HAILO15M == dev_arch) || (HAILO_ARCH_HAILO15L == dev_arch) ||
-            (HAILO_ARCH_HAILO10H == dev_arch) || (HAILO_ARCH_MARS == dev_arch);
+            (HAILO_ARCH_HAILO10H == dev_arch) || (HAILO_ARCH_HAILO12L == dev_arch);
     }
 
     static Expected<hailo_device_id_t> to_device_id(const std::string &device_id);

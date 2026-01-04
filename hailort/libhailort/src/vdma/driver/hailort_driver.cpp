@@ -7,6 +7,7 @@
  * @brief Low level interface to PCI driver
  **/
 
+#include "vdma/transfer_common.hpp"
 #include "vdma/driver/hailort_driver.hpp"
 #include "vdma/driver/os/driver_os_specific.hpp"
 
@@ -562,7 +563,7 @@ hailo_status HailoRTDriver::descriptors_list_program(uintptr_t desc_handle, Vdma
 static Expected<hailo_vdma_prepare_transfer_params> fill_prepare_transfer_params(
     vdma::ChannelId channel_id,
     uintptr_t desc_handle,
-    const std::vector<HailoRTDriver::TransferBuffer> &transfer_buffers,
+    const std::vector<TransferBuffer> &transfer_buffers,
     InterruptsDomain first_interrupts_domain,
     InterruptsDomain last_interrupts_domain)
 {
@@ -577,10 +578,10 @@ static Expected<hailo_vdma_prepare_transfer_params> fill_prepare_transfer_params
     params.buffers_count = static_cast<uint8_t>(transfer_buffers.size());
 
     for (size_t i = 0; i < transfer_buffers.size(); i++) {
-        params.buffers[i].buffer_type = transfer_buffers[i].is_dma_buf ?
+        params.buffers[i].buffer_type = transfer_buffers[i].is_dmabuf() ?
             HAILO_DMA_DMABUF_BUFFER : HAILO_DMA_USER_PTR_BUFFER;
-        params.buffers[i].addr_or_fd = transfer_buffers[i].addr_or_fd;
-        params.buffers[i].size = static_cast<uint32_t>(transfer_buffers[i].size);
+        params.buffers[i].addr_or_fd = transfer_buffers[i].addr_or_fd();
+        params.buffers[i].size = static_cast<uint32_t>(transfer_buffers[i].size());
     }
 
     params.first_interrupts_domain = static_cast<hailo_vdma_interrupts_domain>(first_interrupts_domain);
@@ -638,7 +639,7 @@ hailo_status HailoRTDriver::cancel_prepared_transfers(uintptr_t desc_handle)
 
 #if defined(__linux__)
 
-Expected<ContinousBufferInfo> HailoRTDriver::vdma_continuous_buffer_alloc(size_t size)
+Expected<CmaBufferInfo> HailoRTDriver::vdma_continuous_buffer_alloc(size_t size)
 {
     auto handle_to_dma_address_pair = continous_buffer_alloc_ioctl(size);
     if (!handle_to_dma_address_pair) {
@@ -659,10 +660,10 @@ Expected<ContinousBufferInfo> HailoRTDriver::vdma_continuous_buffer_alloc(size_t
         return make_unexpected(user_address.status());
     }
 
-    return ContinousBufferInfo{desc_handle, dma_address, size, user_address.release()};
+    return CmaBufferInfo{desc_handle, dma_address, size, user_address.release()};
 }
 
-hailo_status HailoRTDriver::vdma_continuous_buffer_free(const ContinousBufferInfo &buffer_info)
+hailo_status HailoRTDriver::vdma_continuous_buffer_free(const CmaBufferInfo &buffer_info)
 {
     hailo_status status = HAILO_SUCCESS;
 
@@ -684,13 +685,13 @@ hailo_status HailoRTDriver::vdma_continuous_buffer_free(const ContinousBufferInf
 }
 #elif defined(__QNX__) || defined(_WIN32)
 
-Expected<ContinousBufferInfo> HailoRTDriver::vdma_continuous_buffer_alloc(size_t /* size */)
+Expected<CmaBufferInfo> HailoRTDriver::vdma_continuous_buffer_alloc(size_t /* size */)
 {
     LOGGER__ERROR("Continous buffer not supported for platform");
     return make_unexpected(HAILO_NOT_SUPPORTED);
 }
 
-hailo_status HailoRTDriver::vdma_continuous_buffer_free(const ContinousBufferInfo &/* buffer_info */)
+hailo_status HailoRTDriver::vdma_continuous_buffer_free(const CmaBufferInfo &/* buffer_info */)
 {
     LOGGER__ERROR("Continous buffer not supported for platform");
     return HAILO_NOT_SUPPORTED;
@@ -805,7 +806,7 @@ DescSizesParams HailoRTDriver::get_sg_desc_params() const
     return desc_sizes_params;
 }
 
-DescSizesParams HailoRTDriver::get_ccb_desc_params() const
+DescSizesParams HailoRTDriver::get_continuous_desc_params() const
 {
     DescSizesParams desc_sizes_params{};
     desc_sizes_params.default_page_size = DEFAULT_CCB_PAGE_SIZE;

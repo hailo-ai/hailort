@@ -245,8 +245,9 @@ l_exit:
 
 bool Filesystem::does_file_exists(const std::string &path)
 {
-    // From https://stackoverflow.com/a/2112304
-    return ((GetFileAttributes(path.c_str()) != INVALID_FILE_ATTRIBUTES) && (GetLastError() == ERROR_FILE_NOT_FOUND));
+    DWORD dwAttrib = GetFileAttributesA(path.c_str());
+    // Check if path exists and is not a directory
+    return (dwAttrib != INVALID_FILE_ATTRIBUTES && !(dwAttrib & FILE_ATTRIBUTE_DIRECTORY));
 }
 
 Expected<std::string> Filesystem::get_temp_path()

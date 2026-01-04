@@ -50,7 +50,7 @@ Expected<rpc_object_handle_t> DeviceHrpcClient::create_remote_device(std::shared
     TRY(auto request_size, CreateDeviceSerializer::serialize_request(MemoryView(*request_buffer)));
     TRY(auto result, client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__CREATE), MemoryView(request_buffer->data(), request_size)));
 
-    return CreateDeviceSerializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size));
+    return CreateDeviceSerializer::deserialize_reply(MemoryView(result.body.data(), result.header.size));
 }
 
 Expected<std::unique_ptr<Device>> DeviceHrpcClient::create(const std::string &device_id,
@@ -65,6 +65,9 @@ Expected<std::unique_ptr<Device>> DeviceHrpcClient::create(const std::string &de
 
     auto device = make_unique_nothrow<DeviceHrpcClient>(device_id, client, device_handle, callback_dispatcher);
     CHECK_NOT_NULL(device, HAILO_OUT_OF_HOST_MEMORY);
+
+    auto status = device->set_default_notification_callbacks();
+    CHECK_SUCCESS(status, "Failed to set default notification callbacks for Device HRPC-client");
 
     return std::unique_ptr<Device>(std::move(device));
 }
@@ -108,7 +111,7 @@ Expected<hailo_device_identity_t> DeviceHrpcClient::identify()
     TRY(auto result, m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__IDENTIFY),
         MemoryView(request_buffer->data(), request_size)));
 
-    return IdentifyDeviceSerializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size));
+    return IdentifyDeviceSerializer::deserialize_reply(MemoryView(result.body.data(), result.header.size));
 }
 
 Expected<hailo_extended_device_information_t> DeviceHrpcClient::get_extended_device_information()
@@ -119,7 +122,7 @@ Expected<hailo_extended_device_information_t> DeviceHrpcClient::get_extended_dev
     TRY(auto result, m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__EXTENDED_INFO),
         MemoryView(request_buffer->data(), request_size)));
 
-    return ExtendedDeviceInfoSerializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size));
+    return ExtendedDeviceInfoSerializer::deserialize_reply(MemoryView(result.body.data(), result.header.size));
 }
 
 Expected<hailo_chip_temperature_info_t> DeviceHrpcClient::get_chip_temperature()
@@ -133,7 +136,7 @@ Expected<hailo_chip_temperature_info_t> DeviceHrpcClient::get_chip_temperature()
     TRY(auto result, m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__GET_CHIP_TEMPERATURE),
         MemoryView(request_buffer->data(), request_size)));
 
-    return Serializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size));
+    return Serializer::deserialize_reply(MemoryView(result.body.data(), result.header.size));
 }
 
 Expected<hailo_health_stats_t> DeviceHrpcClient::query_health_stats()
@@ -146,7 +149,7 @@ Expected<hailo_health_stats_t> DeviceHrpcClient::query_health_stats()
     TRY(auto result, m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__QUERY_HEALTH_STATS),
         MemoryView(request_buffer->data(), request_size)));
 
-    return Serializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size));
+    return Serializer::deserialize_reply(MemoryView(result.body.data(), result.header.size));
 }
 
 Expected<hailo_performance_stats_t> DeviceHrpcClient::query_performance_stats()
@@ -159,7 +162,7 @@ Expected<hailo_performance_stats_t> DeviceHrpcClient::query_performance_stats()
     TRY(auto result, m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__QUERY_PERFORMANCE_STATS),
         MemoryView(request_buffer->data(), request_size)));
 
-    return Serializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size));
+    return Serializer::deserialize_reply(MemoryView(result.body.data(), result.header.size));
 }
 
 Expected<float32_t> DeviceHrpcClient::power_measurement(
@@ -174,7 +177,7 @@ Expected<float32_t> DeviceHrpcClient::power_measurement(
     TRY_WITH_ACCEPTABLE_STATUS(HAILO_OPEN_FILE_FAILURE, auto result,
                                m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__POWER_MEASUREMENT),
                                MemoryView(request_buffer->data(), request_size)));
-    return Serializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size));
+    return Serializer::deserialize_reply(MemoryView(result.body.data(), result.header.size));
 }
 
 hailo_status DeviceHrpcClient::start_power_measurement(
@@ -205,7 +208,7 @@ Expected<hailo_power_measurement_data_t> DeviceHrpcClient::get_power_measurement
     TRY(auto result, m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__GET_POWER_MEASUREMENT),
         MemoryView(request_buffer->data(), request_size)));
 
-    return Serializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size));
+    return Serializer::deserialize_reply(MemoryView(result.body.data(), result.header.size));
 }
 
 hailo_status DeviceHrpcClient::set_power_measurement(
@@ -247,7 +250,7 @@ Expected<hailo_device_architecture_t> DeviceHrpcClient::get_architecture() const
     TRY(auto request_size, Serializer::serialize_request(m_handle, MemoryView(*request_buffer)));
     TRY(auto result, m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__GET_ARCHITECTURE), MemoryView(request_buffer->data(), request_size)));
 
-    return Serializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size));
+    return Serializer::deserialize_reply(MemoryView(result.body.data(), result.header.size));
 }
 
 hailo_status DeviceHrpcClient::dma_map(void *address, size_t size, hailo_dma_buffer_direction_t data_direction)
@@ -293,16 +296,22 @@ hailo_status DeviceHrpcClient::dma_unmap_dmabuf(int dmabuf_fd, size_t size, hail
 hailo_status DeviceHrpcClient::reset(hailo_reset_device_mode_t mode)
 {
     CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
-    auto driver = m_client->get_driver();
-    CHECK_NOT_NULL(driver, HAILO_NOT_IMPLEMENTED);
+    if (HAILO_RESET_DEVICE_MODE_CHIP == mode) {
+        auto driver = m_client->get_driver();
+        CHECK_NOT_NULL(driver, HAILO_NOT_IMPLEMENTED);
 
-    if (mode != HAILO_RESET_DEVICE_MODE_CHIP) {
+        // Disconnect client before reset
+        m_client = nullptr;
+        return driver->reset_chip();
+    } else if (HAILO_RESET_DEVICE_MODE_REBOOT == mode) {
+        // TODO: allow execute_request to get no request_param for cases such as this - where the action id is enough
+        MemoryView empty_buffer;
+        (void)m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::SYSTEM__RESET), empty_buffer);
+        m_client = nullptr;
+        return HAILO_SUCCESS;
+    } else {
         return HAILO_NOT_IMPLEMENTED;
     }
-
-    // Disconnect client before reset
-    m_client = nullptr;
-    return driver->reset_chip();
 }
 
 hailo_status DeviceHrpcClient::set_notification_callback(const NotificationCallback &func, hailo_notification_id_t notification_id,
@@ -312,6 +321,7 @@ hailo_status DeviceHrpcClient::set_notification_callback(const NotificationCallb
     case HAILO_NOTIFICATION_ID_HEALTH_MONITOR_TEMPERATURE_ALARM:
     case HAILO_NOTIFICATION_ID_HEALTH_MONITOR_OVERCURRENT_ALARM:
     case HAILO_NOTIFICATION_ID_NN_CORE_CRC_ERROR_EVENT:
+    case HAILO_NOTIFICATION_ID_THROTTLING_STATE_CHANGE_EVENT:
         break;
     default:
         LOGGER__ERROR("Unsupported notification id = {}", static_cast<uint32_t>(notification_id));
@@ -429,7 +439,7 @@ Expected<size_t> DeviceHrpcClient::fetch_logs(MemoryView buffer, hailo_log_type_
     TRY(auto result, m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__FETCH_LOGS),
         MemoryView(request_buffer->data(), request_size), std::move(write_buffers), std::move(log_transfer_buffers)));
 
-    return Serializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size));
+    return Serializer::deserialize_reply(MemoryView(result.body.data(), result.header.size));
 }
 
 } /* namespace hailort */

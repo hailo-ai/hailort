@@ -11,7 +11,7 @@ target_link_libraries(chat_example PRIVATE HailoRT::libhailort)
 if(WIN32)
     target_compile_options(chat_example PRIVATE
         /DWIN32_LEAN_AND_MEAN
-        /DNOMINMAX                  # NOMINMAX is required in order to play nice with std::min/std::max (otherwise Windows.h defines it's own)
+        /DNOMINMAX                  # NOMINMAX is required in order to avoid conflicts with std::min/std::max (otherwise Windows.h defines it's own)
         /wd4201 /wd4251
     )
 endif()

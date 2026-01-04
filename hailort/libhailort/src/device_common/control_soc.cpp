@@ -19,29 +19,42 @@ namespace hailort {
 
 hailo_power_measurement_data_t SocPowerMeasurement::get_data()
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::mutex> lock(m_data_mutex);
     return m_data;
 }
 
 void SocPowerMeasurement::set_data(const hailo_power_measurement_data_t &new_data)
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::mutex> lock(m_data_mutex);
     m_data = new_data;
 }
 
 void SocPowerMeasurement::clear_data()
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::mutex> lock(m_data_mutex);
     m_data = {};
 }
 
 hailo_status SocPowerMeasurement::stop()
 {
-    m_is_running = false;
-    if (m_power_monitoring_thread.joinable()) {
-        m_power_monitoring_thread.detach();
+    {
+        std::lock_guard<std::mutex> lock(m_is_running_mutex);
+        if (!m_is_running) {
+            return HAILO_SUCCESS;
+        }
+        m_is_running = false;
+        m_is_running_cv.notify_one();
     }
+    if (m_power_monitoring_thread.joinable()) {
+        m_power_monitoring_thread.join();
+    }
+
     return HAILO_SUCCESS;
+}
+
+SocPowerMeasurement::~SocPowerMeasurement()
+{
+    (void)stop();
 }
 
 Expected<hailo_chip_temperature_info_t> ControlSoc::get_chip_temperature()
@@ -194,7 +207,12 @@ static hailo_power_measurement_data_t calculate_new_power_measurement_data(hailo
 
 hailo_status SocPowerMeasurement::start()
 {
-    m_is_running = true;
+    CHECK_SUCCESS(stop(), "Failed stopping running power measurement before restart");
+
+    {
+        std::lock_guard<std::mutex> lock(m_is_running_mutex);
+        m_is_running = true;
+    }
     m_power_monitoring_thread = std::thread(&SocPowerMeasurement::monitor, this);
     return HAILO_SUCCESS;
 }
@@ -205,9 +223,15 @@ void SocPowerMeasurement::monitor()
 {
     std::chrono::time_point<std::chrono::high_resolution_clock> old_measurement_time, new_measurement_time;
 
-    while (m_is_running) {
+    while (true) {
+        {
+            std::unique_lock<std::mutex> lock(m_is_running_mutex);
+            if (m_is_running_cv.wait_for(lock, std::chrono::microseconds(m_sampling_interval_microseconds), [this]() { return !m_is_running; })) {
+                break;
+            }
+        }
+
         old_measurement_time = std::chrono::high_resolution_clock::now();
-        std::this_thread::sleep_for(std::chrono::microseconds(m_sampling_interval_microseconds));
 
         auto value = measure(m_dvm, m_type);
         if (!value.has_value()) {
@@ -219,7 +243,7 @@ void SocPowerMeasurement::monitor()
         auto time_delta_milliseconds =
             std::chrono::duration<float32_t, std::milli>(new_measurement_time - old_measurement_time).count();
 
-        std::unique_lock<std::mutex> lock(m_mutex);
+        std::unique_lock<std::mutex> lock(m_data_mutex);
         auto new_data = calculate_new_power_measurement_data(m_data, *value, time_delta_milliseconds);
         lock.unlock();
 

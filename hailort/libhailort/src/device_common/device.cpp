@@ -662,6 +662,62 @@ Expected<std::unique_ptr<Device>> Device::create_core()
     return device;
 }
 
+static void default_crc_error_notification_callback(Device &device, const hailo_notification_t&, void*)
+{
+    LOGGER__CRITICAL("Device {} recorded a CRC error in NN-core. Shutting down device streams", device.get_dev_id());
+}
+
+static void default_throttling_state_change_notification_callback(Device &device,
+    const hailo_notification_t &notification, void*)
+{
+    auto new_throttling_state = static_cast<hailo_hw_throttling_state_t>(
+        notification.body.throttling_state_change.new_state);
+
+    std::string throttling_state_str;
+
+    switch (new_throttling_state) {
+    case HAILO_THROTTLING_STATE_NONE:
+        throttling_state_str = "THROTTLING_NONE";
+        break;
+    case HAILO_THROTTLING_STATE_0_LIGHT:
+        throttling_state_str = "THROTTLING_LIGHT";
+        break;
+    case HAILO_THROTTLING_STATE_1_MEDIUM:
+        throttling_state_str = "THROTTLING_MEDIUM";
+        break;
+    case HAILO_THROTTLING_STATE_2_HEAVY:
+        throttling_state_str = "THROTTLING_HEAVY";
+        break;
+    case HAILO_THROTTLING_STATE_3_SEVERE:
+        throttling_state_str = "THROTTLING_SEVERE";
+        break;
+    case HAILO_THROTTLING_STATE_4_STREAMS_OFF:
+        throttling_state_str = "THROTTLING_STREAMS_OFF";
+        break;
+    case HAILO_THROTTLING_STATE_OVERHEAT:
+        throttling_state_str = "THROTTLING_OVERHEAT";
+        break;
+    default:
+        LOGGER__ERROR("Device {} got invalid throttling state.", device.get_dev_id());
+        return;
+    }
+
+    LOGGER__WARN("Device {} throttling state is now: {}", device.get_dev_id(), throttling_state_str);
+}
+
+hailo_status Device::set_default_notification_callbacks()
+{
+    auto status = set_notification_callback(default_crc_error_notification_callback,
+        HAILO_NOTIFICATION_ID_NN_CORE_CRC_ERROR_EVENT);
+    CHECK_SUCCESS(status);
+
+    status = set_notification_callback(default_throttling_state_change_notification_callback,
+        HAILO_NOTIFICATION_ID_THROTTLING_STATE_CHANGE_EVENT);
+    CHECK_SUCCESS(status);
+
+    return HAILO_SUCCESS;
+}
+
 Expected<NetworkGroupsParamsMap> Device::create_configure_params(Hef &hef) const
 {
     TRY(const auto stream_interface, get_default_streams_interface(), "Failed to get default streams interface");

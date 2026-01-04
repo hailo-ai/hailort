@@ -39,7 +39,7 @@
 #ifndef LIBROSA_H_
 #define LIBROSA_H_
 
-#include "eigen.hpp"
+#include "common/genai/eigen.hpp"
 
 #include <vector>
 #include <complex>

@@ -18,6 +18,7 @@
 #include "common/genai/constants.hpp"
 #include "common/genai/serializer/serializer.hpp"
 #include "common/genai/connection_ports.hpp"
+#include "common/genai/session_wrapper/session_wrapper.hpp"
 
 #include "pre_process.hpp"
 #include "llm/llm_inference_manager.hpp"
@@ -31,8 +32,6 @@ namespace genai
 class VLMServer : public LLMServer
 {
 public:
-    static constexpr uint32_t MAX_FRAMES_IN_SINGLE_GENERATION = 5; // TODO (HRT-17263): Decide about value, consider exporting to user
-
     static constexpr float32_t DEFAULT_GENERATION_TEMPERATURE = 0.01f;
     static constexpr float32_t DEFAULT_GENERATION_TOP_P = 0.1f;
     static constexpr uint32_t DEFAULT_GENERATION_TOP_K = 1;
@@ -48,29 +47,46 @@ public:
     Expected<Buffer> handle_create_vlm_request(const MemoryView &request);
     Expected<Buffer> handle_vlm_generate_request(const MemoryView &request);
 
+protected:
+    // Override to create VLMPreProcess instead of LLMPreProcess
+    std::future<hailo_status> create_pre_process_future(const Hef &hef,
+        std::shared_ptr<Event> inference_models_created_event, std::future<Expected<Eigen::VectorXf>> &external_resources_future,
+        std::shared_ptr<Event> pre_process_created_event, std::shared_ptr<Event> shutdown_event) override;
+
+    // Override to create VLM-specific token embedder with image_pad_token and embeddings_per_frame
+    std::future<hailo_status> create_token_embedder_future(const Hef &hef,
+        std::shared_ptr<Event> embeddings_arrived_event, std::shared_ptr<Event> pre_process_created_event, std::shared_ptr<Event> shutdown_event) override;
+
+    std::future<hailo_status> create_frame_encoder_future(std::shared_ptr<VDevice> vdevice, const Hef &hef,
+        std::shared_ptr<Event> frame_encoder_created_event);
+    Expected<std::future<hailo_status>> create_resources_async(std::shared_ptr<VDevice> vdevice, std::shared_ptr<Buffer> hef_buffer,
+        bool tokenizer_on_host, std::shared_ptr<Event> theta_arrived_event, std::shared_ptr<Event> hailo_config_json_arrived_event,
+        std::shared_ptr<Event> tokenizer_arrived_event, std::shared_ptr<Event> embeddings_arrived_event, std::shared_ptr<Event> shutdown_event);
+
 private:
     hailo_status parse_config_json(const MemoryView &config_json) override;
 
     // Override prefill phase to handle frame embeddings
     Expected<std::pair<int, LLMGeneratorCompletion::Status>> handle_prefill_phase(const std::vector<int> &tokens,
-        const std::vector<MemoryView> &embeddings) override;
+        const std::vector<EmbeddingViewWrapper> &embeddings) override;
 
     // This function is used to process the prefill inputs and outputs, without handling (exporting) the generated token
     Expected<int> get_next_token_prefill(std::map<std::string, MemoryView> &prefill_inputs,
-        std::map<std::string, MemoryView> &prefill_outputs, const std::vector<MemoryView> &input_embeddings,
-        const std::vector<MemoryView> &frame_embeddings, const LLMGeneratorParams &params);
+        std::map<std::string, MemoryView> &prefill_outputs, const std::vector<EmbeddingViewWrapper> &input_embeddings,
+        const std::vector<BufferPtr> &standalone_frame_embeddings, const std::vector<BufferPtr> &video_embeddings, const LLMGeneratorParams &params);
 
     hailo_status process_prefill_inputs_chunk(std::map<std::string, MemoryView> &prefill_inputs, std::map<std::string, MemoryView> &prefill_outputs,
-        const std::vector<MemoryView> &input_embeddings, const std::vector<MemoryView> &frame_embeddings,
-        uint32_t &current_frame_index, uint32_t &current_emb_index_in_frame);
+        const std::vector<EmbeddingViewWrapper> &input_embeddings, EmbeddingsVectorState &standalone_frame_embeddings_state,
+        EmbeddingsVectorState &video_embeddings_state);
 
     std::unique_ptr<InferenceManager> m_inference_manager_frame_encoder;
-    std::vector<BufferPtr> m_frame_encoder_input_buffers;
-    std::vector<BufferPtr> m_frame_encoder_output_buffers;
 
     int m_image_pad_token_id;
+    int m_video_pad_token_id;
+    hailo_3d_image_shape_t m_encoder_input_shape;  // Needed for VLMPreProcess creation
 
-    std::vector<MemoryView> m_current_frame_embeddings;
+    std::vector<BufferPtr> m_current_standalone_frames_embeddings;
+    std::vector<BufferPtr> m_current_videos_embeddings;
 };
 
 class VLMServerManager : public LLMServerManager

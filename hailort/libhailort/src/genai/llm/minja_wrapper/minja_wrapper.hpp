@@ -29,7 +29,7 @@ class PromptTemplateHandler final
 public:
     static Expected<PromptTemplateHandler> create(const std::string &prompt_template);
 
-    Expected<std::string> render(const std::vector<std::string> &prompt_json_strings);
+    Expected<std::string> render(const std::vector<std::string> &prompt_json_strings, const std::vector<std::string> &tools_json_strings = {});
     void reset_state();
     Expected<std::string> prompt_template() const;
 

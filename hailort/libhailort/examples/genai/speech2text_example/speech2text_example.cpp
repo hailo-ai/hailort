@@ -29,7 +29,8 @@ int main(int argc, char **argv)
 {
     try {
         if (3 != argc) {
-            throw hailort::hailort_error(HAILO_INVALID_ARGUMENT, "Missing arguments!\nUsage: example <hef_path> <input_audio_file_path>");
+            auto bin_name = std::string(argv[0]);
+            throw hailort::hailort_error(HAILO_INVALID_ARGUMENT, "Missing arguments!\nUsage: " + bin_name + " <hef_path> <input_audio_file_path>");
         }
         std::string speech2text_hef_path = argv[1];
         std::string input_audio_file_path = argv[2];

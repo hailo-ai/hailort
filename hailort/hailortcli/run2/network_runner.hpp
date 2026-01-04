@@ -25,6 +25,7 @@
 #include "hailo/event.hpp"
 #include "hailo/network_group.hpp"
 #include "hailo/infer_model.hpp"
+#include "hailo/hef.hpp"
 #include "hailo/expected.hpp"
 #include "hailo/buffer.hpp"
 #include "utils/dma_buffer_utils.hpp"
@@ -88,6 +89,7 @@ struct NetworkParams
     BufferType buffer_type;
     // Run parameters
     uint32_t framerate;
+    bool should_print_ops;
 
     bool measure_hw_latency;
     bool measure_overall_latency;

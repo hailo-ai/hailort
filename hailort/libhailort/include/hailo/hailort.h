@@ -431,7 +431,7 @@ typedef enum hailo_device_architecture_e {
     HAILO_ARCH_HAILO15L,
     HAILO_ARCH_HAILO15M,
     HAILO_ARCH_HAILO10H,
-    HAILO_ARCH_MARS,
+    HAILO_ARCH_HAILO12L,
 
     /** Max enum value to maintain ABI Integrity */
     HAILO_ARCH_MAX_ENUM = HAILO_MAX_ENUM
@@ -1197,7 +1197,7 @@ typedef struct {
     size_t mask_size;
 
     /**
-     * Byte Mask:
+     * Mask offset in bytes from the start of the buffer.
      * The mask is a binary mask that defines a region of interest (ROI) of the image.
      * Mask pixel values of 1 indicate image pixels that belong to the ROI.
      * Mask pixel values of 0 indicate image pixels that are part of the background.
@@ -1207,7 +1207,8 @@ typedef struct {
      * Mask height = ceil((box.y_max - box.y_min) * image_height)
      * First pixel represents the pixel (x_min * image_width, y_min * image_height) in the original input image.
     */
-    uint8_t *mask;
+    uint8_t *mask DEPRECATED("mask is deprecated. Use mask_offset instead.");
+    size_t mask_offset;
 } hailo_detection_with_byte_mask_t;
 #pragma pack(pop)
 
@@ -1427,8 +1428,10 @@ typedef enum {
     HAILO_NOTIFICATION_ID_HW_INFER_MANAGER_INFER_DONE,
     /** Matches hailo_notification_message_parameters_t::context_switch_run_time_error */
     HAILO_NOTIFICATION_ID_CONTEXT_SWITCH_RUN_TIME_ERROR_EVENT,
-    /** Matches hailo_notification_message_parameters_t::nn_core_crc_error */
+    /** Empty message: no parameters. */
     HAILO_NOTIFICATION_ID_NN_CORE_CRC_ERROR_EVENT,
+    /** Matches hailo_notification_message_parameters_t::throttling_state_change */
+    HAILO_NOTIFICATION_ID_THROTTLING_STATE_CHANGE_EVENT,
 
     /** Must be last! */
     HAILO_NOTIFICATION_ID_COUNT,
@@ -1500,9 +1503,9 @@ typedef struct {
 typedef struct {
     /** Percentage */
     float32_t cpu_utilization;
-    /** Bytes */
+    /** kibiBytes (KiBs) */
     int64_t ram_size_total;
-    /** Bytes */
+    /** KibiBytes (KiBs)*/
     int64_t ram_size_used;
     /** Percentage */
     float32_t nnc_utilization;
@@ -1552,6 +1555,27 @@ typedef struct {
     uint16_t action_index;
 } hailo_context_switch_run_time_error_message_t;
 
+/**
+ * NOTE:
+ * Enum values match `mercury_throttling_state` enum
+ * defined by Hailo SCU. */
+typedef enum hailo_hw_throttling_state_e {
+    HAILO_THROTTLING_STATE_NONE,
+    HAILO_THROTTLING_STATE_0_LIGHT,
+    HAILO_THROTTLING_STATE_1_MEDIUM,
+    HAILO_THROTTLING_STATE_2_HEAVY,
+    HAILO_THROTTLING_STATE_3_SEVERE,
+    HAILO_THROTTLING_STATE_4_STREAMS_OFF,
+    HAILO_THROTTLING_STATE_OVERHEAT,
+
+    HAILO_THROTTLING_STATE_COUNT
+} hailo_hw_throttling_state_t;
+
+typedef struct {
+    /* Matches `hailo_hw_throttling_state_t` */
+    uint16_t new_state;
+} hailo_throttling_state_change_message_t;
+
 /** Union of all notification messages parameters. See ::hailo_notification_t */
 typedef union {
     /** Ethernet rx error */
@@ -1578,6 +1602,8 @@ typedef union {
     hailo_context_switch_run_time_error_message_t context_switch_run_time_error;
     /** Start cache offset update notification */
     hailo_start_update_cache_offset_notification_message_t start_update_cache_offset_notification;
+    /** Change in throttling-state notification */
+    hailo_throttling_state_change_message_t throttling_state_change;
 } hailo_notification_message_parameters_t;
 
 /** Notification data that will be passed to the callback passed in ::hailo_notification_callback */
@@ -1605,6 +1631,7 @@ typedef enum {
     HAILO_RESET_DEVICE_MODE_NN_CORE     = 1,
     HAILO_RESET_DEVICE_MODE_SOFT        = 2,
     HAILO_RESET_DEVICE_MODE_FORCED_SOFT = 3,
+    HAILO_RESET_DEVICE_MODE_REBOOT      = 4,
 
     HAILO_RESET_DEVICE_MODE_MAX_ENUM    = HAILO_MAX_ENUM
 } hailo_reset_device_mode_t;

@@ -44,27 +44,36 @@ genai::LLMGeneratorParams VLMWrapper::create_generator_params()
     return params.release();
 }
 
-std::shared_ptr<LLMGeneratorCompletionWrapper> VLMWrapper::generate(
-    const genai::LLMGeneratorParams &params,
-    const std::vector<std::string> &messages_json_strings,
-    std::vector<py::array> &input_frames)
+std::shared_ptr<LLMGeneratorCompletionWrapper> VLMWrapper::generate(const genai::LLMGeneratorParams &params,
+    const std::vector<std::string> &messages_json_strings, std::vector<py::array> &input_frames,
+    std::vector<std::vector<py::array>> &input_videos)
 {
     auto generator = m_vlm->create_generator(params);
     VALIDATE_EXPECTED(generator);
-    auto completion = generator->generate(messages_json_strings, arrays_to_memory_views(input_frames));
+
+    std::vector<std::vector<MemoryView>> input_videos_views;
+    input_videos_views.reserve(input_videos.size());
+    for (auto &video : input_videos) {
+        input_videos_views.emplace_back(arrays_to_memory_views(video));
+    }
+    auto completion = generator->generate(messages_json_strings, arrays_to_memory_views(input_frames), input_videos_views);
     VALIDATE_EXPECTED(completion);
     auto completion_ptr = std::make_unique<genai::LLMGeneratorCompletion>(completion.release());
     return std::make_shared<LLMGeneratorCompletionWrapper>(std::move(completion_ptr));
 }
 
-std::shared_ptr<LLMGeneratorCompletionWrapper> VLMWrapper::generate(
-    const genai::LLMGeneratorParams &params,
-    const std::string &prompt,
-    std::vector<py::array> &input_frames)
+std::shared_ptr<LLMGeneratorCompletionWrapper> VLMWrapper::generate(const genai::LLMGeneratorParams &params,
+    const std::string &prompt, std::vector<py::array> &input_frames, std::vector<std::vector<py::array>> &input_videos)
 {
     auto generator = m_vlm->create_generator(params);
     VALIDATE_EXPECTED(generator);
-    auto completion = generator->generate(prompt, arrays_to_memory_views(input_frames));
+
+    std::vector<std::vector<MemoryView>> input_videos_views;
+    input_videos_views.reserve(input_videos.size());
+    for (auto &video : input_videos) {
+        input_videos_views.emplace_back(arrays_to_memory_views(video));
+    }
+    auto completion = generator->generate(prompt, arrays_to_memory_views(input_frames), input_videos_views);
     VALIDATE_EXPECTED(completion);
     auto completion_ptr = std::make_unique<genai::LLMGeneratorCompletion>(completion.release());
     return std::make_shared<LLMGeneratorCompletionWrapper>(std::move(completion_ptr));
@@ -174,8 +183,10 @@ void VLMWrapper::bind(py::module &m)
         .def("create", &VLMWrapper::create)
         .def("release", &VLMWrapper::release)
         .def("create_generator_params", &VLMWrapper::create_generator_params)
-        .def("generate", static_cast<std::shared_ptr<LLMGeneratorCompletionWrapper>(VLMWrapper::*)(const genai::LLMGeneratorParams&, const std::vector<std::string>&, std::vector<py::array>&)>(&VLMWrapper::generate))
-        .def("generate", static_cast<std::shared_ptr<LLMGeneratorCompletionWrapper>(VLMWrapper::*)(const genai::LLMGeneratorParams&, const std::string&, std::vector<py::array>&)>(&VLMWrapper::generate))
+        .def("generate", static_cast<std::shared_ptr<LLMGeneratorCompletionWrapper>(VLMWrapper::*)(const genai::LLMGeneratorParams&,
+            const std::vector<std::string>&, std::vector<py::array>&, std::vector<std::vector<py::array>>&)>(&VLMWrapper::generate))
+        .def("generate", static_cast<std::shared_ptr<LLMGeneratorCompletionWrapper>(VLMWrapper::*)(const genai::LLMGeneratorParams&,
+            const std::string&, std::vector<py::array>&, std::vector<std::vector<py::array>>&)>(&VLMWrapper::generate))
         .def("tokenize", &VLMWrapper::tokenize)
         .def("clear_context", &VLMWrapper::clear_context)
         .def("get_generation_recovery_sequence", &VLMWrapper::get_generation_recovery_sequence)

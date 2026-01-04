@@ -65,6 +65,12 @@ IntegratedDevice::IntegratedDevice(std::unique_ptr<HailoRTDriver> &&driver, hail
         return;
     }
 
+    status = set_default_notification_callbacks();
+    if (HAILO_SUCCESS != status) {
+        LOGGER__ERROR("Failed to set default notification callbacks for IntegratedDevice: {}", status);
+        return;
+    }
+
     status = HAILO_SUCCESS;
 }
 
@@ -161,7 +167,6 @@ hailo_status IntegratedDevice::stop_power_measurement()
 Expected<hailo_extended_device_information_t> IntegratedDevice::get_extended_device_information()
 {
     constexpr auto STATUS_ENABLED = "okay";
-    constexpr auto ETH_STATUS_FILE = "/proc/device-tree/ethernet@1b5000/status";
     constexpr auto PCI_STATUS_FILE = "/proc/device-tree/hailo_pci_ep_driver/status";
     constexpr auto IDENTIFICATION_FILE = "/sys/devices/soc0/identification_attributes";
     constexpr auto FUSE_FILE = "/sys/devices/soc0/fuse";
@@ -186,22 +191,23 @@ Expected<hailo_extended_device_information_t> IntegratedDevice::get_extended_dev
         return content == expected_value;
     };
 
-    TRY(auto is_eth_supported, compare_file_content(ETH_STATUS_FILE, STATUS_ENABLED));
     TRY(auto is_pci_supported, compare_file_content(PCI_STATUS_FILE, STATUS_ENABLED));
     TRY(auto is_power_measurement_supported, has_power_sensor());
 
     info.boot_source                           = HAILO_DEVICE_BOOT_SOURCE_INVALID; // TODO: HRT-18652
-    info.eth_mac_address[0]                    = NOT_AVAILABLE;                    // TODO: HRT-18652
     info.lcs                                   = NOT_AVAILABLE;
     info.neural_network_core_clock_rate        = NOT_AVAILABLE;                    // TODO: HRT-18652
     info.soc_id[0]                             = NOT_AVAILABLE;
     info.soc_pm_values[0]                      = NOT_AVAILABLE;
-    info.supported_features.current_monitoring = NOT_AVAILABLE;                    // TODO: HRT-18652
-    info.supported_features.ethernet           = is_eth_supported;
-    info.supported_features.mdio               = NOT_AVAILABLE; // TODO: HRT-18652
-    info.supported_features.mipi               = NOT_AVAILABLE; // TODO: HRT-18652
     info.supported_features.pcie               = is_pci_supported;
     info.supported_features.power_measurement  = is_power_measurement_supported;
+
+    // deprecated fields
+    info.eth_mac_address[0]                    = NOT_AVAILABLE;
+    info.supported_features.current_monitoring = NOT_AVAILABLE;
+    info.supported_features.ethernet           = NOT_AVAILABLE;
+    info.supported_features.mdio               = NOT_AVAILABLE;
+    info.supported_features.mipi               = NOT_AVAILABLE;
 
     if (fs::exists(IDENTIFICATION_FILE)) {
         FileReader reader(IDENTIFICATION_FILE);

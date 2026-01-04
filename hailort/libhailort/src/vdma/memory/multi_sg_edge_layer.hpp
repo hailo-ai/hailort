@@ -37,9 +37,9 @@ public:
     MultiSgEdgeLayer& operator=(const MultiSgEdgeLayer &) = delete;
     MultiSgEdgeLayer& operator=(MultiSgEdgeLayer &&) = delete;
 
-    virtual Type type() const override
+    virtual DmaType type() const override
     {
-        return Type::SCATTER_GATHER;
+        return DmaType::SCATTER_GATHER;
     }
 
     // TODO : HRT-18364 : remove these methods

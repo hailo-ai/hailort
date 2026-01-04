@@ -35,13 +35,15 @@ int main(int argc, char **argv)
 {
     try {
         if (2 != argc) {
-            throw hailort::hailort_error(HAILO_INVALID_ARGUMENT, "Missing HEF file path!\nUsage: example <hef_path>");
+            auto bin_name = std::string(argv[0]);
+            throw hailort::hailort_error(HAILO_INVALID_ARGUMENT, "Missing HEF file path!\nUsage: " + bin_name + " <hef_path>");
         }
         const std::string vlm_hef_path = argv[1];
         std::cout << "Starting VLM...\n";
         auto vdevice = hailort::VDevice::create_shared().expect("Failed to create VDevice");
 
         auto vlm_params = hailort::genai::VLMParams(vlm_hef_path);
+        vlm_params.set_optimize_memory_on_device(true);
         auto vlm = hailort::genai::VLM::create(vdevice, vlm_params).expect("Failed to create VLM");
 
         while (true) {

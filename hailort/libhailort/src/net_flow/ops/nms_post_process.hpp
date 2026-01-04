@@ -57,7 +57,7 @@ struct DetectionBbox
         float32_t image_height, float32_t image_width, bool is_crop_optimization_on)
         : m_class_id(class_id), m_coefficients(std::move(mask)), m_bbox(bbox),
             m_bbox_with_mask{{bbox.y_min, bbox.x_min, bbox.y_max, bbox.x_max}, bbox.score, class_id,
-                get_mask_size_in_bytes(static_cast<uint32_t>(image_height), static_cast<uint32_t>(image_width), is_crop_optimization_on), nullptr}
+                get_mask_size_in_bytes(static_cast<uint32_t>(image_height), static_cast<uint32_t>(image_width), is_crop_optimization_on), nullptr, 0}
         {}
 
     DetectionBbox() : DetectionBbox(hailo_bbox_float32_t{

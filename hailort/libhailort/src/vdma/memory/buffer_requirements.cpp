@@ -47,7 +47,7 @@ Expected<BufferSizesRequirements> BufferSizesRequirements::get_buffer_requiremen
         const bool IS_NOT_DDR = false;
 
         auto buffer_sizes_requirements_exp = vdma::BufferSizesRequirements::get_buffer_requirements_single_transfer(
-            vdma::VdmaBuffer::Type::SCATTER_GATHER, desc_sizes_params, static_cast<uint16_t>(max_page_size),
+            vdma::BufferType::SCATTER_GATHER, desc_sizes_params, static_cast<uint16_t>(max_page_size),
             min_active_trans, max_active_trans, transfer_size, IS_CIRCULAR, DONT_FORCE_DEFAULT_PAGE_SIZE, DONT_FORCE_BATCH_SIZE,
             IS_VDMA_ALIGNED_BUFFER, IS_NOT_DDR);
         if (HAILO_SUCCESS == buffer_sizes_requirements_exp.status()) {
@@ -66,7 +66,7 @@ Expected<BufferSizesRequirements> BufferSizesRequirements::get_buffer_requiremen
 }
 
 Expected<BufferSizesRequirements> BufferSizesRequirements::get_buffer_requirements_multiple_transfers(
-    vdma::VdmaBuffer::Type buffer_type, const DescSizesParams &desc_sizes_params, uint16_t max_desc_page_size,
+    vdma::BufferType buffer_type, const DescSizesParams &desc_sizes_params, uint16_t max_desc_page_size,
     uint16_t batch_size, const std::vector<uint32_t> &transfer_sizes,
     bool is_circular, bool force_default_page_size, bool force_batch_size, bool is_ddr)
 {
@@ -113,7 +113,7 @@ Expected<BufferSizesRequirements> BufferSizesRequirements::get_buffer_requiremen
 
     // Found desc_page_size and descs_count
     const auto desc_page_size = static_cast<uint16_t>(local_desc_page_size);
-    if ((buffer_type == vdma::VdmaBuffer::Type::SCATTER_GATHER) && (initial_desc_page_size != desc_page_size)) {
+    if ((buffer_type == vdma::BufferType::SCATTER_GATHER) && (initial_desc_page_size != desc_page_size)) {
         LOGGER__WARNING("Desc page size value ({}) is not optimal for performance.", desc_page_size);
     }
 
@@ -128,7 +128,7 @@ Expected<BufferSizesRequirements> BufferSizesRequirements::get_buffer_requiremen
 }
 
 Expected<BufferSizesRequirements> BufferSizesRequirements::get_buffer_requirements_single_transfer(
-    vdma::VdmaBuffer::Type buffer_type, const DescSizesParams &desc_sizes_params, uint16_t max_desc_page_size,
+    vdma::BufferType buffer_type, const DescSizesParams &desc_sizes_params, uint16_t max_desc_page_size,
     uint16_t min_batch_size, uint16_t max_batch_size, uint32_t transfer_size, bool is_circular,
     bool force_default_page_size, bool force_batch_size, bool is_vdma_aligned_buffer, bool is_ddr)
 {
@@ -157,6 +157,19 @@ Expected<BufferSizesRequirements> BufferSizesRequirements::get_buffer_requiremen
     }
 
     return BufferSizesRequirements{ descs_count, results->desc_page_size() };
+}
+
+BufferSizesRequirements BufferSizesRequirements::get_sram_buffer_requirements(
+    const DescSizesParams &desc_sizes_params, uint32_t transfer_size)
+{
+    // SRAM-Buffers are a special case. We simply use the default page-size
+    // and force the block-count to be above the minimum required by FW.
+
+    uint16_t sram_blk_size = desc_sizes_params.default_page_size;
+    uint32_t sram_blk_cnt = DIV_ROUND_UP(transfer_size, sram_blk_size);
+    sram_blk_cnt = std::max(sram_blk_cnt, desc_sizes_params.min_descs_count);
+
+    return BufferSizesRequirements(sram_blk_cnt, sram_blk_size);
 }
 
 uint16_t BufferSizesRequirements::find_initial_desc_page_size(const DescSizesParams &desc_sizes_params,

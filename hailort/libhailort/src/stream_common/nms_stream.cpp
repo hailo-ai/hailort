@@ -427,7 +427,7 @@ hailo_status NmsReaderThread::launch_transfer(TransferRequest &&transfer_request
 {
     CHECK(1 == transfer_request.transfer_buffers.size(), HAILO_INVALID_OPERATION,
         "NMS Reader stream supports only 1 transfer buffer");
-    CHECK(TransferBufferType::MEMORYVIEW == transfer_request.transfer_buffers[0].type(), HAILO_INVALID_OPERATION,
+    CHECK(!transfer_request.transfer_buffers[0].is_dmabuf(), HAILO_INVALID_OPERATION,
         "NMS stream doesn't support DMABUF buffer type");
     CHECK(1 == transfer_request.transfer_buffers.size(), HAILO_INVALID_OPERATION,
         "NMS Reader stream supports only 1 transfer buffer");

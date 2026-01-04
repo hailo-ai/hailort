@@ -10,9 +10,9 @@
 #ifndef _HAILO_VDMA_BOUNDARY_CHANNEL_HPP_
 #define _HAILO_VDMA_BOUNDARY_CHANNEL_HPP_
 
+#include "vdma/transfer_common.hpp"
 #include "vdma/channel/channel_id.hpp"
 #include "vdma/channel/transfer_launcher.hpp"
-#include "vdma/channel/transfer_common.hpp"
 #include "vdma/memory/descriptor_list.hpp"
 
 #include "common/latency_meter.hpp"
@@ -23,11 +23,20 @@
 namespace hailort {
 namespace vdma {
 
-struct OngoingTransfer {
+struct TransferChunk {
     TransferRequest request;
-    uint32_t total_descs;
-    // Will be set to != HAILO_SUCCESS if the transfer failed to be launched in BoundaryChannel::launch_transfer_impl
-    hailo_status launch_status = HAILO_SUCCESS;
+    uint32_t num_descs;
+
+    TransferChunk() = default;
+
+    TransferChunk(std::vector<TransferBuffer> &&buffers, TransferDoneCallback &&callback, uint16_t desc_page_size)
+        : request(std::move(buffers), std::move(callback))
+    {
+        num_descs = 0;
+        for (auto &buffer : request.transfer_buffers) {
+            num_descs += DescriptorList::descriptors_in_buffer(buffer.size(), desc_page_size);
+        }
+    }
 };
 
 class BoundaryChannel;
@@ -42,8 +51,9 @@ public:
         bool split_transfer = false, const std::string &stream_name = "", LatencyMeterPtr latency_meter = nullptr);
 
     BoundaryChannel(HailoRTDriver &driver, vdma::ChannelId channel_id, Direction direction, DescriptorList &&desc_list,
-        TransferLauncher &transfer_launcher, size_t queue_size, bool split_transfer,
-        const std::string &stream_name, LatencyMeterPtr latency_meter, hailo_status &status);
+        TransferLauncher &transfer_launcher, size_t queue_size, bool split_transfer, const std::string &stream_name,
+        LatencyMeterPtr latency_meter);
+
     BoundaryChannel(const BoundaryChannel &other) = delete;
     BoundaryChannel &operator=(const BoundaryChannel &other) = delete;
     BoundaryChannel(BoundaryChannel &&other) = delete;
@@ -82,7 +92,7 @@ public:
 
     // To avoid buffer bindings, one can call this function to statically bind a full buffer to the channel. The buffer
     // size should be exactly desc_page_size() * descs_count() of current descriptors list.
-    hailo_status bind_buffer(MappedBufferPtr buffer);
+    hailo_status bind_cyclic_buffer(MappedBufferPtr buffer);
     hailo_status prepare_transfer(TransferRequest &&transfer_request);
 
     // TODO: rename BoundaryChannel::get_max_ongoing_transfers to BoundaryChannel::get_max_parallel_transfers (HRT-13513)
@@ -113,16 +123,13 @@ public:
 private:
     hailo_status update_latency_meter();
 
-    void on_request_complete(std::unique_lock<std::mutex> &lock, TransferRequest &request,
-        hailo_status complete_status);
-    hailo_status launch_and_enqueue_transfer(TransferRequest &&transfer_request, bool queue_failed_transfer = false);
-    Expected<std::tuple<std::vector<HailoRTDriver::TransferBuffer>, uint32_t>> prepare_driver_transfer(TransferRequest &transfer_request);
-    Expected<uint32_t> launch_transfer_impl(TransferRequest &transfer_request);
+    void on_request_complete(std::unique_lock<std::mutex> &lock, TransferRequest &request, hailo_status complete_status);
+
+    hailo_status launch_transfer_impl(TransferChunk &chunk);
 
     static bool is_desc_between(uint16_t begin, uint16_t end, uint16_t desc);
 
-    bool is_cyclic_buffer();
-    Expected<std::vector<TransferRequest>> split_messages(TransferRequest &&transfer_request);
+    Expected<std::vector<TransferChunk>> split_transfer(TransferRequest &&request);
 
     size_t get_chunk_size() const;
     InterruptsDomain get_first_interrupts_domain() const;
@@ -131,21 +138,14 @@ private:
     const Direction m_direction;
     HailoRTDriver &m_driver;
     TransferLauncher &m_transfer_launcher;
-    DescriptorList m_desc_list; // Host side descriptor list
+    DescriptorList m_desc_list;
     const std::string m_stream_name;
-    // Since all desc list sizes are a power of 2, we can use IsPow2Tag to optimize the circular buffer
-    uint16_t m_num_launched;
-    uint16_t m_num_programmed;
-    std::atomic<uint32_t> m_num_free_descs;
+    uint32_t m_num_launched;
+    uint32_t m_free_descs;
     bool m_is_channel_activated;
     std::mutex m_channel_mutex;
-    // * m_pending_transfers holds transfers that are waiting to be bound to the descriptor list.
-    // * m_ongoing_transfers holds transfers that have been bound to the descriptor list and
-    //   are waiting to be completed.
-    // * Note that the capacity of the pending_transfers and ongoing_transfers circular
-    //   buffers may not be a power of 2, hence the IsNotPow2Tag
-    CircularArray<OngoingTransfer, IsNotPow2Tag> m_ongoing_transfers;
-    CircularArray<TransferRequest, IsNotPow2Tag> m_pending_transfers;
+    CircularArray<TransferChunk, IsNotPow2Tag> m_pending;
+    CircularArray<TransferChunk, IsNotPow2Tag> m_ongoing;
 
     // About HW latency measurements:
     //  - For each ongoing transfer, we push some num-proc value to the pending_latency_measurements array. When this
@@ -166,9 +166,8 @@ private:
     CircularArray<uint16_t> m_pending_latency_measurements;
     uint16_t m_last_timestamp_num_processed;
 
-    // When bind_buffer is called, we keep a reference to the buffer here. This is used to avoid buffer bindings.
-    std::shared_ptr<MappedBuffer> m_bounded_buffer;
-    bool m_split_transfer;
+    bool m_is_cyclic;
+    bool m_should_split_transfer;
 
     static constexpr uint32_t OPTIMAL_CHUNKS_DIVISION_FACTOR = 4;
 };

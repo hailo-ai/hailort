@@ -58,7 +58,7 @@ namespace hailort
 
 class CoreOpMetadata;
 class CoreOp;
-using ProtoHEFNetworkGroupPtr = std::shared_ptr<ProtoHEFNetworkGroup>;
+using ProtoHEFNetworkGroupPtr = ProtoHEFNetworkGroup*;
 
 struct ProtoHEFCoreOpMock;
 struct ProtoHEFPartialCoreOpMock {
@@ -188,6 +188,16 @@ typedef enum {
 // TODO: HRT-12051: move these to periph calculator when core hw padding is removed
 static constexpr uint32_t HAILO1X_PERIPH_BYTES_PER_BUFFER_MAX_SIZE  (0x00002000L);
 static constexpr uint32_t HAILO1X_PERIPH_PAYLOAD_MAX_VALUE          (0x01FFFFFFL);
+
+// HEF chunk information for internal use
+struct HefChunkInfo {
+    std::string name;   // Chunk name (e.g., HEADER_PROTO_PADDING, CCWS, or external resource name)
+    uint64_t offset;    // Absolute offset in the HEF file / Buffer
+    uint64_t size;      // Size of the chunk in bytes
+
+    HefChunkInfo(std::string name, uint64_t offset, uint64_t size)
+        : name(std::move(name)), offset(offset), size(size) {}
+};
 
 const static uint32_t SUPPORTED_EXTENSIONS_BITSET_SIZE = 1000;
 static const std::vector<ProtoHEFExtensionType> SUPPORTED_EXTENSIONS = {
@@ -320,10 +330,12 @@ public:
     Expected<size_t> get_number_of_input_streams(const std::string &net_group_name="");
     Expected<size_t> get_number_of_output_streams(const std::string &net_group_name="");
     ProtoHEFHwArch get_device_arch();
+    std::string get_sdk_version_as_string() const;
     uint64_t get_ccws_section_size() const;
     std::shared_ptr<SeekableBytesReader> get_hef_reader() const;
     size_t get_offset_zero_point() const;
     Expected<float64_t> get_bottleneck_fps(const std::string &net_group_name="");
+    Expected<uint64_t> get_computational_ops(const std::string &net_group_name);
     static bool contains_ddr_layers(const ProtoHEFCoreOpMock &core_op);
     static hailo_status validate_core_op_unique_layer_names(const ProtoHEFCoreOpMock &core_op);
     Expected<std::vector<hailo_vstream_info_t>> get_network_input_vstream_infos(const std::string &net_group_name="",
@@ -436,7 +448,9 @@ public:
 
     void set_memory_footprint_optimization(bool should_optimize);
 
-    static Expected<std::map<std::string, BufferPtr>> extract_hef_external_resources(const std::string &file_path);
+    // Parses HEF file once and returns both chunk-to-send as offsets and local external resources as buffers
+    static Expected<Hef::HefParseForTransferResult> parse_hef_for_transfer(const std::string &file_path,
+        const std::unordered_set<std::string> &local_resources);
 
 private:
     Impl(const std::string &hef_path, hailo_status &status);
@@ -451,7 +465,7 @@ private:
     hailo_status fill_v2_hef_header(hef__header_t &hef_header, std::shared_ptr<SeekableBytesReader> hef_reader);
     hailo_status fill_v3_hef_header(hef__header_t &hef_header, std::shared_ptr<SeekableBytesReader> hef_reader);
     hailo_status fill_core_ops_and_networks_metadata(uint32_t hef_version, std::shared_ptr<SeekableBytesReader> hef_reader, size_t ccws_offset);
-    hailo_status transfer_protobuf_field_ownership(ProtoHEFHef &hef_message);
+    hailo_status capture_protobuf_references(ProtoHEFHef &hef_message);
     void fill_core_ops();
     hailo_status fill_networks_metadata(uint32_t hef_version, std::shared_ptr<SeekableBytesReader> hef_reader, size_t ccws_offset);
     void fill_extensions_bitset();
@@ -507,6 +521,7 @@ private:
     size_t m_offset_zero_point;
 
     std::shared_ptr<Buffer> m_hef_buffer; // Only used if Hef is created from memory
+    std::unique_ptr<google::protobuf::Arena> m_arena; // Arena for protobuf allocation optimization
 
     std::map<std::string, NetworkGroupMetadata> m_network_group_metadata; // Key is NG name
     bool m_zero_copy_config_over_descs; // If true, the config is forced to be over descs instead of CCB, as best effort (e.g. if HEF doesnt support it or disabling env var is on)

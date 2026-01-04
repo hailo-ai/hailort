@@ -127,22 +127,19 @@ hailo_status AsyncInputStreamBase::write_impl(const MemoryView &user_buffer)
         return status;
     }
 
-    auto stream_buffer_exp = m_buffer_pool->dequeue();
-    CHECK_EXPECTED_AS_STATUS(stream_buffer_exp);
-    auto stream_buffer = stream_buffer_exp.release();
+    TRY(auto buffer, m_buffer_pool->dequeue());
 
-    status = stream_buffer.copy_from(user_buffer);
+    status = buffer.copy_from(user_buffer);
     CHECK_SUCCESS(status);
 
-    return call_write_async_impl(TransferRequest(std::move(stream_buffer),
-        [this, stream_buffer](hailo_status) {
-            std::unique_lock<std::mutex> lock(m_stream_mutex);
-            auto enqueue_status = m_buffer_pool->enqueue(TransferBuffer{stream_buffer});
-            if (HAILO_SUCCESS != enqueue_status) {
-                LOGGER__ERROR("Failed enqueue stream buffer {}", enqueue_status);
-            }
+    auto callback = [this, buffer] (hailo_status) {
+        std::unique_lock<std::mutex> lock(m_stream_mutex);
+        auto enqueue_status = m_buffer_pool->enqueue(StreamBuffer{buffer});
+        if (HAILO_SUCCESS != enqueue_status) {
+            LOGGER__ERROR("Failed enqueue stream buffer {}", enqueue_status);
         }
-    ));
+    };
+    return call_write_async_impl(TransferRequest(buffer.transfer_buffers(), callback));
 }
 
 Expected<size_t> AsyncInputStreamBase::get_async_max_queue_size() const
@@ -480,13 +477,12 @@ hailo_status AsyncOutputStreamBase::read_impl(MemoryView user_buffer)
         return status;
     }
 
-    auto stream_buffer = m_pending_buffers.dequeue();
-    CHECK_EXPECTED_AS_STATUS(stream_buffer);
+    TRY(auto stream_buffer, m_pending_buffers.dequeue());
 
-    status = stream_buffer->copy_to(user_buffer);
+    status = stream_buffer.copy_to(user_buffer);
     CHECK_SUCCESS(status);
 
-    status = m_buffer_pool->enqueue(stream_buffer.release());
+    status = m_buffer_pool->enqueue(std::move(stream_buffer));
     CHECK_SUCCESS(status);
 
     status = dequeue_and_launch_transfer();
@@ -501,23 +497,22 @@ hailo_status AsyncOutputStreamBase::read_impl(MemoryView user_buffer)
 
 hailo_status AsyncOutputStreamBase::dequeue_and_launch_transfer()
 {
-    auto buffer = m_buffer_pool->dequeue();
-    CHECK_EXPECTED_AS_STATUS(buffer);
+    TRY(auto buffer, m_buffer_pool->dequeue());
 
-    auto callback = [this, buffer=buffer.value()](hailo_status status) {
+    auto callback = [this, buffer](hailo_status status) {
         if (HAILO_STREAM_ABORT == status) {
             // On deactivation flow, we should get this status. We just ignore the callback here, and in the next
             // activation we should reset the buffers.
             return;
         }
 
-        status = m_pending_buffers.enqueue(TransferBuffer{buffer});
+        status = m_pending_buffers.enqueue(StreamBuffer{buffer});
         if (HAILO_SUCCESS != status) {
             LOGGER__ERROR("Failed to enqueue pending buffer {}", status);
         }
     };
 
-    auto status = call_read_async_impl(TransferRequest(std::move(buffer.value()), callback));
+    auto status = call_read_async_impl(TransferRequest(buffer.transfer_buffers(), callback));
     if (HAILO_STREAM_ABORT == status) {
         // The buffer_pool state will reset on next activation.
         return status;

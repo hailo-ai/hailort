@@ -24,13 +24,11 @@ namespace vdma {
 
 class BufferSizesRequirements final {
 public:
+    BufferSizesRequirements() = default;
+
     BufferSizesRequirements(uint32_t descs_count, uint16_t desc_page_size) :
-        m_descs_count(descs_count),
-        m_desc_page_size(desc_page_size)
-    {
-        assert(m_descs_count > 0);
-        assert(m_desc_page_size > 0);
-    }
+        m_descs_count(descs_count), m_desc_page_size(desc_page_size)
+    {}
 
     uint32_t descs_count() const { return m_descs_count; }
     uint16_t desc_page_size() const { return m_desc_page_size; }
@@ -41,14 +39,17 @@ public:
         uint16_t max_active_trans, uint32_t transfer_size);
 
     static Expected<BufferSizesRequirements> get_buffer_requirements_multiple_transfers(
-        vdma::VdmaBuffer::Type buffer_type, const DescSizesParams &desc_sizes_params, uint16_t max_desc_page_size,
+        vdma::BufferType buffer_type, const DescSizesParams &desc_sizes_params, uint16_t max_desc_page_size,
         uint16_t batch_size, const std::vector<uint32_t> &transfer_sizes, bool is_circular,
         bool force_default_page_size, bool force_batch_size, bool is_ddr);
 
     static Expected<BufferSizesRequirements> get_buffer_requirements_single_transfer(
-        vdma::VdmaBuffer::Type buffer_type, const DescSizesParams &desc_sizes_params, uint16_t max_desc_page_size,
+        vdma::BufferType buffer_type, const DescSizesParams &desc_sizes_params, uint16_t max_desc_page_size,
         uint16_t min_batch_size, uint16_t max_batch_size, uint32_t transfer_size, bool is_circular,
         bool force_default_page_size, bool force_batch_size, bool is_vdma_aligned_buffer, bool is_ddr);
+
+    static BufferSizesRequirements get_sram_buffer_requirements(const DescSizesParams &desc_sizes_params,
+        uint32_t transfer_size);
 
 private:
     static uint16_t find_initial_desc_page_size(const DescSizesParams &desc_sizes_params,

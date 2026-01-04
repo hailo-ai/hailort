@@ -17,10 +17,13 @@
 #include "common/utils.hpp"
 #include "common/filesystem.hpp"
 #include "common/genai/serializer/serializer.hpp"
+#include "common/genai/session_wrapper/session_wrapper.hpp"
 
-#include "eigen.hpp"
+#include "common/genai/eigen.hpp"
+#include <nlohmann/json.hpp>
 
 #include <fstream>
+#include <future>
 
 namespace hailort
 {
@@ -42,6 +45,9 @@ constexpr auto SCHEDULER_TIMEOUT = std::chrono::milliseconds(100);
 constexpr auto JOB_WAIT_TIMEOUT = std::chrono::milliseconds(1000);
 constexpr auto DEFAULT_SCHEDULER_TIMEOUT = std::chrono::milliseconds(0);
 constexpr auto DEFAULT_SCHEDULER_THRESHOLD = 1;
+
+// Timeout for asynchronous operations in server
+constexpr auto WAIT_FOR_OPERATION_TIMEOUT = std::chrono::seconds(10);
 
 inline Expected<Buffer> handle_check_hef_exists_request(const MemoryView &request)
 {
@@ -145,6 +151,76 @@ inline int argmax(const Eigen::VectorXf &x)
     Eigen::Index idx = 0;
     x.maxCoeff(&idx);
     return static_cast<int>(idx);
+}
+
+inline nlohmann::json parse_json(const MemoryView &json_view)
+{
+    auto json_ptr = json_view.data();
+    auto json_size = json_view.size();
+    return nlohmann::json::parse(json_ptr, json_ptr + json_size);
+}
+
+template<typename T>
+inline T wait_for_future_value(std::future<T> &future, const std::chrono::milliseconds &timeout = LONG_TIMEOUT)
+{
+    if (!future.valid()) {
+        return make_unexpected(HAILO_INTERNAL_FAILURE);
+    }
+    auto wait_status = future.wait_for(timeout);
+    if (wait_status != std::future_status::ready) {
+        return make_unexpected(HAILO_TIMEOUT);
+    }
+    return future.get();
+}
+
+template<typename T>
+inline hailo_status wait_for_future_status(std::future<T> &future, const std::chrono::milliseconds &timeout = LONG_TIMEOUT)
+{
+    if (!future.valid()) {
+        return HAILO_INTERNAL_FAILURE;
+    }
+    auto wait_status = future.wait_for(timeout);
+    if (wait_status != std::future_status::ready) {
+        return HAILO_TIMEOUT;
+    }
+    return future.get();
+}
+
+template<typename T>
+inline hailo_status wait_for_future_status_or_shutdown(std::future<T> &future, std::shared_ptr<Event> shutdown_event,
+    const std::chrono::milliseconds &timeout = LONG_TIMEOUT)
+{
+    CHECK(future.valid(), HAILO_INTERNAL_FAILURE, "Future is not valid!");
+
+    const auto poll_interval = std::chrono::milliseconds(100);
+    TimeoutGuard timeout_guard(timeout);
+
+    while (timeout_guard.get_remaining_timeout() > std::chrono::milliseconds(0)) {
+        // Check if shutdown was requested
+        if (shutdown_event && (HAILO_SUCCESS == shutdown_event->wait(std::chrono::milliseconds(0)))) {
+            LOGGER__WARNING("Future wait interrupted by shutdown event");
+            return HAILO_SHUTDOWN_EVENT_SIGNALED;
+        }
+
+        // Wait for the future, using the minimum of poll_interval and remaining timeout
+        auto wait_time = std::min(poll_interval, timeout_guard.get_remaining_timeout());
+
+        // Check if future is ready
+        auto wait_status = future.wait_for(wait_time);
+        if (wait_status == std::future_status::ready) {
+            return future.get();
+        }
+    }
+
+    // Timeout expired
+    return HAILO_TIMEOUT;
+}
+
+inline hailo_status receive_hef_chunk_sync(SessionWrapper &session, const Hef::HefChunksInfo &chunk,
+    std::shared_ptr<Buffer> hef_buffer)
+{
+    LOGGER__INFO("Receiving HEF chunk '{}' (offset: {}, size: {} bytes)", chunk.name, chunk.offset, chunk.size);
+    return session.receive_file_chunked(chunk.size, MemoryView(hef_buffer->data() + chunk.offset, chunk.size));
 }
 
 } /* namespace genai */

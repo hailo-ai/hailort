@@ -174,7 +174,7 @@ Expected<firmware_type_t> DeviceBase::get_fw_type()
     }
     else if (architecture == HAILO_ARCH_HAILO15L) {
         firmware_type = FIRMWARE_TYPE_HAILO15L;
-    } else if (architecture == HAILO_ARCH_MARS) {
+    } else if (architecture == HAILO_ARCH_HAILO12L) {
         firmware_type = FIRMWARE_TYPE_MARS;
     }
     else {
@@ -689,6 +689,9 @@ hailo_status DeviceBase::fw_notification_id_to_hailo(D2H_EVENT_ID_t fw_notificat
         case NN_CORE_CRC_ERROR_EVENT_ID:
             *hailo_notification_id = HAILO_NOTIFICATION_ID_NN_CORE_CRC_ERROR_EVENT;
             break;
+        case THROTTLING_STATE_CHANGE_EVENT_ID:
+            *hailo_notification_id = HAILO_NOTIFICATION_ID_THROTTLING_STATE_CHANGE_EVENT;
+            break;
         default:
             status = HAILO_INVALID_ARGUMENT;
             goto l_exit;
@@ -753,7 +756,7 @@ std::vector<hailo_device_architecture_t> DeviceBase::hef_arch_to_device_compatib
     case HEFHwArch::HW_ARCH__HAILO15M:
         return {HAILO_ARCH_HAILO15M, HAILO_ARCH_HAILO15H, HAILO_ARCH_HAILO10H};
     case HEFHwArch::HW_ARCH__MARS:
-        return {HAILO_ARCH_MARS};
+        return {HAILO_ARCH_HAILO12L};
     default:
         return {HAILO_ARCH_MAX_ENUM};
     }
@@ -770,7 +773,7 @@ Expected<size_t> DeviceBase::fetch_logs(MemoryView buffer, hailo_log_type_t log_
 
     TRY(auto device_arch, get_architecture());
     CHECK((device_arch == HAILO_ARCH_HAILO15H) || (device_arch == HAILO_ARCH_HAILO15L) || (device_arch == HAILO_ARCH_HAILO15M) ||
-        (device_arch == HAILO_ARCH_HAILO10H) || (device_arch == HAILO_ARCH_MARS), HAILO_INVALID_DEVICE_ARCHITECTURE,
+        (device_arch == HAILO_ARCH_HAILO10H) || (device_arch == HAILO_ARCH_HAILO12L), HAILO_INVALID_DEVICE_ARCHITECTURE,
         "fetch_logs is not supported for device arch {}", HailoRTCommon::get_device_arch_str(device_arch));
 
     TRY(auto max_logs_size, get_max_logs_size(log_type));

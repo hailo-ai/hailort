@@ -70,12 +70,19 @@ message GenAIRpcReply {
     }
 }
 
+message HefChunkInfo {
+    string name = 1;
+    uint64 size = 2;
+    uint64 offset = 3;
+}
+
 message LLM_Create_Request {
     string lora_name = 1;
     string hef_path = 2;
     string group_id = 3;
-    uint64 file_size = 4;
+    repeated HefChunkInfo chunks_to_transfer = 4;
     bool tokenizer_on_host = 5;
+    uint64 total_hef_size = 6;
 }
 
 message LLM_Create_Reply {
@@ -127,11 +134,16 @@ message LLM_Generator_Generate_Reply {
     repeated uint32 initial_prefix_tokens = 2;  // Initial prefix tokens to use for this generation session
 }
 
+message Embedding {
+    uint32 type = 1;
+    bytes data = 2;
+}
+
 message TextGenerationInput {
-    string initial_prompt = 1;      // Client-side tokenizer: empty | Server-side tokenizer: valid on first iter
-    repeated uint32 tokens = 2;     // * first iter - Client-side tokenizer: combined prefix+input tokens | Server-side tokenizer: prefix tokens_history_before_reasoning
-                                    // * Subsequent iters - single token
-    repeated bytes embeddings = 3;  // Client-side tokenizer: valid | Server-side tokenizer: empty
+    string initial_prompt = 1;          // Client-side tokenizer: empty | Server-side tokenizer: valid on first iter
+    repeated uint32 tokens = 2;         // * first iter - Client-side tokenizer: combined prefix+input tokens | Server-side tokenizer: prefix tokens_history_before_reasoning
+                                        // * Subsequent iters - single token
+    repeated Embedding embeddings = 3;  // Client-side tokenizer: valid | Server-side tokenizer: empty
 }
 
 message TextGenerationOutput {
@@ -261,8 +273,9 @@ message LLM_Get_Max_Context_Capacity_Reply {
 message VLM_Create_Request {
     string group_id = 1;
     string hef_path = 2; // non-empty means hef exists on server side
-    uint64 file_size = 3;
+    repeated HefChunkInfo chunks_to_transfer = 3;
     bool tokenizer_on_host = 4;
+    uint64 total_hef_size = 5;
 }
 
 message FrameFormat {
@@ -283,11 +296,13 @@ message VLM_Create_Reply {
     string prompt_template = 4;
     uint32 embedding_features = 5;
     uint32 image_pad_token_id = 6;
-    uint32 embeddings_per_frame = 7;
+    uint32 video_pad_token_id = 7;
+    uint32 embeddings_per_frame = 8;
 }
 
 message VLM_Generator_Generate_Request {
-    uint32 number_of_frames = 1;
+    uint32 number_of_frames = 1; // Standalone frames
+    repeated uint32 video_frames_count_per_video = 3; // Holds a frame-count for each given video
 }
 
 message VLM_Generator_Generate_Reply {
@@ -310,11 +325,17 @@ message Speech2Text_Create_Request {
 
 message Speech2Text_Create_Reply {
     uint32 status = 1;
+    Speech2TextGeneratorParams generator_params = 2;
+}
+
+message Speech2TextGeneratorParams {
+    uint32 task_type = 1;
+    string language = 2;
+    float repetition_penalty = 3;
 }
 
 message Speech2Text_Generate_Request {
-    uint32 task_type = 1;
-    string language = 2;
+    Speech2TextGeneratorParams generator_params = 1;
     // The next message to the server is the audio chunk
 }
 

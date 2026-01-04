@@ -12,7 +12,7 @@
 #include "common/utils.hpp"
 #include "common/internal_env_vars.hpp"
 #include "common/filesystem.hpp"
-#include "vdma/channel/transfer_common.hpp"
+#include "vdma/transfer_common.hpp"
 
 #include <string>
 
@@ -426,7 +426,7 @@ hailo_status OsSession::write_async(TransferRequest &&request)
         }
 
         for (auto transfer_buffer : buffers) {
-            if (transfer_buffer.type() == TransferBufferType::DMABUF) {
+            if (transfer_buffer.is_dmabuf()) {
                 TRY(auto fd, transfer_buffer.dmabuf_fd());
                 CHECK_SUCCESS(m_socket.write_fd(fd, transfer_buffer.size()));
             } else {
@@ -477,7 +477,7 @@ Expected<int> OsSession::read_fd()
 
 Expected<Buffer> OsSession::allocate_buffer(size_t size, hailo_dma_buffer_direction_t)
 {
-    return Buffer::create(size);
+    return Buffer::create(size, 0);
 }
 
 } // namespace hailort

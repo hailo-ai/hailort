@@ -43,7 +43,7 @@ static size_t get_nn_core_queue_size_for_device(hailo_device_architecture_t devi
 {
     switch (device_arch) {
         case HAILO_ARCH_HAILO15L:
-        case HAILO_ARCH_MARS:  
+        case HAILO_ARCH_HAILO12L:  
             return 8 * 1024 * 1024; // 8MB
         default:
             return 32 * 1024 * 1024; // 32MB
@@ -66,19 +66,19 @@ Expected<ContextResources> ContextResources::create(HailoRTDriver &driver,
         // In case of alligned ccws - we will also use the mapped buffer of the ccws_section + the nops buffer
         // Also - we will program the descriptors right after creating the descriptor list
         
-        for (auto config_buffer_info : config_buffer_infos) {
+        for (const auto &config_buffer_info : config_buffer_infos) {
             const auto config_stream_index = config_buffer_info.first;
             TRY(auto buffer_resource, ZeroCopyConfigBuffer::create(driver, config_channels_ids[config_stream_index],
                 config_buffer_info.second, mapped_buffers, nops_buffer));
-            config_buffers[config_stream_index] = std::make_shared<ZeroCopyConfigBuffer>(std::move(buffer_resource));
+            config_buffers.emplace(config_stream_index, std::make_shared<ZeroCopyConfigBuffer>(std::move(buffer_resource)));
         }
     } else {
         // In the other case (no alligned ccws) - we will only create the config buffer (programming the descriptors will be done later) 
-        for (auto config_buffer_info : config_buffer_infos) {
+        for (const auto &config_buffer_info : config_buffer_infos) {
             const auto config_stream_index = config_buffer_info.first;
             TRY(auto buffer_resource, CopiedConfigBuffer::create(driver, config_channels_ids[config_stream_index],
                 config_buffer_info.second));
-            config_buffers[config_stream_index] = std::make_shared<CopiedConfigBuffer>(std::move(buffer_resource));
+            config_buffers.emplace(config_stream_index, std::make_shared<CopiedConfigBuffer>(std::move(buffer_resource)));
         }
     }
 
@@ -766,7 +766,7 @@ Expected<CONTROL_PROTOCOL__host_buffer_info_t> ResourcesManager::get_boundary_bu
 {
     if (CONTROL_PROTOCOL__DESC_BOUNDARY_CHANNEL == get_hw_infer_boundary_channel_mode()) {
         auto &desc_list = channel.get_desc_list();
-        return vdma::VdmaEdgeLayer::get_host_buffer_info(vdma::VdmaEdgeLayer::Type::SCATTER_GATHER, desc_list.dma_address(),
+        return vdma::VdmaEdgeLayer::get_host_buffer_info(vdma::DmaType::SCATTER_GATHER, desc_list.dma_address(),
             desc_list.desc_page_size(), desc_list.count(), transfer_size);
     } else {
         CHECK(m_hw_only_ccb_boundary_buffers.end() != m_hw_only_ccb_boundary_buffers.find(channel.get_channel_id()),
@@ -774,7 +774,7 @@ Expected<CONTROL_PROTOCOL__host_buffer_info_t> ResourcesManager::get_boundary_bu
         const auto &ccb_boundary_channel_buffer = m_hw_only_ccb_boundary_buffers[channel.get_channel_id()];
         const uint32_t desc_count = static_cast<uint32_t>(DIV_ROUND_UP(ccb_boundary_channel_buffer->size(),
             HW_INFER_CCB_DESC_PAGE_SIZE));
-        return vdma::VdmaEdgeLayer::get_host_buffer_info(vdma::VdmaEdgeLayer::Type::CONTINUOUS,
+        return vdma::VdmaEdgeLayer::get_host_buffer_info(vdma::DmaType::CONTINUOUS,
             ccb_boundary_channel_buffer->dma_address(), HW_INFER_CCB_DESC_PAGE_SIZE, desc_count,
             static_cast<uint32_t>(ccb_boundary_channel_buffer->size()));
     }
@@ -810,8 +810,8 @@ hailo_status ResourcesManager::allocate_mapped_buffer_for_hw_only_infer(
                 "calculated total_desc_count for ccb buffer is out of UINT16 range");
 
             // Use ccb buffer for boundary layer hw only infer instead of normal buffer
-            TRY(auto ccb_bufer, vdma::ContinuousBuffer::create(total_desc_count * HW_INFER_CCB_DESC_PAGE_SIZE, m_driver));
-            auto buffer_ptr = make_shared_nothrow<vdma::ContinuousBuffer>(std::move(ccb_bufer));
+            TRY(auto ccb_bufer, vdma::CmaBuffer::create(total_desc_count * HW_INFER_CCB_DESC_PAGE_SIZE, m_driver));
+            auto buffer_ptr = make_shared_nothrow<vdma::CmaBuffer>(std::move(ccb_bufer));
             CHECK(nullptr != buffer_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
             m_hw_only_ccb_boundary_buffers[boundary_channel_ptr->get_channel_id()] = std::move(buffer_ptr);
@@ -841,7 +841,7 @@ hailo_status ResourcesManager::configure_mapped_buffer_for_hw_only_infer(vdma::B
                 boundary_channel_ptr->get_channel_id()), HAILO_INTERNAL_FAILURE);
             auto hw_infer_mapped_buffer = m_hw_only_desc_boundary_buffers[boundary_channel_ptr->get_channel_id()];
 
-            CHECK_SUCCESS(desc_list.program(*hw_infer_mapped_buffer, single_transfer_size, 0,
+            CHECK_SUCCESS(desc_list.program(hw_infer_mapped_buffer, single_transfer_size, 0,
                 boundary_channel_ptr->get_channel_id(), 0, batch_size * batch_count));
             const uint16_t desc_count = static_cast<uint16_t>(DIV_ROUND_UP(hw_infer_mapped_buffer->size(),
                 desc_list.desc_page_size()));
@@ -1049,9 +1049,9 @@ Expected<HwInferResults> ResourcesManager::run_hw_only_infer()
 
 hailo_status ResourcesManager::fill_internal_buffers_info()
 {
-    TRY(const auto edge_layer_info, InternalBufferPlanner::get_edge_layer_infos(*m_core_op_metadata, m_config_params));
+    TRY(auto edge_layer_info, InternalBufferPlanner::get_edge_layer_infos(*m_core_op_metadata, m_config_params));
 
-    auto status = m_internal_buffer_manager->plan_and_execute(edge_layer_info,
+    auto status = m_internal_buffer_manager->plan_and_execute(std::move(edge_layer_info),
         InternalBufferPlanner::Type::SINGLE_BUFFER_PER_BUFFER_TYPE,
         m_core_op_metadata->dynamic_contexts().size());
     CHECK_SUCCESS(status);

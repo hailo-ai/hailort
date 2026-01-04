@@ -14,7 +14,8 @@
 #include "hailo/buffer.hpp"
 #include "hailo/expected.hpp"
 
-#include "tokenizers_cpp.h"
+#include "tokenizers_c.h"
+#include <vector>
 
 namespace hailort
 {
@@ -24,24 +25,25 @@ namespace genai
 class HailoTokenizer
 {
 public:
-    static Expected<std::unique_ptr<HailoTokenizer>> create(const std::string &tokenizer_json_blob);
+    static Expected<std::unique_ptr<HailoTokenizer>> create(const MemoryView tokenizer_json);
 
     HailoTokenizer(HailoTokenizer &&) = default;
     HailoTokenizer(const HailoTokenizer &) = delete;
     HailoTokenizer &operator=(HailoTokenizer &&) = delete;
     HailoTokenizer &operator=(const HailoTokenizer &) = delete;
-    virtual ~HailoTokenizer() = default;
+    virtual ~HailoTokenizer();
 
-    Expected<std::vector<int>> text_to_tokens(const std::string &text);
+    Expected<std::vector<int>> text_to_tokens(const std::string &text, bool add_special_tokens = false);
     // When forcing printable strings, the tokenizer will buffer tokens that decodes into replacement-char () for future decoding
-    Expected<std::string> tokens_to_text(const std::vector<int> &tokens, bool force_printable = false);
+    Expected<std::string> tokens_to_text(const std::vector<int> &tokens, bool force_printable = false, bool skip_special_tokens = false);
 
     void clear_buffered_tokens();
 
-    HailoTokenizer(std::unique_ptr<tokenizers::Tokenizer> &&hf_tokenizer);
+    HailoTokenizer(TokenizerHandle tokenizer_handle);
 private:
-    std::unique_ptr<tokenizers::Tokenizer> m_hf_tokenizer;
+    Expected<std::string> decode_internal(const std::vector<int> &tokens, bool skip_special_tokens = false);
 
+    TokenizerHandle m_tokenizer_handle;
     std::vector<int> m_buffered_tokens;
 };
 

@@ -3,18 +3,18 @@
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
- * @file continuous_buffer.cpp
- * @brief Continuous physical vdma buffer.
+ * @file cma_buffer.cpp
+ * @brief Contiguous physical VDMA-buffer allocated via CMA.
  **/
 
-#include "continuous_buffer.hpp"
+#include "cma_buffer.hpp"
 
 namespace hailort {
 namespace vdma {
 
-Expected<ContinuousBuffer> ContinuousBuffer::create(size_t size, HailoRTDriver &driver)
+Expected<CmaBuffer> CmaBuffer::create(size_t size, HailoRTDriver &driver)
 {
-    auto descs_params = driver.get_ccb_desc_params();
+    auto descs_params = driver.get_continuous_desc_params();
     const auto min_size = descs_params.min_page_size * descs_params.min_descs_count;
     if (size < min_size) {
         LOGGER__ERROR("continuous memory size ({}) must be larger/equal to {}.", size, min_size);
@@ -30,10 +30,10 @@ Expected<ContinuousBuffer> ContinuousBuffer::create(size_t size, HailoRTDriver &
         CHECK_EXPECTED(result);
     }
 
-    return ContinuousBuffer(driver, result.release());
+    return CmaBuffer(driver, result.release());
 }
 
-ContinuousBuffer::~ContinuousBuffer()
+CmaBuffer::~CmaBuffer()
 {
     if (HailoRTDriver::INVALID_DRIVER_BUFFER_HANDLE_VALUE != m_buffer_info.handle) {
         auto status = m_driver.vdma_continuous_buffer_free(m_buffer_info);
@@ -43,22 +43,7 @@ ContinuousBuffer::~ContinuousBuffer()
     }
 }
 
-size_t ContinuousBuffer::size() const
-{
-    return m_buffer_info.size;
-}
-
-uint64_t ContinuousBuffer::dma_address() const
-{
-    return m_buffer_info.dma_address;
-}
-
-void* ContinuousBuffer::user_address() const
-{
-    return m_buffer_info.user_address;
-}
-
-hailo_status ContinuousBuffer::read(void *buf_dst, size_t count, size_t offset)
+hailo_status CmaBuffer::read(void *buf_dst, size_t count, size_t offset)
 {
     CHECK((count + offset) <= m_buffer_info.size, HAILO_INSUFFICIENT_BUFFER,
         "Requested size {} from offset {} is more than the buffer size {}", count, offset, m_buffer_info.size);
@@ -68,7 +53,7 @@ hailo_status ContinuousBuffer::read(void *buf_dst, size_t count, size_t offset)
     return HAILO_SUCCESS;
 }
 
-hailo_status ContinuousBuffer::write(const void *buf_src, size_t count, size_t offset)
+hailo_status CmaBuffer::write(const void *buf_src, size_t count, size_t offset)
 {
     CHECK((count + offset) <= m_buffer_info.size, HAILO_INSUFFICIENT_BUFFER,
         "Requested size {} from offset {} is more than the buffer size {}", count, offset, m_buffer_info.size);
@@ -77,12 +62,6 @@ hailo_status ContinuousBuffer::write(const void *buf_src, size_t count, size_t o
     memcpy(dst_address, buf_src, count);
     return HAILO_SUCCESS;
 }
-
-ContinuousBuffer::ContinuousBuffer(HailoRTDriver &driver,
-        const ContinousBufferInfo &buffer_info) :
-    m_driver(driver),
-    m_buffer_info(buffer_info)
-{}
 
 }; /* namespace vdma */
 }; /* namespace hailort */

@@ -17,6 +17,9 @@ namespace hailort
 namespace genai
 {
 
+static const std::string HEADER_PROTO_PADDING = "header+proto+padding";
+static const std::string CCWS = "CCWs";
+
 // Common resource names for GenAI components
 static const std::string INPUT_EMB_BINARY = "embeddings.bin";
 static const std::string TOKENIZER = "tokenizer.json";

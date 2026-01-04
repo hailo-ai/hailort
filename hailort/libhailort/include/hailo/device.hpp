@@ -458,7 +458,7 @@ public:
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      */
     virtual hailo_status set_notification_callback(const NotificationCallback &func, hailo_notification_id_t notification_id,
-        void *opaque) = 0;
+        void *opaque = nullptr) = 0;
 
     /**
      * Removes a previously set callback with ID @a notification_id.
@@ -806,6 +806,8 @@ protected:
                                           size_t *response_size, hailo_cpu_id_t cpu_id) = 0;
     // Update the state of the fw, as seen by this device
     hailo_status update_fw_state();
+
+    virtual hailo_status set_default_notification_callbacks();
 
     Type m_type;
     uint32_t m_control_sequence;

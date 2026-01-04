@@ -9,6 +9,7 @@ set(
     multi_model_inference
     notification_callback
     power_measurement
+    multi_process
 )
 
 if(UNIX)

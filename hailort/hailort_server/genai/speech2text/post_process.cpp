@@ -17,28 +17,26 @@ namespace hailort
 namespace genai
 {
 
-constexpr float32_t NEGATIVE_INFINITY = -std::numeric_limits<float32_t>::infinity();
-
-
 Speech2TextPostProcess::Speech2TextPostProcess(size_t chunk_size_sec,
     token_t timestamp_begin_token_id, token_t eot_token_id, std::vector<token_t> &&blank_token_ids,
-    std::vector<token_t> &&suppress_tokens_ids, float32_t time_precision, token_t max_initial_timestamp)
+    const std::vector<token_t> &suppress_tokens_ids, float32_t time_precision, token_t max_initial_timestamp)
     : m_chunk_size_sec(chunk_size_sec),
     m_timestamp_begin_token_id(timestamp_begin_token_id),
     m_eot_token_id(eot_token_id), 
     m_blank_token_ids(std::move(blank_token_ids)),
-    m_suppress_tokens_ids(std::move(suppress_tokens_ids)),
+    m_suppress_tokens_ids(suppress_tokens_ids),
     m_time_precision(time_precision),
     m_max_initial_timestamp(max_initial_timestamp)
 {}
 
 std::pair<token_t, float32_t> Speech2TextPostProcess::get_next_token(Eigen::Map<Eigen::VectorXf> next_token_scores,
-    const std::vector<token_t> &generated_tokens)
+    const std::vector<token_t> &generated_tokens, float32_t repetition_penalty, uint32_t repetition_penalty_window_size)
 {
     Eigen::Map<const Eigen::VectorXi> generated_tokens_eigen(generated_tokens.data(), generated_tokens.size());
 
     suppress_tokens(next_token_scores, generated_tokens_eigen);
     apply_timestamps_rules(next_token_scores, generated_tokens_eigen);
+    apply_repetition_penalty(next_token_scores, generated_tokens_eigen, repetition_penalty, repetition_penalty_window_size);
     
     token_t next_token = argmax(next_token_scores);
     Eigen::VectorXf logprobs = log_softmax(next_token_scores);
@@ -129,6 +127,30 @@ void Speech2TextPostProcess::apply_timestamps_rules(Eigen::Map<Eigen::VectorXf> 
     float32_t max_text_token_logprob = logprobs.segment(0, m_timestamp_begin_token_id).maxCoeff();
     if (timestamp_logprob > max_text_token_logprob) {
         next_token_scores.segment(0, m_timestamp_begin_token_id).setConstant(NEGATIVE_INFINITY);
+    }
+}
+
+void Speech2TextPostProcess::apply_repetition_penalty(Eigen::Map<Eigen::VectorXf> &next_token_scores, const Eigen::Map<const Eigen::VectorXi> &generated_tokens,
+    float32_t repetition_penalty, uint32_t repetition_penalty_window_size)
+{
+    if (repetition_penalty == NO_REPETITION_PENALTY_VALUE) {
+        return;
+    }
+
+    auto start_index = (generated_tokens.size() > repetition_penalty_window_size) ? 
+        (generated_tokens.size() - repetition_penalty_window_size) : 0;
+
+    for (auto i = start_index; i < generated_tokens.size(); ++i) {
+        token_t token = generated_tokens(i);
+        if (next_token_scores(token) == NEGATIVE_INFINITY) {
+            continue;
+        }
+
+        if (next_token_scores(token) > 0.0f) {
+            next_token_scores(token) /= repetition_penalty;
+        } else {
+            next_token_scores(token) *= repetition_penalty;
+        }
     }
 }
 

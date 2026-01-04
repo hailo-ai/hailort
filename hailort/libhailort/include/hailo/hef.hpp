@@ -17,6 +17,7 @@
 #include <vector>
 #include <memory>
 #include <map>
+#include <unordered_set>
 
 /** hailort namespace */
 namespace hailort
@@ -444,8 +445,27 @@ public:
     Expected<MemoryView> get_external_resources(const std::string &resource_name) const;
     std::vector<std::string> get_external_resource_names() const;
     void set_memory_footprint_optimization(bool should_optimize); // Best effort optimization to reduce memcpy
+    Expected<uint64_t> get_computational_ops(const std::string &net_group_name) const;
 
-    static Expected<std::map<std::string, BufferPtr>> extract_hef_external_resources(const std::string &file_path);
+
+    struct HefChunksInfo {
+        std::string name;
+        uint64_t size;
+        uint64_t offset;
+
+        HefChunksInfo() = default;
+        HefChunksInfo(std::string name, uint64_t size, uint64_t offset) :
+            name(std::move(name)), size(size), offset(offset) {}
+    };
+
+    struct HefParseForTransferResult {
+        std::vector<HefChunksInfo> chunks;
+        std::map<std::string, BufferPtr> local_resources_buffers;
+        uint64_t offset_zero_point;
+        uint64_t total_hef_size;
+    };
+    static Expected<HefParseForTransferResult> parse_hef_for_transfer(const std::string &file_path,
+        const std::unordered_set<std::string> &local_resources);
 
     ~Hef();
     Hef(Hef &&);

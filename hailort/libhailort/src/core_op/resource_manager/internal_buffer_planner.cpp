@@ -75,8 +75,8 @@ Expected<InternalBufferPlanning> InternalBufferPlanner::create_naive_buffer_plan
     for (const auto &edge_layer_info : sorted_edge_layer_vector) {
         // Naive planning - Buffer holds only one transfer pattern and one edge layer
         const bool is_ccb = should_edge_layer_use_ccb(edge_layer_info.second.type, dma_type, force_sg_buffer_type);
-        vdma::VdmaBuffer::Type buffer_type = is_ccb ?
-            vdma::VdmaBuffer::Type::CONTINUOUS : vdma::VdmaBuffer::Type::SCATTER_GATHER;
+        vdma::BufferType buffer_type = is_ccb ?
+            vdma::BufferType::CMA : vdma::BufferType::SCATTER_GATHER;
         const auto desc_params = is_ccb ? ccb_desc_params : sg_desc_params;
         TRY_WITH_ACCEPTABLE_STATUS(HAILO_CANT_MEET_BUFFER_REQUIREMENTS, const auto buffer_requirements,
             return_buffer_requirements(edge_layer_info.second, buffer_type, desc_params));
@@ -107,7 +107,7 @@ std::vector<std::pair<EdgeLayerKey, EdgeLayerInfo>> InternalBufferPlanner::sort_
 }
 
 Expected<vdma::BufferSizesRequirements> InternalBufferPlanner::return_buffer_requirements(const EdgeLayerInfo &edge_layer,
-    const vdma::VdmaBuffer::Type buffer_type, const DescSizesParams &desc_sizes_params)
+    const vdma::BufferType buffer_type, const DescSizesParams &desc_sizes_params)
 {
     // Calc actual size
     static const auto DONT_FORCE_DEFAULT_PAGE_SIZE = false;
@@ -202,7 +202,7 @@ void update_buffer_to_context_map(std::vector<std::vector<BufferUsageSegment>> &
 hailo_status InternalBufferPlanner::add_edge_layer_to_planning(
     const std::pair<EdgeLayerKey, EdgeLayerInfo> &edge_layer,
     std::vector<std::vector<BufferUsageSegment>> &context_buffer_usage_vector, BufferPlan &buffer_plan,
-    const vdma::VdmaBuffer::Type buffer_type, const DescSizesParams &desc_size_params)
+    const vdma::BufferType buffer_type, const DescSizesParams &desc_size_params)
 {
     TRY_WITH_ACCEPTABLE_STATUS(HAILO_CANT_MEET_BUFFER_REQUIREMENTS, const auto buffer_requirements,
         return_buffer_requirements(edge_layer.second, buffer_type, desc_size_params));
@@ -233,7 +233,7 @@ hailo_status InternalBufferPlanner::add_edge_layer_to_planning(
 
 Expected<InternalBufferPlanning> InternalBufferPlanner::create_single_buffer_planning(
     const std::map<EdgeLayerKey, EdgeLayerInfo> &sg_edge_layers, size_t number_of_contexts,
-    const vdma::VdmaBuffer::Type buffer_type, const DescSizesParams &desc_sizes_params)
+    const vdma::BufferType buffer_type, const DescSizesParams &desc_sizes_params)
 {
     InternalBufferPlanning buffer_planning;
     // Trying to reserve one buffer only.
@@ -260,6 +260,39 @@ Expected<InternalBufferPlanning> InternalBufferPlanner::create_single_buffer_pla
     return buffer_planning;
 }
 
+Expected<InternalBufferPlanning> InternalBufferPlanner::create_sram_buffer_planning(
+    const std::map<EdgeLayerKey, EdgeLayerInfo> &edge_layer_infos, const DescSizesParams &continuous_desc_params)
+{
+    InternalBufferPlanning buffer_planning;
+
+    for (const auto &edge_layer_pair : edge_layer_infos) {
+        EdgeLayerKey  edge_layer_key = edge_layer_pair.first;
+        EdgeLayerInfo edge_layer =  edge_layer_pair.second;
+
+        if (edge_layer.type != LayerType::DDR) {
+            // SRAM-Buffers are used for DDR-Portal only.
+            continue;
+        }
+
+        auto buffer_requirements = vdma::BufferSizesRequirements::
+            get_sram_buffer_requirements(continuous_desc_params, edge_layer.transfer_size);
+
+        EdgeLayerPlan edge_layer_plan;
+        edge_layer_plan.key = edge_layer_key;
+        edge_layer_plan.offset = 0;
+        edge_layer_plan.buffer_requirements = buffer_requirements;
+
+        BufferPlan buffer_plan;
+        buffer_plan.buffer_type = vdma::BufferType::SRAM;
+        buffer_plan.buffer_size = buffer_requirements.buffer_size();
+        buffer_plan.edge_layer_plans = { edge_layer_plan };
+
+        buffer_planning.emplace_back(std::move(buffer_plan));
+    }
+
+    return buffer_planning;
+}
+
 Expected<InternalBufferPlanning> InternalBufferPlanner::create_optimized_buffer_planning(
     const std::map<EdgeLayerKey, EdgeLayerInfo> &edge_layer_infos, HailoRTDriver::DmaType dma_type,
     size_t number_of_contexts, const DescSizesParams &sg_desc_params, const DescSizesParams &ccb_desc_params,
@@ -281,14 +314,14 @@ Expected<InternalBufferPlanning> InternalBufferPlanner::create_optimized_buffer_
     // Second - create buffer planning for each buffer type
     if (!ccb_edge_layers.empty()) {
         TRY_WITH_ACCEPTABLE_STATUS(HAILO_CANT_MEET_BUFFER_REQUIREMENTS, const auto ccb_buffer_planning,
-            create_single_buffer_planning(ccb_edge_layers, number_of_contexts, vdma::VdmaBuffer::Type::CONTINUOUS,
+            create_single_buffer_planning(ccb_edge_layers, number_of_contexts, vdma::BufferType::CMA,
                 ccb_desc_params));
         buffer_planning.insert(buffer_planning.end(), ccb_buffer_planning.begin(), ccb_buffer_planning.end());
     }
 
     if (!sg_edge_layers.empty()) {
         TRY_WITH_ACCEPTABLE_STATUS(HAILO_CANT_MEET_BUFFER_REQUIREMENTS, auto sg_buffer_planning,
-            create_single_buffer_planning(sg_edge_layers, number_of_contexts, vdma::VdmaBuffer::Type::SCATTER_GATHER,
+            create_single_buffer_planning(sg_edge_layers, number_of_contexts, vdma::BufferType::SCATTER_GATHER,
                 sg_desc_params));
         buffer_planning.insert(buffer_planning.end(), sg_buffer_planning.begin(), sg_buffer_planning.end());
     }
@@ -437,7 +470,7 @@ BufferPlanReport InternalBufferPlanner::report_planning_info(const InternalBuffe
     report.edge_layer_size = 0;
 
     for (const auto &buffer_plan : buffer_planning) {
-        if (vdma::VdmaBuffer::Type::CONTINUOUS == buffer_plan.buffer_type) {
+        if (vdma::BufferType::CMA == buffer_plan.buffer_type) {
             report.cma_memory += buffer_plan.buffer_size;
         } else {
             report.pinned_memory += buffer_plan.buffer_size;
