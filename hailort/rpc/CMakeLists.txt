@@ -36,7 +36,7 @@ add_library(hailort_rpc_grpc_proto STATIC EXCLUDE_FROM_ALL
     ${hailort_rpc_proto_hdrs})
 
 set_target_properties(hailort_rpc_grpc_proto PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_link_libraries(hailort_rpc_grpc_proto libprotobuf-lite grpc++_unsecure)
+target_link_libraries(hailort_rpc_grpc_proto protobuf-lite grpc++_unsecure)
 # Include generated *.pb.h files
 target_include_directories(hailort_rpc_grpc_proto PUBLIC "${CMAKE_CURRENT_BINARY_DIR}")
 disable_exceptions(hailort_rpc_grpc_proto)

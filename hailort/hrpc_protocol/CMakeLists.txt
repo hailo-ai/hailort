@@ -4,7 +4,7 @@ protobuf_generate_cpp(PROTO_RPC_SRC PROTO_RPC_HEADER rpc.proto)
 get_filename_component(PROTO_HEADER_DIRECTORY ${PROTO_RPC_HEADER} DIRECTORY)
 
 add_library(rpc_proto STATIC EXCLUDE_FROM_ALL ${PROTO_RPC_SRC} ${PROTO_RPC_HEADER})
-target_link_libraries(rpc_proto libprotobuf-lite)
+target_link_libraries(rpc_proto protobuf-lite)
 set_target_properties(rpc_proto PROPERTIES CXX_STANDARD 14 GENERATED TRUE POSITION_INDEPENDENT_CODE ON)
 if(CMAKE_HOST_WIN32)
     # https://github.com/protocolbuffers/protobuf/tree/master/cmake#notes-on-compiler-warnings

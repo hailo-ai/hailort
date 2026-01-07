@@ -14,7 +14,7 @@ protobuf_generate_python(PROTO_HEF_PY hef.proto) # TODO (HRT-12504): Copy hef_pb
 protobuf_generate_python(PROTO_HEF_PY tracer_profiler.proto)
 
 add_library(hef_proto ${PROTO_HEF_SRC} ${PROTO_HEF_HEADER} ${PROTO_HEF_PY})
-target_link_libraries(hef_proto libprotobuf-lite)
+target_link_libraries(hef_proto protobuf-lite)
 set_target_properties(hef_proto PROPERTIES CXX_STANDARD 14 GENERATED TRUE POSITION_INDEPENDENT_CODE ON)
 if(CMAKE_HOST_WIN32)
     # https://github.com/protocolbuffers/protobuf/tree/master/cmake#notes-on-compiler-warnings
@@ -29,7 +29,7 @@ target_include_directories(hef_proto
 
 protobuf_generate_cpp(PROTO_SCHEDULER_MON_SRC PROTO_SCHEDULER_MON_HEADR scheduler_mon.proto)
 add_library(scheduler_mon_proto ${PROTO_SCHEDULER_MON_SRC} ${PROTO_SCHEDULER_MON_HEADR})
-target_link_libraries(scheduler_mon_proto libprotobuf-lite)
+target_link_libraries(scheduler_mon_proto protobuf-lite)
 set_target_properties(scheduler_mon_proto PROPERTIES CXX_STANDARD 14 GENERATED TRUE POSITION_INDEPENDENT_CODE ON)
 if(CMAKE_HOST_WIN32)
     target_compile_options(scheduler_mon_proto PRIVATE /wd4244)
@@ -43,7 +43,7 @@ target_include_directories(scheduler_mon_proto
 
 protobuf_generate_cpp(PROTO_PROFILER_SRC PROTO_PROFILER_HEADR tracer_profiler.proto)
 add_library(profiler_proto ${PROTO_PROFILER_SRC} ${PROTO_PROFILER_HEADR})
-target_link_libraries(profiler_proto libprotobuf-lite)
+target_link_libraries(profiler_proto protobuf-lite)
 set_target_properties(profiler_proto PROPERTIES CXX_STANDARD 14 GENERATED TRUE POSITION_INDEPENDENT_CODE ON)
 if(CMAKE_HOST_WIN32)
     target_compile_options(profiler_proto PRIVATE /wd4244)
