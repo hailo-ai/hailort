@@ -72,6 +72,8 @@ target_link_libraries(hailortcli
     CLI11::CLI11
     nlohmann_json
     hailort_common
+    absl_log_internal_check_op
+    absl_log_internal_message
     dotwriter
     scheduler_mon_proto
     profiler_proto)
