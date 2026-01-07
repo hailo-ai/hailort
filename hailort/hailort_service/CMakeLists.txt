@@ -15,7 +15,7 @@ add_executable(hailort_service
     ${HAILORT_SERVICE_OS_DIR}/hailort_service.cpp
 )
 target_compile_options(hailort_service PRIVATE ${HAILORT_COMPILE_OPTIONS})
-set_property(TARGET hailort_service PROPERTY CXX_STANDARD 14)
+set_property(TARGET hailort_service PROPERTY CXX_STANDARD 17)
 target_link_libraries(hailort_service
     libhailort
     hailort_common
