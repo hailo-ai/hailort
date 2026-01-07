@@ -72,7 +72,7 @@ target_link_libraries(hailortcli
     CLI11::CLI11
     nlohmann_json
     hailort_common
-    DotWriter
+    dotwriter
     scheduler_mon_proto
     profiler_proto)
 
