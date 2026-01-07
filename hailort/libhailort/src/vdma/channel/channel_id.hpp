@@ -12,7 +12,7 @@
 
 #include "hailo/hailort.h"
 #include "common/logger_macros.hpp"
-#include <spdlog/fmt/bundled/format.h>
+#include <fmt/format.h>
 #include <sstream>
 
 
