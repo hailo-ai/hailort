@@ -37,7 +37,6 @@ target_include_directories(hailort_common
 target_link_libraries(hailort_common
     PUBLIC
     spdlog::spdlog
-    readerwriterqueue
     xxhash
 )
 
