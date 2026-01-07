@@ -80,14 +80,6 @@ public:
         desc_function_ = [non_hidden_values]() {
             return CLI::detail::generate_map(CLI::detail::smart_deref(non_hidden_values), true);
         };
-
-        autocomplete_func_ = [non_hidden_values](const std::string &) {
-            std::vector<std::string> completions;
-            for (const auto &completion : non_hidden_values) {
-                completions.emplace_back(completion.first);
-            }
-            return completions;
-        };
     }
 
 private:
