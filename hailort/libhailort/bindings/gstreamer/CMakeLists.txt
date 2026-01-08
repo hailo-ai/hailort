@@ -1,13 +1,13 @@
 cmake_minimum_required(VERSION 3.5.0)
 
-project(gsthailo)
+project(gsthailo8)
 
 include(GNUInstallDirs)
 
 find_package(HailoRT 4.23.0 EXACT REQUIRED)
 
 # GST_PLUGIN_DEFINE needs PACKAGE to be defined
-set(GST_HAILO_PACKAGE_NAME "hailo")
+set(GST_HAILO_PACKAGE_NAME "hailo8")
 set(GST_HAILO_VERSION "1.0")
 
 include(find_libs_for_gstreamer.cmake)
@@ -33,11 +33,11 @@ elseif (MSVC)
     list(APPEND GSTHAILO_SOURCES gst-hailo/os/windows/dma_buf_allocator_wrapper.cpp)
 endif ()
 
-add_library(gsthailo SHARED ${GSTHAILO_SOURCES})
+add_library(gsthailo8 SHARED ${GSTHAILO_SOURCES})
 
-set_property(TARGET gsthailo PROPERTY CXX_STANDARD 14)
+set_property(TARGET gsthailo8 PROPERTY CXX_STANDARD 14)
 
-set_target_properties(gsthailo PROPERTIES
+set_target_properties(gsthailo8 PROPERTIES
     CXX_STANDARD              14
     CXX_STANDARD_REQUIRED     YES
     CXX_EXTENSIONS            NO
@@ -67,16 +67,16 @@ else()
     message(FATAL_ERROR "Unexpeced host, stopping build")
 endif()
 
-target_compile_options(gsthailo PRIVATE ${HAILORT_COMPILE_OPTIONS})
+target_compile_options(gsthailo8 PRIVATE ${HAILORT_COMPILE_OPTIONS})
 
 set(GST_METADATA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/gst-hailo/metadata/")
 
 if (UNIX)
-    target_include_directories(gsthailo PRIVATE ${GSTREAMER_VIDEO_INCLUDE_DIRS} ${CMAKE_CURRENT_SOURCE_DIR}/gst-hailo ${CMAKE_CURRENT_SOURCE_DIR}/gst-hailo/os/linux ${GST_METADATA_DIR})
-    target_link_libraries(gsthailo HailoRT::libhailort ${GSTREAMER_VIDEO_LDFLAGS} -lgstallocators-1.0)
+    target_include_directories(gsthailo8 PRIVATE ${GSTREAMER_VIDEO_INCLUDE_DIRS} ${CMAKE_CURRENT_SOURCE_DIR}/gst-hailo ${CMAKE_CURRENT_SOURCE_DIR}/gst-hailo/os/linux ${GST_METADATA_DIR})
+    target_link_libraries(gsthailo8 HailoRT::libhailort ${GSTREAMER_VIDEO_LDFLAGS} -lgstallocators-1.0)
 else()
-    target_include_directories(gsthailo PRIVATE ${GSTREAMER_INCLUDE_DIRS} ${GSTREAMER_VIDEO_INCLUDE_DIRS} ${GLIB_INCLUDE_DIRS} ${GLIBCONFIG_INCLUDE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/gst-hailo ${CMAKE_CURRENT_SOURCE_DIR}/gst-hailo/os/windows ${GST_METADATA_DIR})
-    target_link_libraries(gsthailo HailoRT::libhailort ${GSTREAMER_LIBRARIES} ${GSTREAMER_BASE_LIBRARIES} ${GSTREAMER_VIDEO_LIBRARIES} ${GLIB_LIBRARIES} ${GOBJECT_LIBRARIES} -lgstallocators-1.0)
+    target_include_directories(gsthailo8 PRIVATE ${GSTREAMER_INCLUDE_DIRS} ${GSTREAMER_VIDEO_INCLUDE_DIRS} ${GLIB_INCLUDE_DIRS} ${GLIBCONFIG_INCLUDE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/gst-hailo ${CMAKE_CURRENT_SOURCE_DIR}/gst-hailo/os/windows ${GST_METADATA_DIR})
+    target_link_libraries(gsthailo8 HailoRT::libhailort ${GSTREAMER_LIBRARIES} ${GSTREAMER_BASE_LIBRARIES} ${GSTREAMER_VIDEO_LIBRARIES} ${GLIB_LIBRARIES} ${GOBJECT_LIBRARIES} -lgstallocators-1.0)
 endif()
 
 if (UNIX)
@@ -93,7 +93,7 @@ elseif (MSVC)
 endif()
 
 # Install command using the set variables
-install(TARGETS gsthailo
+install(TARGETS gsthailo8
     RUNTIME DESTINATION "${GSTREAMER_LIB_DEST}"
     LIBRARY DESTINATION "${GSTREAMER_LIB_DEST}"
     ARCHIVE DESTINATION "${GSTREAMER_LIB_DEST}"
