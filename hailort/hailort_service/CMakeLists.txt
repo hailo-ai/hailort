@@ -19,7 +19,7 @@ set_property(TARGET hailort_service PROPERTY CXX_STANDARD 17)
 target_link_libraries(hailort_service
     libhailort
     hailort_common
-    grpc++_unsecure
+    PkgConfig::grpc
     hailort_rpc_grpc_proto
 )
 

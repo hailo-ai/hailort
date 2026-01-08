@@ -6,6 +6,7 @@ include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/common_compiler_options.cmake)
 include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/eigen.cmake)
+include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/grpc.cmake)
 
 FUNCTION(relative_to_absolute_paths output)
     SET(listVar "")
@@ -91,7 +92,7 @@ target_link_libraries(libhailort PRIVATE Eigen3::Eigen)
 target_link_libraries(libhailort PRIVATE rpc_proto)
 
 if(HAILO_BUILD_SERVICE)
-    target_link_libraries(libhailort PRIVATE grpc++_unsecure)
+    target_link_libraries(libhailort PRIVATE PkgConfig::grpc)
     target_link_libraries(libhailort PRIVATE hailort_rpc_grpc_proto)
 endif()
 

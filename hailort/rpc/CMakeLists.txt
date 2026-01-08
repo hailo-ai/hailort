@@ -1,4 +1,5 @@
 include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/common_compiler_options.cmake)
+include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/grpc.cmake)
 
 # Proto file
 get_filename_component(hailort_rpc_proto "hailort_rpc.proto" ABSOLUTE)
@@ -12,9 +13,9 @@ set(hailort_rpc_grpc_hdrs "${CMAKE_CURRENT_BINARY_DIR}/hailort_rpc.grpc.pb.h")
 set(HAILO_PROTOBUF_PROTOC $<TARGET_FILE:protobuf::protoc>)
 if(HAILO_BUILD_SERVICE)
     if(CMAKE_HOST_UNIX)
-        set(HAILO_GRPC_CPP_PLUGIN_EXECUTABLE "${HAILO_EXTERNAL_DIR}/grpc-build/grpc_cpp_plugin")
+        option(HAILO_GRPC_CPP_PLUGIN_EXECUTABLE "Path to grpc_cpp_plugin" "${HAILO_EXTERNAL_DIR}/grpc-build/grpc_cpp_plugin")
     else()
-        set(HAILO_GRPC_CPP_PLUGIN_EXECUTABLE "${HAILO_EXTERNAL_DIR}/grpc-build/Release/grpc_cpp_plugin.exe")
+        option(HAILO_GRPC_CPP_PLUGIN_EXECUTABLE "Path to grpc_cpp_plugin" "${HAILO_EXTERNAL_DIR}/grpc-build/Release/grpc_cpp_plugin.exe")
     endif()
 endif()
 
@@ -36,7 +37,8 @@ add_library(hailort_rpc_grpc_proto STATIC EXCLUDE_FROM_ALL
     ${hailort_rpc_proto_hdrs})
 
 set_target_properties(hailort_rpc_grpc_proto PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_link_libraries(hailort_rpc_grpc_proto protobuf-lite grpc++_unsecure)
+target_link_libraries(hailort_rpc_grpc_proto protobuf-lite PkgConfig::grpc)
+
 # Include generated *.pb.h files
 target_include_directories(hailort_rpc_grpc_proto PUBLIC "${CMAKE_CURRENT_BINARY_DIR}")
 disable_exceptions(hailort_rpc_grpc_proto)
