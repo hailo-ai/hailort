@@ -61,20 +61,20 @@ size_t CircularStreamBufferPool::buffers_ready_to_dequeue() const
     return descs_available / descs_in_transfer();
 }
 
-Expected<TransferBuffer> CircularStreamBufferPool::dequeue()
+Expected<StreamBuffer> CircularStreamBufferPool::dequeue()
 {
     CHECK_AS_EXPECTED(buffers_ready_to_dequeue() > 0, HAILO_INTERNAL_FAILURE, "CircularStreamBufferPool is empty");
 
     const size_t offset_in_buffer = m_queue.tail() * m_desc_page_size;
     m_queue.dequeue(static_cast<int>(descs_in_transfer()));
-    return TransferBuffer {
+    return StreamBuffer {
         MemoryView(m_mapped_buffer->user_address(), m_mapped_buffer->size()),
         m_transfer_size,
         offset_in_buffer
     };
 }
 
-hailo_status CircularStreamBufferPool::enqueue(TransferBuffer &&buffer_info)
+hailo_status CircularStreamBufferPool::enqueue(StreamBuffer &&buffer_info)
 {
     const size_t descs_required = descs_in_transfer();
     const size_t descs_available = m_queue.avail(m_queue.head(), m_queue.tail());

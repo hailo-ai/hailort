@@ -8,57 +8,41 @@
  **/
 
 #include "vdma/memory/sg_edge_layer.hpp"
-#include "vdma/channel/channel_id.hpp"
 
 
 namespace hailort {
 namespace vdma {
 
-Expected<SgEdgeLayer> SgEdgeLayer::create(std::shared_ptr<SgBuffer> &&buffer, size_t size, size_t offset,
+Expected<std::unique_ptr<VdmaEdgeLayer>> SgEdgeLayer::create_unique(std::shared_ptr<SgBuffer> &&buffer, size_t size, size_t offset,
     HailoRTDriver &driver, uint32_t desc_count, uint16_t desc_page_size, bool is_circular, ChannelId channel_id)
 {
     CHECK(size <= (desc_count * desc_page_size), HAILO_INTERNAL_FAILURE,
         "Requested buffer size {} must be smaller or equal to {}", size, (desc_count * desc_page_size));
+
     CHECK((size % desc_page_size) == 0, HAILO_INTERNAL_FAILURE,
-        "SgEdgeLayer size must be a multiple of descriptors page size (size {})", size);
+        "SgEdgeLayer size aligned to desc_page_size (size: {}, page-size: {})", size, desc_page_size);
+
     CHECK((offset % desc_page_size) == 0, HAILO_INTERNAL_FAILURE,
-        "SgEdgeLayer offset must be a multiple of descriptors page size (offset {}. Page size {})", offset, desc_page_size);
+        "SgEdgeLayer offset not aligned to desc_page_size (offset: {}, page-size: {})", offset, desc_page_size);
 
     CHECK(buffer->size() >= (offset + size), HAILO_INTERNAL_FAILURE,
-        "Edge layer is not fully inside the connected buffer. buffer size is {} while edge layer offset {} and size {}",
-        buffer->size(), offset, size);
+        "Edge-layer (size: {}, offset: {}) does not fit in buffer (size: {})", size, offset, buffer->size());
+
+    CHECK((desc_count * desc_page_size) <= std::numeric_limits<uint32_t>::max(), HAILO_INTERNAL_FAILURE,
+        "Edge layer size too large: descs_count: {}, desc_page_size: {}", desc_count, desc_page_size);
 
     TRY(auto desc_list, DescriptorList::create(desc_count, desc_page_size, is_circular, driver));
-    assert((desc_count * desc_page_size) <= std::numeric_limits<uint32_t>::max());
-    return SgEdgeLayer(std::move(buffer), std::move(desc_list), size, offset, channel_id);
-}
+    auto edge_layer = SgEdgeLayer(std::move(buffer), std::move(desc_list), size, offset, channel_id);
+    auto edge_layer_ptr = make_unique_nothrow<SgEdgeLayer>(std::move(edge_layer));
+    CHECK_NOT_NULL(edge_layer_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
-SgEdgeLayer::SgEdgeLayer(std::shared_ptr<SgBuffer> &&buffer, DescriptorList &&desc_list,
-        size_t size, size_t offset, ChannelId channel_id) :
-    VdmaEdgeLayer(std::move(buffer), size, offset),
-    m_desc_list(std::move(desc_list)),
-    m_channel_id(channel_id)
-{}
-
-uint64_t SgEdgeLayer::dma_address() const
-{
-    return m_desc_list.dma_address();
-}
-
-uint16_t SgEdgeLayer::desc_page_size() const
-{
-    return m_desc_list.desc_page_size();
-}
-
-uint32_t SgEdgeLayer::descs_count() const
-{
-    return static_cast<uint32_t>(m_desc_list.count());
+    return std::unique_ptr<VdmaEdgeLayer>(std::move(edge_layer_ptr));
 }
 
 Expected<uint32_t> SgEdgeLayer::program_descriptors(size_t transfer_size,
     size_t desc_offset, size_t buffer_offset, uint32_t batch_size)
 {
-    CHECK_SUCCESS(m_desc_list.program(*get_mapped_buffer(), transfer_size, buffer_offset+m_offset, m_channel_id,
+    CHECK_SUCCESS(m_desc_list.program(get_mapped_buffer(), transfer_size, buffer_offset+m_offset, m_channel_id,
         static_cast<uint32_t>(desc_offset), batch_size, InterruptsDomain::NONE));
     return descriptors_in_buffer(transfer_size) * batch_size;
 }

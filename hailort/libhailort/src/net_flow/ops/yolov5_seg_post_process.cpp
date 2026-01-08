@@ -362,7 +362,23 @@ Expected<uint32_t> Yolov5SegPostProcess::copy_detection_to_result_buffer(MemoryV
 
     // Copy bbox
     uint32_t copied_bytes_amount = 0;
-    detection.m_bbox_with_mask.mask = (buffer.data() + buffer_offset + detection_size);
+
+    // Suppress deprecated declaration warning
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#else
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+    detection.m_bbox_with_mask.mask = static_cast<uint8_t*>(buffer.data() + buffer_offset + detection_size);
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#else
+#pragma GCC diagnostic pop
+#endif
+
+    detection.m_bbox_with_mask.mask_offset = buffer_offset + detection_size;
 
     *(hailo_detection_with_byte_mask_t*)(buffer.data() + buffer_offset) =
         *(hailo_detection_with_byte_mask_t*)&(detection.m_bbox_with_mask);

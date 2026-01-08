@@ -18,6 +18,7 @@
 #include "common/utils.hpp"
 #include "hef/layer_info.hpp"
 #include "vdma/memory/vdma_buffer.hpp"
+#include "vdma/memory/sram_buffer.hpp"
 #include "internal_buffer_planner.hpp"
 
 
@@ -37,27 +38,30 @@ public:
     static Expected<std::shared_ptr<InternalBufferManager>> create(HailoRTDriver &driver);
 
     Expected<EdgeLayerBuffer> get_intermediate_buffer(const EdgeLayerKey &key);
-    hailo_status plan_and_execute(const std::map<EdgeLayerKey, EdgeLayerInfo> &edge_layer_infos,
-        InternalBufferPlanner::Type default_planner_type, size_t number_of_contexts);
+    hailo_status plan_and_execute(std::map<EdgeLayerKey, EdgeLayerInfo> &&edge_layers,
+        InternalBufferPlanner::Type planner_type, size_t number_of_contexts);
 
 private:
     InternalBufferManager(HailoRTDriver &driver);
+
+    Expected<InternalBufferPlanning> plan_and_execute_type(std::map<EdgeLayerKey, EdgeLayerInfo> &edge_layers,
+        InternalBufferPlanner::Type planner_type, size_t number_of_contexts);
 
     // Execute phase functions
     hailo_status execute_plan(InternalBufferPlanning &buffer_planning,
         std::vector<EdgeLayerKey> &edge_layers_executed, InternalBufferPlanning &buffers_executed);
     Expected<std::shared_ptr<vdma::VdmaBuffer>> create_intermediate_buffer(
-        vdma::VdmaBuffer::Type &buffer_type, const size_t buffer_size);
-    Expected<std::shared_ptr<vdma::VdmaBuffer>> create_intermediate_ccb_buffer(
-        const size_t buffer_size);
-    Expected<std::shared_ptr<vdma::VdmaBuffer>> create_intermediate_sg_buffer(
-        const size_t buffer_size);
+        vdma::BufferType &buffer_type, const size_t buffer_size);
+    Expected<std::shared_ptr<vdma::VdmaBuffer>> create_intermediate_ccb_buffer(const size_t buffer_size);
+    Expected<std::shared_ptr<vdma::VdmaBuffer>> create_intermediate_sg_buffer(const size_t buffer_size);
+    Expected<std::shared_ptr<vdma::VdmaBuffer>> create_intermediate_sram_buffer(const size_t buffer_size);
 
     // Reporting functions
     void print_execution_results(const BufferPlanReport &default_planner_report,
         bool default_planner_meet_requirements, const BufferPlanReport &executed_buffers_report);
 
     HailoRTDriver &m_driver;
+    vdma::SramBufferAllocator m_sram_buffer_allocator;
     std::map<EdgeLayerKey, EdgeLayerBuffer> m_edge_layer_to_buffer_map;
 };
 

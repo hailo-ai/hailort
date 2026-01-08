@@ -15,6 +15,7 @@
 #include <fstream>
 #include <mutex>
 #include <thread>
+#include <condition_variable>
 
 namespace hailort
 {
@@ -38,7 +39,7 @@ public:
           m_type(type), m_sampling_period(HAILO_SAMPLING_PERIOD_MAX_ENUM)
     {
     }
-    ~SocPowerMeasurement() = default;
+    ~SocPowerMeasurement();
 
     hailo_power_measurement_data_t get_data();
     void                           set_data(const hailo_power_measurement_data_t &new_data);
@@ -50,17 +51,19 @@ public:
     static Expected<float32_t> measure(hailo_dvm_options_t dvm, hailo_power_measurement_types_t measurement_type);
 
 private:
-    hailo_averaging_factor_t        m_averaging_factor;
-    hailo_dvm_options_t             m_dvm;
-    hailo_power_measurement_data_t  m_data;
+    hailo_averaging_factor_t m_averaging_factor;
+    hailo_dvm_options_t m_dvm;
+    hailo_power_measurement_data_t m_data;
     hailo_power_measurement_types_t m_type;
-    hailo_sampling_period_t         m_sampling_period;
-    std::atomic<bool>               m_is_running;
-    std::mutex                      m_mutex;
-    std::thread                     m_power_monitoring_thread;
-    uint32_t                        m_average_factor_value;
-    uint32_t                        m_sampling_interval_microseconds;
-    uint32_t                        m_sampling_period_value;
+    hailo_sampling_period_t m_sampling_period;
+    std::atomic<bool> m_is_running;
+    std::mutex m_data_mutex;
+    std::mutex m_is_running_mutex;
+    std::condition_variable m_is_running_cv;
+    std::thread m_power_monitoring_thread;
+    uint32_t m_average_factor_value;
+    uint32_t m_sampling_interval_microseconds;
+    uint32_t m_sampling_period_value;
 };
 
 class ControlSoc final

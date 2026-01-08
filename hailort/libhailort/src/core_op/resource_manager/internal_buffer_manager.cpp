@@ -15,7 +15,7 @@
 #include "internal_buffer_manager.hpp"
 #include "hef/layer_info.hpp"
 #include "vdma/memory/sg_buffer.hpp"
-#include "vdma/memory/continuous_buffer.hpp"
+#include "vdma/memory/cma_buffer.hpp"
 #include "vdma/memory/buffer_requirements.hpp"
 
 
@@ -33,7 +33,7 @@ Expected<std::shared_ptr<InternalBufferManager>> InternalBufferManager::create(H
 }
 
 InternalBufferManager::InternalBufferManager(HailoRTDriver &driver)
-    : m_driver(driver)
+    : m_driver(driver), m_sram_buffer_allocator()
     {}
 
 Expected<std::shared_ptr<vdma::VdmaBuffer>> InternalBufferManager::create_intermediate_sg_buffer(
@@ -51,21 +51,39 @@ Expected<std::shared_ptr<vdma::VdmaBuffer>> InternalBufferManager::create_interm
     const size_t buffer_size)
 {
     TRY_WITH_ACCEPTABLE_STATUS(HAILO_OUT_OF_HOST_CMA_MEMORY, auto buffer,
-        vdma::ContinuousBuffer::create(buffer_size, m_driver));
+        vdma::CmaBuffer::create(buffer_size, m_driver));
 
-    auto buffer_ptr = make_shared_nothrow<vdma::ContinuousBuffer>(std::move(buffer));
+    auto buffer_ptr = make_shared_nothrow<vdma::CmaBuffer>(std::move(buffer));
+    CHECK_NOT_NULL_AS_EXPECTED(buffer_ptr, HAILO_OUT_OF_HOST_MEMORY);
+
+    return std::shared_ptr<vdma::VdmaBuffer>(std::move(buffer_ptr));
+}
+
+Expected<std::shared_ptr<vdma::VdmaBuffer>> InternalBufferManager::create_intermediate_sram_buffer(
+    const size_t buffer_size)
+{
+    TRY_WITH_ACCEPTABLE_STATUS(HAILO_OUT_OF_FW_MEMORY, auto buffer, m_sram_buffer_allocator.allocate(buffer_size));
+
+    auto buffer_ptr = make_shared_nothrow<vdma::SramBuffer>(std::move(buffer));
     CHECK_NOT_NULL_AS_EXPECTED(buffer_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     return std::shared_ptr<vdma::VdmaBuffer>(std::move(buffer_ptr));
 }
 
 Expected<std::shared_ptr<vdma::VdmaBuffer>> InternalBufferManager::create_intermediate_buffer(
-    vdma::VdmaBuffer::Type &buffer_type, const size_t buffer_size)
+    vdma::BufferType &buffer_type, const size_t buffer_size)
 {
-    if (vdma::VdmaBuffer::Type::CONTINUOUS == buffer_type) {
+    switch (buffer_type) {
+    case vdma::BufferType::CMA:
         return create_intermediate_ccb_buffer(buffer_size);
+    case vdma::BufferType::SCATTER_GATHER:
+        return create_intermediate_sg_buffer(buffer_size);
+    case vdma::BufferType::SRAM:
+        return create_intermediate_sram_buffer(buffer_size);
+    default:
+        LOGGER__ERROR("Creating intermediate-buffer with invalid buffer-type");
+        return make_unexpected(HAILO_INVALID_ARGUMENT);
     }
-    return create_intermediate_sg_buffer(buffer_size);
 }
 
 void InternalBufferManager::print_execution_results(const BufferPlanReport &default_planner_report,
@@ -91,64 +109,83 @@ void InternalBufferManager::print_execution_results(const BufferPlanReport &defa
     }
 }
 
-hailo_status InternalBufferManager::plan_and_execute(const std::map<EdgeLayerKey, EdgeLayerInfo> &edge_layer_infos,
-    InternalBufferPlanner::Type default_planner_type,
-    const size_t number_of_contexts)
+hailo_status InternalBufferManager::plan_and_execute(std::map<EdgeLayerKey, EdgeLayerInfo> &&edge_layers,
+    InternalBufferPlanner::Type planner_type, const size_t number_of_contexts)
 {
-    // Create buffer planning
-    auto planner_type = default_planner_type;
-    // copy of initial edge layers
-    auto edge_layers = edge_layer_infos;
-    // Vector of executed buffers from the planning
-    InternalBufferPlanning buffers_executed;
-    // Default planner report
+    InternalBufferPlanning buffers_executed {};
+    std::vector<EdgeLayerKey> edge_layers_executed {};
+
+    const DescSizesParams continuous_desc_params = m_driver.get_continuous_desc_params();
+    const DescSizesParams sg_desc_params = m_driver.get_sg_desc_params();
+
+    // TODO HRT-19648: Remove this env-var.
+    if (is_env_variable_on(HAILO_HW_INFER_ALLOW_DDR_PORTALS_OVER_SRAM_ENV_VAR)) {
+
+        // NOTE: We create a plan that makes ALL ddr-portal buffers over SRAM, without size considerations.
+        // Later, when we exectute the plan, we take as many buffers as we can fit in 2MB SRAM and the rest
+        // are ignored.
+
+        TRY(auto buffer_plan, InternalBufferPlanner::create_sram_buffer_planning(edge_layers, continuous_desc_params));
+
+        auto status = execute_plan(buffer_plan, edge_layers_executed, buffers_executed);
+        if (HAILO_OUT_OF_FW_MEMORY != status) {
+            // Out of FW-memory is ok; ignore and move on.
+            CHECK_SUCCESS(status);
+        }
+
+        for (const auto &edge_layer_key : edge_layers_executed) {
+            edge_layers.erase(edge_layer_key);
+        }
+        edge_layers_executed.clear();
+    }
+
     BufferPlanReport default_planner_report {};
-    bool default_planner_meet_requirements = false;
+    bool first_pass = true;
 
-    while (!edge_layers.empty()) {
-        CHECK(InternalBufferPlanner::Type::INVALID != planner_type, HAILO_CANT_MEET_BUFFER_REQUIREMENTS,
-            "Cannot find an executable buffer planning for the given edge layers");
-
+    while (true) {
         LOGGER__DEBUG("Trying to plan with planner type {}", static_cast<uint8_t>(planner_type));
+
         auto buffer_planning_exp = InternalBufferPlanner::create_buffer_planning(edge_layers, planner_type,
-            m_driver.dma_type(), number_of_contexts, m_driver.get_sg_desc_params(), m_driver.get_ccb_desc_params());
+            m_driver.dma_type(), number_of_contexts, sg_desc_params, continuous_desc_params);
+
         if (HAILO_CANT_MEET_BUFFER_REQUIREMENTS == buffer_planning_exp.status()) {
-            // If planner failed, Try to go to next planner
-            LOGGER__DEBUG("Can't plan with planner type {}", static_cast<uint8_t>(planner_type));
-            planner_type = static_cast<InternalBufferPlanner::Type>((static_cast<uint8_t>(planner_type)) + 1);
+            LOGGER__DEBUG("Failed to meet buffer requirements for planner type.");
             continue;
         }
         TRY(auto buffer_planning, buffer_planning_exp);
 
-        if (planner_type == default_planner_type) {
-            default_planner_meet_requirements = true;
-            default_planner_report = InternalBufferPlanner::report_planning_info(buffer_planning);
-        }
-
-        std::vector<EdgeLayerKey> edge_layers_executed;
         auto status = execute_plan(buffer_planning, edge_layers_executed, buffers_executed);
-        // Don't return error if out of CMA host memory. Try to go to next plan.
         if (HAILO_OUT_OF_HOST_CMA_MEMORY != status) {
+            // Out of CMA-memory is ok; ignore and move on.
             CHECK_SUCCESS(status);
         }
 
-        // Remove executed edge layers from edge layers
+        if (first_pass) {
+            default_planner_report = InternalBufferPlanner::report_planning_info(buffers_executed);
+        }
+
         for (const auto &edge_layer_key : edge_layers_executed) {
             edge_layers.erase(edge_layer_key);
         }
+        edge_layers_executed.clear();
 
-        if (!edge_layers.empty()) {
-            LOGGER__DEBUG("Execute of plan type {} didn't finish. Moving to next planner ", static_cast<uint8_t>(planner_type));
-        } else {
-            LOGGER__DEBUG("Execute finished successfully");
+        if (edge_layers.empty()) {
+            break;
         }
-        // Move to next planner
+
+        LOGGER__DEBUG("Execute of plan didn't finish. Using next planner");
+
+        first_pass = false;
         planner_type = static_cast<InternalBufferPlanner::Type>((static_cast<uint8_t>(planner_type)) + 1);
+
+        CHECK(InternalBufferPlanner::Type::INVALID != planner_type, HAILO_CANT_MEET_BUFFER_REQUIREMENTS,
+            "Cannot find an executable buffer planning for the given edge layers");
     }
 
-    const auto executed_buffers_report = InternalBufferPlanner::report_planning_info(buffers_executed);
+    LOGGER__DEBUG("Execute finished successfully");
 
-    print_execution_results(default_planner_report, default_planner_meet_requirements, executed_buffers_report);
+    const auto executed_buffers_report = InternalBufferPlanner::report_planning_info(buffers_executed);
+    print_execution_results(default_planner_report, first_pass, executed_buffers_report);
 
     return HAILO_SUCCESS;
 }
@@ -156,23 +193,22 @@ hailo_status InternalBufferManager::plan_and_execute(const std::map<EdgeLayerKey
 hailo_status InternalBufferManager::execute_plan(InternalBufferPlanning &buffer_planning,
     std::vector<EdgeLayerKey> &edge_layers_executed, InternalBufferPlanning &buffers_executed)
 {
-    // Verify no buffers were allocated yet
-    assert(m_edge_layer_to_buffer_map.empty());
-
     auto execution_status = HAILO_SUCCESS;
 
     // Go over plan and create buffers
     for (auto &buffer_plan : buffer_planning) {
-        auto buffer_ptr = create_intermediate_buffer(buffer_plan.buffer_type, buffer_plan.buffer_size);
-        if (buffer_ptr.status() == HAILO_OUT_OF_HOST_CMA_MEMORY) {
-            execution_status = buffer_ptr.status();
+        auto buffer_exp = create_intermediate_buffer(buffer_plan.buffer_type, buffer_plan.buffer_size);
+        if (buffer_exp.status() == HAILO_OUT_OF_HOST_CMA_MEMORY) {
+            execution_status = buffer_exp.status();
             // If one of the buffer failed due to lack to memory, try to move to next buffer.
             continue;
         }
+        TRY(auto buffer, buffer_exp);
+
         for (const auto &edge_layer_plan : buffer_plan.edge_layer_plans) {
             m_edge_layer_to_buffer_map.emplace(
                 edge_layer_plan.key,
-                EdgeLayerBuffer{buffer_ptr.value(), edge_layer_plan});
+                EdgeLayerBuffer{buffer, edge_layer_plan});
 
             // Add edge layers to executed list
             edge_layers_executed.emplace_back(edge_layer_plan.key);

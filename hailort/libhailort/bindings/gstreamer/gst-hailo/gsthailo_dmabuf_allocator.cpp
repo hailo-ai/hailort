@@ -24,7 +24,7 @@
 #include <fcntl.h>
 
 // TODO: HRT-13107
-#define DEVPATH "/dev/dma_heap/linux,cma"
+constexpr auto DEVPATH = "/dev/dma_heap/linux,cma";
 constexpr auto DEVPATH_ALT = "/dev/dma_heap/system";
 
 G_DEFINE_TYPE (GstHailoDmabufAllocator, gst_hailo_dmabuf_allocator, GST_TYPE_DMABUF_ALLOCATOR);

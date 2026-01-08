@@ -47,7 +47,6 @@ static constexpr std::array<uint32_t, 4> HAILO15__PARTIAL_CLUSTERS_LAYOUT_BITMAP
 class PartialClusterReader {
 public:
     static Expected<uint32_t> get_partial_clusters_layout_bitmap(hailo_device_architecture_t dev_arch);
-    static Expected<hailo_device_architecture_t> get_actual_dev_arch_from_fuse(hailo_device_architecture_t fw_dev_arch);
 private:
     static Expected<uint32_t> get_arch_default_bitmap(hailo_device_architecture_t dev_arch);
     static Expected<uint8_t> get_sku_value_from_arch(hailo_device_architecture_t dev_arch);

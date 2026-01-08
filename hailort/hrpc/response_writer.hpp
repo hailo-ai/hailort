@@ -36,13 +36,10 @@ public:
 
         m_message_header.status = status;
         m_message_header.size = static_cast<uint32_t>(response.size());
+        TRY(auto message_buffer, m_client_connection->allocate_message_buffer());
+        RpcConnection::fill_message_buffer(message_buffer, m_message_header, response.as_view());
 
-        // Capture buffers in response lambda to ensure they aren't freed.
-        // TODO: Remove this allocation and make response a BufferType.
-        auto response_guard = make_shared_nothrow<Buffer>(std::move(response));
-        CHECK_NOT_NULL(response_guard, HAILO_OUT_OF_HOST_MEMORY);
-
-        auto callback = [response_guard, additional_writes] (hailo_status status) {
+        auto callback = [additional_writes, message_buffer] (hailo_status status) {
             if (HAILO_SUCCESS != status) {
                 LOGGER__ERROR("Failed to write Hrpc response. status: {}", status);
             }
@@ -53,7 +50,11 @@ public:
         status = m_client_connection->wait_for_write_message_async_ready(response.size(), WRITE_TIMEOUT);
         CHECK_SUCCESS(status);
 
-        status = m_client_connection->write_message_async(m_message_header, response_guard->as_view(), callback);
+        TransferRequest transfer_request;
+        transfer_request.callback = std::move(callback);
+        transfer_request.transfer_buffers.emplace_back(message_buffer->as_view());
+
+        status = m_client_connection->write_message_async(std::move(transfer_request));
         CHECK_SUCCESS(status);
 
         for (const auto &buffer : additional_writes) {

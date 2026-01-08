@@ -49,16 +49,16 @@ hailo_status QueuedStreamBufferPool::dma_map(VDevice &vdevice, hailo_dma_buffer_
     return HAILO_SUCCESS;
 }
 
-Expected<TransferBuffer> QueuedStreamBufferPool::dequeue()
+Expected<StreamBuffer> QueuedStreamBufferPool::dequeue()
 {
     CHECK_AS_EXPECTED(!m_queue.empty(), HAILO_INTERNAL_FAILURE, "QueuedStreamBufferPool is empty");
 
     auto buffer = m_queue.front();
     m_queue.pop();
-    return TransferBuffer(buffer);
+    return StreamBuffer(buffer);
 }
 
-hailo_status QueuedStreamBufferPool::enqueue(TransferBuffer &&buffer_info)
+hailo_status QueuedStreamBufferPool::enqueue(StreamBuffer &&buffer_info)
 {
     CHECK(buffer_info.offset() == 0, HAILO_INTERNAL_FAILURE, "Cant use offset on queued buffer pool");
     CHECK(buffer_info.size() == m_storage[0]->size(), HAILO_INTERNAL_FAILURE, "Invalid enqueue buffer size");

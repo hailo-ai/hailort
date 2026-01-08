@@ -18,8 +18,7 @@ set(HAILORT_SERVER_SOURCES
     ${HAILORT_SRC_DIR}/vdma/channel/transfer_launcher.cpp
     ${HAILORT_SRC_DIR}/vdma/channel/boundary_channel.cpp
     ${HAILORT_SRC_DIR}/vdma/channel/channels_group.cpp
-    ${HAILORT_SRC_DIR}/vdma/channel/transfer_common.cpp
-    ${HAILORT_SRC_DIR}/vdma/memory/continuous_buffer.cpp
+    ${HAILORT_SRC_DIR}/vdma/memory/cma_buffer.cpp
     ${HAILORT_SRC_DIR}/utils/pool_allocator.cpp
     ${HAILORT_SRC_DIR}/utils/buffer_storage.cpp
 )

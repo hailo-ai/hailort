@@ -98,12 +98,13 @@ class LLMGenerator::Impl final : public TextGeneratorBase
 {
 public:
     Impl(std::shared_ptr<SessionWrapper> session, std::shared_ptr<PromptTemplateHandler> prompt_template_handler,
-         std::shared_ptr<HailoTokenizer> tokenizer, std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder);
+        std::shared_ptr<HailoTokenizer> tokenizer, std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder,
+        uint32_t max_generated_tokens);
     ~Impl();
 
-    hailo_status write(const std::vector<std::string> &prompt_json_strings);
+    hailo_status write(const std::vector<std::string> &prompt_json_strings, const std::vector<std::string> &tools_json_strings);
     hailo_status write(const std::string &prompt);
-    Expected<std::string> apply_prompt_tempalate_from_json(const std::vector<std::string> &prompt_json_strings);
+    Expected<std::string> apply_prompt_tempalate_from_json(const std::vector<std::string> &prompt_json_strings, const std::vector<std::string> &tools_json_strings);
 
     Expected<LLMGeneratorCompletion> generate();
 
@@ -116,6 +117,7 @@ private:
     // Optionals, only used if optimize_memory_on_device is true
     std::shared_ptr<HailoTokenizer> m_tokenizer;
     std::shared_ptr<TokenEmbedder<uint16_t>> m_token_embedder;
+    uint32_t m_max_generated_tokens;
 };
 
 
@@ -140,7 +142,7 @@ public:
     Expected<std::vector<std::string>> get_stop_tokens();
 
     // Direct generation method for JSON structured prompts
-    Expected<LLMGeneratorCompletion> generate(const LLMGeneratorParams &params, const std::vector<std::string> &prompt_json_strings);
+    Expected<LLMGeneratorCompletion> generate(const LLMGeneratorParams &params, const std::vector<std::string> &prompt_json_strings, const std::vector<std::string> &tools_json_strings);
 
     ~Impl();
 

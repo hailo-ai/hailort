@@ -27,13 +27,14 @@ public:
 
     Speech2TextWrapper(std::unique_ptr<genai::Speech2Text> speech2text);
 
-    std::string generate_all_text(py::array audio_data, genai::Speech2TextTask task, std::string_view language,
+    std::string generate_all_text(py::array audio_data, const genai::Speech2TextGeneratorParams &generator_params,
         uint32_t timeout_ms);
 
-    std::vector<genai::Speech2Text::SegmentInfo> generate_all_segments(py::array audio_data, genai::Speech2TextTask task,
-        std::string_view language, uint32_t timeout_ms);
+    std::vector<genai::Speech2Text::SegmentInfo> generate_all_segments(py::array audio_data, const genai::Speech2TextGeneratorParams &generator_params,
+        uint32_t timeout_ms);
 
     std::vector<int> tokenize(const std::string &text);
+    genai::Speech2TextGeneratorParams create_generator_params();
 
     void release();
 

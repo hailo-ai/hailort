@@ -62,7 +62,7 @@ VDeviceHrpcClient::create_available_vdevice(const std::vector<std::string> &devi
         }
         CHECK_SUCCESS(expected_result);
         auto result = expected_result.release();
-        TRY(auto handle, CreateVDeviceSerializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size)));
+        TRY(auto handle, CreateVDeviceSerializer::deserialize_reply(MemoryView(result.body.data(), result.header.size)));
 
         return std::make_tuple(client, handle); // Only single device is supported
     }
@@ -141,7 +141,7 @@ Expected<std::shared_ptr<InferModel>> VDeviceHrpcClient::create_infer_model(cons
     TRY(auto request_size, CreateInferModelSerializer::serialize_request(m_handle, hef_buffer.size(), name, MemoryView(*request_buffer)));
     TRY(auto result, m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::VDEVICE__CREATE_INFER_MODEL),
         MemoryView(request_buffer->data(), request_size), std::vector<TransferBuffer>{hef_buffer}, {}, LONG_RPC_ACTION_TIMEOUT));
-    TRY(auto infer_model_handle, CreateInferModelSerializer::deserialize_reply(MemoryView(result.buffer->data(), result.header.size)));
+    TRY(auto infer_model_handle, CreateInferModelSerializer::deserialize_reply(MemoryView(result.body.data(), result.header.size)));
 
     TRY(auto hef, Hef::create(hef_buffer));
     TRY(auto infer_model, InferModelHrpcClient::create(std::move(hef), name, m_client, infer_model_handle, m_handle,

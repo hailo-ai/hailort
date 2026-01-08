@@ -817,8 +817,17 @@ Expected<Buffer> CallbackCalledSerializer::serialize_reply(const RpcCallback &ca
             break;
         }
         case HAILO_NOTIFICATION_ID_NN_CORE_CRC_ERROR_EVENT:
+        {
             // No parameters to serialize
             break;
+        }
+        case HAILO_NOTIFICATION_ID_THROTTLING_STATE_CHANGE_EVENT:
+        {
+            auto throttling_state_change_alert = device_notif->mutable_throttling_state_change();
+            auto &msg = callback.data.device_notification.notification.body.throttling_state_change;
+            throttling_state_change_alert->set_state(msg.new_state);
+            break;
+        }
         default:
             LOGGER__ERROR("Got unexpected notification id = {}", static_cast<uint32_t>(callback.data.device_notification.notification.id));
             return make_unexpected(HAILO_INTERNAL_FAILURE);
@@ -885,8 +894,16 @@ Expected<RpcCallback> CallbackCalledSerializer::deserialize_reply(const MemoryVi
             break;
         }
         case HAILO_NOTIFICATION_ID_NN_CORE_CRC_ERROR_EVENT:
+        {
             // No parameters to deserialize
             break;
+        }
+        case HAILO_NOTIFICATION_ID_THROTTLING_STATE_CHANGE_EVENT:
+        {
+            auto &msg = rpc_callback.data.device_notification.notification.body.throttling_state_change;
+            msg.new_state = static_cast<uint16_t>(reply.device_notification().throttling_state_change().state());
+            break;
+        }
         default:
             LOGGER__ERROR("Got unexpected notification id = {}", static_cast<uint32_t>(rpc_callback.data.device_notification.notification.id));
             return make_unexpected(HAILO_INTERNAL_FAILURE);

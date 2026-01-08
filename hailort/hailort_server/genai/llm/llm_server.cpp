@@ -14,15 +14,16 @@
 #include "hailo/quantization.hpp"
 
 #include "common/file_utils.hpp"
+#include "common/genai/constants.hpp"
 
 #include "utils.hpp"
 
 #include <nlohmann/json.hpp>
+#include <future>
 
 
 using namespace hailort::genai;
 using namespace hailort;
-
 
 Expected<std::string> get_path_from_lora_name(const std::string &lora_name)
 {
@@ -94,14 +95,13 @@ LLMServer::~LLMServer()
     m_inference_manager_tbt.reset();
 
     m_vdevice_manager->remove_vdevice(DEFAULT_LLM_CONNECTION_PORT); // Use it as a unique client id
+
+    m_vdevice_manager->unmark_kv_cache_in_use();
 }
 
 hailo_status LLMServer::parse_config_json(const MemoryView &config_json)
 {
-    auto json_ptr = config_json.data();
-    auto json_size = config_json.size();
-    auto hailo_config_json = nlohmann::json::parse(json_ptr, json_ptr + json_size);
-
+    auto hailo_config_json = parse_json(config_json);
     return parse_config_json(hailo_config_json);
 }
 
@@ -167,6 +167,9 @@ hailo_status LLMServer::parse_config_json(const nlohmann::json &hailo_config_jso
         if (hailo_config_json["pre_process_params"].contains("prefill_input_tokens_count")) {
             m_pre_process_params.prefill_input_tokens_count = hailo_config_json["pre_process_params"]["prefill_input_tokens_count"].get<uint32_t>();
         }
+        if (hailo_config_json["pre_process_params"].contains("mrope_section")) {
+            m_pre_process_params.mrope_section = hailo_config_json["pre_process_params"]["mrope_section"].get<std::vector<int>>();
+        }
     }
 
     if (hailo_config_json.contains("input_layers_names_suffixes")) {
@@ -192,153 +195,305 @@ hailo_status LLMServer::parse_config_json(const nlohmann::json &hailo_config_jso
     return HAILO_SUCCESS;
 }
 
+std::future<hailo_status> LLMServer::create_inference_managers_future(std::shared_ptr<VDevice> vdevice, const Hef &hef,
+    const std::string &lora_name, std::shared_ptr<Event> external_resources_created_event,
+    std::shared_ptr<Event> inference_models_created_event, std::shared_ptr<Event> shutdown_event)
+{
+    return std::async(std::launch::async, [this, vdevice, hef, lora_name, external_resources_created_event,
+        inference_models_created_event, shutdown_event]() -> hailo_status {
+
+        LOGGER__GENAI_STATS_START("[create] create prefill model");
+        auto network_group_names = hef.get_network_groups_names();
+        TRY(auto prefill_model_suffix, get_prefill_model_name_suffix(lora_name, network_group_names.size()));
+        TRY(m_inference_manager_prefill, LLMInferenceManager::create(vdevice, hef, prefill_model_suffix));
+        CHECK_SUCCESS(WaitOrShutdown(external_resources_created_event, shutdown_event).wait(WAIT_FOR_OPERATION_TIMEOUT));
+        auto model_prefill = m_inference_manager_prefill->get_model();
+        for (auto input : model_prefill->inputs()) {
+            if (LLMPreProcess::is_positional_embed_layer(input.name(), m_input_layers_names_suffixes)) {
+                input.set_format_type(HAILO_FORMAT_TYPE_FLOAT32);
+            }
+        }
+        for (auto output : model_prefill->outputs()) {
+            output.set_format_type(HAILO_FORMAT_TYPE_FLOAT32);
+        }
+        LOGGER__GENAI_STATS_END("[create] create prefill model");
+
+        LOGGER__GENAI_STATS_START("[create] create tbt model");
+        m_inference_manager_tbt = nullptr;
+        TRY(auto tbt_model_suffix, get_tbt_model_name_suffix(lora_name, network_group_names.size()));
+        auto inference_manager_tbt = LLMInferenceManager::create(vdevice, hef, tbt_model_suffix);
+        if (inference_manager_tbt) {
+            m_inference_manager_tbt = inference_manager_tbt.release();
+            auto model_tbt = m_inference_manager_tbt->get_model();
+            for (auto input : model_tbt->inputs()) {
+                if (LLMPreProcess::is_positional_embed_layer(input.name(), m_input_layers_names_suffixes)) {
+                    input.set_format_type(HAILO_FORMAT_TYPE_FLOAT32);
+                }
+            }
+            for (auto output : model_tbt->outputs()) {
+                output.set_format_type(HAILO_FORMAT_TYPE_FLOAT32);
+            }
+        }
+        inference_models_created_event->signal();
+        LOGGER__GENAI_STATS_END("[create] create tbt model");
+
+        auto configure_prefill_future = std::async(std::launch::async, [this]() -> hailo_status {
+            LOGGER__GENAI_STATS_START("[create] configure prefill model");
+            TRY(m_prefill_buffers, m_inference_manager_prefill->allocate_buffers());
+            m_prefill_inputs = buffers_to_memviews(m_prefill_buffers.first);
+            m_prefill_outputs = buffers_to_memviews(m_prefill_buffers.second);
+            CHECK_SUCCESS(m_inference_manager_prefill->configure());
+            LOGGER__GENAI_STATS_END("[create] configure prefill model");
+
+            return HAILO_SUCCESS;
+        });
+
+        LOGGER__GENAI_STATS_START("[create] configure tbt model");
+        if (m_inference_manager_tbt) {
+            TRY(m_tbt_buffers, m_inference_manager_tbt->allocate_buffers());
+            m_tbt_inputs = buffers_to_memviews(m_tbt_buffers.first);
+            m_tbt_outputs = buffers_to_memviews(m_tbt_buffers.second);
+            CHECK_SUCCESS(m_inference_manager_tbt->configure());
+        }
+        LOGGER__GENAI_STATS_END("[create] configure tbt model");
+        CHECK_SUCCESS(wait_for_future_status_or_shutdown(configure_prefill_future, shutdown_event));
+
+        return HAILO_SUCCESS;
+    });
+}
+
+std::future<Expected<Eigen::VectorXf>> LLMServer::parse_external_resources_future(const Hef &hef,
+    std::shared_ptr<Event> hailo_config_json_arrived_event, std::shared_ptr<Event> theta_arrived_event,
+    std::shared_ptr<Event> external_resources_created_event, std::shared_ptr<Event> shutdown_event)
+{
+    return std::async(std::launch::async, [this, hef, hailo_config_json_arrived_event, theta_arrived_event,
+        external_resources_created_event, shutdown_event]() -> Expected<Eigen::VectorXf> {
+        CHECK_SUCCESS(WaitOrShutdown(hailo_config_json_arrived_event, shutdown_event).wait(LONG_TIMEOUT)); // Waiting for data over the session
+
+        LOGGER__GENAI_STATS_START("[create] parse GenAI resources");
+        TRY(auto hailo_config_json_view, hef.get_external_resources(HAILO_CONFIG_JSON));
+        CHECK_SUCCESS(parse_config_json(hailo_config_json_view));
+
+        CHECK_SUCCESS(WaitOrShutdown(theta_arrived_event, shutdown_event).wait(LONG_TIMEOUT)); // Waiting for data over the session
+        TRY(auto theta_view, hef.get_external_resources(THETA));
+        auto theta = LLMPreProcess::generate_theta_from_memview(theta_view);
+        LOGGER__GENAI_STATS_END("[create] parse GenAI resources");
+
+        external_resources_created_event->signal();
+        return theta;
+    });
+}
+
+std::future<hailo_status> LLMServer::create_tokenizer_future(const Hef &hef,
+    std::shared_ptr<Event> tokenizer_arrived_event, std::shared_ptr<Event> shutdown_event)
+{
+    return std::async(std::launch::async, [this, hef, tokenizer_arrived_event, shutdown_event]() -> hailo_status {
+        CHECK_SUCCESS(WaitOrShutdown(tokenizer_arrived_event, shutdown_event).wait(LONG_TIMEOUT)); // Waiting for data over the session
+
+        LOGGER__GENAI_STATS_START("[create] create tokenizer");
+        TRY(auto tokenizer_view, hef.get_external_resources(TOKENIZER));
+        TRY(m_tokenizer, HailoTokenizer::create(tokenizer_view));
+        LOGGER__GENAI_STATS_END("[create] create tokenizer");
+
+        return HAILO_SUCCESS;
+    });
+}
+
+std::future<hailo_status> LLMServer::create_pre_process_future(const Hef &hef,
+    std::shared_ptr<Event> inference_models_created_event, std::future<Expected<Eigen::VectorXf>> &external_resources_future,
+    std::shared_ptr<Event> pre_process_created_event, std::shared_ptr<Event> shutdown_event)
+{
+    return std::async(std::launch::async, [this, hef, inference_models_created_event, &external_resources_future,
+        pre_process_created_event, shutdown_event]() -> hailo_status {
+        CHECK_SUCCESS(WaitOrShutdown(inference_models_created_event, shutdown_event).wait(WAIT_FOR_OPERATION_TIMEOUT));
+        TRY(auto theta, wait_for_future_value(external_resources_future));
+
+        // In LLM, pre_procss_params::mrope_section should be a single element with the same size as theta/2, therefor we override it here
+        m_pre_process_params.mrope_section = {static_cast<int>(theta.size() / 2)};
+
+        LOGGER__GENAI_STATS_START("[create] create PreProcess");
+        auto prefill_inputs_frame_size = m_inference_manager_prefill->get_inputs_frame_size();
+        auto tbt_inputs_frame_size = m_inference_manager_tbt ? m_inference_manager_tbt->get_inputs_frame_size() : std::map<std::string, size_t>();
+
+        // Extract embeddings layer info
+        // TODO: HRT-16646 - Add this to embeddings binary format in hef
+        TRY(auto embeddings_input_name, get_layer_name_from_suffix<size_t>(m_input_layers_names_suffixes.embeddings, prefill_inputs_frame_size));
+        TRY(auto embeddings_input, m_inference_manager_prefill->get_model()->input(embeddings_input_name));
+        m_embeddings_features = embeddings_input.shape().features;
+        auto embeddings_dtype = embeddings_input.format().type;
+
+        // Get scaled-mask value
+        TRY(auto mask_input_name, get_layer_name_from_suffix<size_t>(m_input_layers_names_suffixes.attention_mask, prefill_inputs_frame_size));
+        TRY(auto mask_input, m_inference_manager_prefill->get_model()->input(mask_input_name));
+        auto mask_quant_infos = mask_input.get_quant_infos();
+        CHECK(1 == mask_quant_infos.size(), HAILO_INTERNAL_FAILURE);
+        float32_t dequantized_mask_value = 1;
+        uint8_t scaled_mask_value = 0;
+        Quantization::quantize_input_buffer<float32_t, uint8_t>(&dequantized_mask_value, &scaled_mask_value, 1, mask_quant_infos[0]);
+
+        TRY(m_pre_process, LLMPreProcess::create(prefill_inputs_frame_size, tbt_inputs_frame_size,
+            std::move(theta), m_embeddings_features, embeddings_dtype, scaled_mask_value, m_input_layers_names_suffixes, m_pre_process_params));
+        LOGGER__GENAI_STATS_END("[create] create PreProcess");
+
+        pre_process_created_event->signal();
+        return HAILO_SUCCESS;
+    });
+}
+
+std::future<hailo_status> LLMServer::create_token_embedder_future(const Hef &hef,
+    std::shared_ptr<Event> embeddings_arrived_event, std::shared_ptr<Event> pre_process_created_event, std::shared_ptr<Event> shutdown_event)
+{
+    return std::async(std::launch::async, [this, hef, embeddings_arrived_event, pre_process_created_event, shutdown_event]() -> hailo_status {
+        CHECK_SUCCESS(WaitOrShutdown(pre_process_created_event, shutdown_event).wait(WAIT_FOR_OPERATION_TIMEOUT));
+        CHECK_SUCCESS(WaitOrShutdown(embeddings_arrived_event, shutdown_event).wait(LONG_TIMEOUT)); // Waiting for data over the session
+
+        LOGGER__GENAI_STATS_START("[create] create token embedder");
+        TRY(auto embeddings_view, hef.get_external_resources(INPUT_EMB_BINARY));
+        TRY(m_token_embedder, TokenEmbedder<uint16_t>::create(embeddings_view,
+            embeddings_view.size() / (sizeof(uint16_t) * m_embeddings_features), m_embeddings_features));
+        LOGGER__GENAI_STATS_END("[create] create token embedder");
+
+        return HAILO_SUCCESS;
+    });
+}
+
+Expected<std::future<hailo_status>> LLMServer::create_resources_async(std::shared_ptr<VDevice> vdevice, std::shared_ptr<Buffer> hef_buffer, const std::string lora_name,
+    bool tokenizer_on_host, std::shared_ptr<Event> theta_arrived_event, std::shared_ptr<Event> hailo_config_json_arrived_event,
+    std::shared_ptr<Event> tokenizer_arrived_event, std::shared_ptr<Event> embeddings_arrived_event, std::shared_ptr<Event> shutdown_event)
+{
+    TRY(auto inference_models_created_event, Event::create_shared(Event::State::not_signalled));
+    TRY(auto external_resources_created_event, Event::create_shared(Event::State::not_signalled));
+    TRY(auto pre_process_created_event, Event::create_shared(Event::State::not_signalled));
+
+    return std::async(std::launch::async, [this, vdevice, hef_buffer, lora_name, tokenizer_on_host, theta_arrived_event,
+        hailo_config_json_arrived_event, tokenizer_arrived_event, embeddings_arrived_event, inference_models_created_event,
+        external_resources_created_event, pre_process_created_event, shutdown_event]() -> hailo_status {
+
+        // Create HEF
+        LOGGER__GENAI_STATS_START("[create] create HEF");
+        TRY(auto hef, Hef::create(hef_buffer));
+        hef.set_memory_footprint_optimization(true);
+        LOGGER__GENAI_STATS_END("[create] create HEF");
+
+        // Spawn all async creation tasks
+        auto external_resources_future = parse_external_resources_future(hef, hailo_config_json_arrived_event,
+            theta_arrived_event, external_resources_created_event, shutdown_event);
+
+        auto inference_managers_future = create_inference_managers_future(vdevice, hef, lora_name,
+            external_resources_created_event, inference_models_created_event, shutdown_event);
+
+        auto pre_process_future = create_pre_process_future(hef, inference_models_created_event, external_resources_future,
+            pre_process_created_event, shutdown_event);
+
+        if (!tokenizer_on_host) {
+            auto tokenizer_future = create_tokenizer_future(hef, tokenizer_arrived_event, shutdown_event);
+            auto token_embedder_future = create_token_embedder_future(hef,
+                embeddings_arrived_event, pre_process_created_event, shutdown_event);
+            CHECK_SUCCESS(wait_for_future_status_or_shutdown(tokenizer_future, shutdown_event));
+            CHECK_SUCCESS(wait_for_future_status_or_shutdown(token_embedder_future, shutdown_event));
+        }
+
+        // Wait for all async tasks to complete
+        CHECK_SUCCESS(wait_for_future_status_or_shutdown(pre_process_future, shutdown_event));
+        CHECK_SUCCESS(wait_for_future_status_or_shutdown(inference_managers_future, shutdown_event));
+
+        return HAILO_SUCCESS;
+    });
+}
+
 Expected<Buffer> LLMServer::handle_create_llm_request(const MemoryView &request)
 {
-    LOGGER__GENAI_STATS_START("[create-llm] create vdevice");
+    LOGGER__GENAI_STATS_START("[create] create vdevice");
     TRY_AS_HRPC_STATUS(auto request_info, LLMCreateSerializer::deserialize_request(request), LLMCreateSerializer);
     auto &lora_name = request_info.lora_name;
     auto &hef_path = request_info.hef_path;
     auto &group_id = request_info.group_id;
-    auto &file_size = request_info.file_size;
+    auto &chunks_to_transfer = request_info.chunks_to_transfer;
     auto &tokenizer_on_host = request_info.tokenizer_on_host;
+    auto total_hef_size = request_info.total_hef_size;
 
     auto params = HailoRTDefaults::get_vdevice_params();
     if (!group_id.empty()) {
         params.group_id = group_id.c_str();
     }
     TRY_AS_HRPC_STATUS(auto vdevice, m_vdevice_manager->create_shared_vdevice(params, DEFAULT_LLM_CONNECTION_PORT), LLMCreateSerializer);
-    LOGGER__GENAI_STATS_END("[create-llm] create vdevice");
+    LOGGER__GENAI_STATS_END("[create] create vdevice");
 
-    LOGGER__GENAI_STATS_START("[create-llm] transfer HEF");
+    LOGGER__GENAI_STATS_START("[create] transfer HEF");
     std::shared_ptr<Buffer> hef_buffer_ptr;
+    std::future<hailo_status> resources_creation_future;
+    std::future<hailo_status> ccws_future;
+    TRY_AS_HRPC_STATUS(auto theta_arrived_event, Event::create_shared(Event::State::not_signalled), LLMCreateSerializer);
+    TRY_AS_HRPC_STATUS(auto hailo_config_json_arrived_event, Event::create_shared(Event::State::not_signalled), LLMCreateSerializer);
+    TRY_AS_HRPC_STATUS(auto tokenizer_arrived_event, Event::create_shared(Event::State::not_signalled), LLMCreateSerializer);
+    TRY_AS_HRPC_STATUS(auto embeddings_arrived_event, Event::create_shared(Event::State::not_signalled), LLMCreateSerializer);
+    TRY_AS_HRPC_STATUS(auto shutdown_event, Event::create_shared(Event::State::not_signalled), LLMCreateSerializer);
+
+    // Create EventGuard AFTER futures are declared but BEFORE any operations that might fail
+    // This ensures that if any error occurs, shutdown_event will be signaled on early return
+    // and any already-launched futures will be notified to stop waiting
+    EventGuard event_guard(shutdown_event);
+
     if (!hef_path.empty()) { // hef path is not none only if hef exists locally, so no need to transfer it over the session
         if (BUILTIN == hef_path) {
             TRY_AS_HRPC_STATUS(hef_path, get_path_from_lora_name(lora_name), LLMCreateSerializer);
         }
         TRY_AS_HRPC_STATUS(auto buff, read_binary_file(hef_path, BufferStorageParams::create_dma()), LLMCreateSerializer);
         hef_buffer_ptr = make_shared_nothrow<Buffer>(std::move(buff));
-        CHECK_AS_HRPC_STATUS(nullptr != hef_buffer_ptr, HAILO_OUT_OF_HOST_MEMORY, LLMCreateSerializer); // Consider returning different status
+        CHECK_AS_HRPC_STATUS(nullptr != hef_buffer_ptr, HAILO_OUT_OF_HOST_MEMORY, LLMCreateSerializer);
+
+        // For local HEF, create resources immediately in async task
+        TRY_AS_HRPC_STATUS(resources_creation_future, create_resources_async(vdevice, hef_buffer_ptr, lora_name, tokenizer_on_host, theta_arrived_event,
+            hailo_config_json_arrived_event, tokenizer_arrived_event, embeddings_arrived_event, shutdown_event), LLMCreateSerializer);
+        // Since all data is already in the buffer, signal the events
+        theta_arrived_event->signal();
+        hailo_config_json_arrived_event->signal();
+        tokenizer_arrived_event->signal();
+        embeddings_arrived_event->signal();
     } else {
-        TRY_AS_HRPC_STATUS(hef_buffer_ptr, m_session.receive_file_chunked(file_size), LLMCreateSerializer);
-    }
-    LOGGER__GENAI_STATS_END("[create-llm] transfer HEF");
-    LOGGER__INFO("hef buffer of size '{}', lora: '{}'", hef_buffer_ptr->size(), lora_name);
+        // Use total HEF size from the request
+        LOGGER__INFO("hef buffer of size '{}', lora: '{}'", total_hef_size, lora_name);
+        TRY_AS_HRPC_STATUS(hef_buffer_ptr, Buffer::create_shared(total_hef_size, BufferStorageParams::create_dma()), LLMCreateSerializer);
 
-    LOGGER__GENAI_STATS_START("[create-llm] create HEF");
-    TRY_AS_HRPC_STATUS(auto hef, Hef::create(hef_buffer_ptr), LLMCreateSerializer);
-    hef.set_memory_footprint_optimization(true); // zero-copy configuration if possible
-    LOGGER__GENAI_STATS_END("[create-llm] create HEF");
-
-    LOGGER__GENAI_STATS_START("[create-llm] parse GenAI resources");
-    TRY_AS_HRPC_STATUS(auto hailo_config_json_view, hef.get_external_resources(HAILO_CONFIG_JSON),
-        LLMCreateSerializer);
-    CHECK_SUCCESS_AS_HRPC_STATUS(parse_config_json(hailo_config_json_view), LLMCreateSerializer);
-
-    TRY_AS_HRPC_STATUS(auto theta_view, hef.get_external_resources(THETA),
-        LLMCreateSerializer);
-    auto theta = LLMPreProcess::generate_theta_from_memview(theta_view);
-    LOGGER__GENAI_STATS_END("[create-llm] parse GenAI resources");
-
-    LOGGER__GENAI_STATS_START("[create-llm] create prefill model");
-    auto network_group_names = hef.get_network_groups_names();
-    TRY_AS_HRPC_STATUS(auto prefill_model_suffix, get_prefill_model_name_suffix(lora_name, network_group_names.size()), LLMCreateSerializer);
-    TRY_AS_HRPC_STATUS(m_inference_manager_prefill, LLMInferenceManager::create(vdevice, hef, prefill_model_suffix),
-        LLMCreateSerializer);
-    LOGGER__GENAI_STATS_END("[create-llm] create prefill model");
-
-    LOGGER__GENAI_STATS_START("[create-llm] configure prefill model");
-    auto model_prefill = m_inference_manager_prefill->get_model();
-    for (auto input : model_prefill->inputs()) {
-        if (LLMPreProcess::is_positional_embed_layer(input.name(), m_input_layers_names_suffixes)) {
-            input.set_format_type(HAILO_FORMAT_TYPE_FLOAT32);
-        }
-    }
-    for (auto output : model_prefill->outputs()) {
-        output.set_format_type(HAILO_FORMAT_TYPE_FLOAT32);
-    }
-    TRY_AS_HRPC_STATUS(m_prefill_buffers, m_inference_manager_prefill->allocate_buffers(), LLMCreateSerializer);
-    m_prefill_inputs = buffers_to_memviews(m_prefill_buffers.first);
-    m_prefill_outputs = buffers_to_memviews(m_prefill_buffers.second);
-
-    CHECK_SUCCESS_AS_HRPC_STATUS(m_inference_manager_prefill->configure(), LLMCreateSerializer);
-    LOGGER__GENAI_STATS_END("[create-llm] configure prefill model");
-
-    LOGGER__GENAI_STATS_START("[create-llm] create tbt model");
-    // If no tbt model is available, continue without it
-    m_inference_manager_tbt = nullptr;
-    TRY_AS_HRPC_STATUS(auto tbt_model_suffix, get_tbt_model_name_suffix(lora_name, network_group_names.size()), LLMCreateSerializer);
-    auto inference_manager_tbt = LLMInferenceManager::create(vdevice, hef, tbt_model_suffix);
-    if (inference_manager_tbt) {
-        m_inference_manager_tbt = inference_manager_tbt.release();
-    }
-    LOGGER__GENAI_STATS_END("[create-llm] create tbt model");
-
-    LOGGER__GENAI_STATS_START("[create-llm] configure tbt model");
-    if (m_inference_manager_tbt) {
-        auto model_tbt = m_inference_manager_tbt->get_model();
-        for (auto input : model_tbt->inputs()) {
-            if (LLMPreProcess::is_positional_embed_layer(input.name(), m_input_layers_names_suffixes)) {
-                input.set_format_type(HAILO_FORMAT_TYPE_FLOAT32);
+        // Receive all chunks synchronously, spawning async creation tasks after key chunks arrive
+        for (const auto &chunk : chunks_to_transfer) {
+            // Receive all chunks synchronously, except for CCWs
+            if (chunk.name != CCWS) {
+                CHECK_SUCCESS_AS_HRPC_STATUS(receive_hef_chunk_sync(m_session, chunk, hef_buffer_ptr),
+                    LLMCreateSerializer);
+            } else {
+                ccws_future = std::async(std::launch::async, [this, &chunk, &hef_buffer_ptr]() -> hailo_status {
+                    LOGGER__INFO("Receiving CCWs chunk '{}' (offset: {}, size: {} bytes) [ASYNC]", chunk.name, chunk.offset, chunk.size);
+                    auto status = receive_hef_chunk_sync(m_session, chunk, hef_buffer_ptr);
+                    LOGGER__GENAI_STATS_END("[create] transfer HEF");
+                    return status;
+                });
+            }
+            // After receiving HEADER_PROTO_PADDING, start HEF creation asynchronously
+            if (chunk.name == HEADER_PROTO_PADDING) {
+                LOGGER__INFO("HEADER_PROTO_PADDING received, starting async resources creation");
+                TRY_AS_HRPC_STATUS(resources_creation_future, create_resources_async(vdevice, hef_buffer_ptr, lora_name, tokenizer_on_host,
+                    theta_arrived_event, hailo_config_json_arrived_event, tokenizer_arrived_event, embeddings_arrived_event, shutdown_event), LLMCreateSerializer);
+            } else if (chunk.name == HAILO_CONFIG_JSON) {
+                hailo_config_json_arrived_event->signal();
+            } else if (chunk.name == THETA) {
+                theta_arrived_event->signal();
+            } else if (chunk.name == INPUT_EMB_BINARY) {
+                embeddings_arrived_event->signal();
+            } else if (chunk.name == TOKENIZER) {
+                tokenizer_arrived_event->signal();
             }
         }
-        for (auto output : model_tbt->outputs()) {
-            output.set_format_type(HAILO_FORMAT_TYPE_FLOAT32);
-        }
-        TRY_AS_HRPC_STATUS(m_tbt_buffers, m_inference_manager_tbt->allocate_buffers(), LLMCreateSerializer);
-        m_tbt_inputs = buffers_to_memviews(m_tbt_buffers.first);
-        m_tbt_outputs = buffers_to_memviews(m_tbt_buffers.second);
-        CHECK_SUCCESS_AS_HRPC_STATUS(m_inference_manager_tbt->configure(), LLMCreateSerializer);
     }
-    LOGGER__GENAI_STATS_END("[create-llm] configure tbt model");
 
-    LOGGER__GENAI_STATS_START("[create-llm] create PreProcess");
-    auto prefill_inputs_frame_size = m_inference_manager_prefill->get_inputs_frame_size();
-    auto tbt_inputs_frame_size = m_inference_manager_tbt ? m_inference_manager_tbt->get_inputs_frame_size() : std::map<std::string, size_t>();
-
-    // Extract embeddings layer info
-    // TODO: HRT-16646 - Add this to embeddings binary format in hef
-    TRY_AS_HRPC_STATUS(auto embeddings_input_name, get_layer_name_from_suffix<size_t>(m_input_layers_names_suffixes.embeddings, prefill_inputs_frame_size),
-        LLMCreateSerializer);
-    TRY_AS_HRPC_STATUS(auto embeddings_input, m_inference_manager_prefill->get_model()->input(embeddings_input_name),
-        LLMCreateSerializer);
-    auto embeddings_features = embeddings_input.shape().features;
-    auto embeddings_dtype = embeddings_input.format().type;
-
-    // Get scaled-mask value
-    TRY_AS_HRPC_STATUS(auto mask_input_name, get_layer_name_from_suffix<size_t>(m_input_layers_names_suffixes.attention_mask, prefill_inputs_frame_size),
-        LLMCreateSerializer);
-    TRY(auto mask_input, m_inference_manager_prefill->get_model()->input(mask_input_name));
-    auto mask_quant_infos = mask_input.get_quant_infos();
-    CHECK_AS_HRPC_STATUS(1 == mask_quant_infos.size(), HAILO_INTERNAL_FAILURE, LLMCreateSerializer);
-    float32_t dequantized_mask_value = 1;
-    uint8_t scaled_mask_value = 0;
-    Quantization::quantize_input_buffer<float32_t, uint8_t>(&dequantized_mask_value, &scaled_mask_value, 1, mask_quant_infos[0]);
-
-    TRY_AS_HRPC_STATUS(m_pre_process, LLMPreProcess::create(prefill_inputs_frame_size, tbt_inputs_frame_size,
-        std::move(theta), embeddings_features, embeddings_dtype, scaled_mask_value, m_input_layers_names_suffixes, m_pre_process_params), LLMCreateSerializer);
-    LOGGER__GENAI_STATS_END("[create-llm] create PreProcess");
-
-    LOGGER__GENAI_STATS_START("[create-llm] create tokenizer");
-    if (!tokenizer_on_host) {
-        TRY_AS_HRPC_STATUS(auto embeddings_view, hef.get_external_resources(INPUT_EMB_BINARY),
-            LLMCreateSerializer);
-        TRY_AS_HRPC_STATUS(m_token_embedder, TokenEmbedder<uint16_t>::create(embeddings_view,
-            embeddings_view.size() / (sizeof(uint16_t) * embeddings_features), embeddings_features), LLMCreateSerializer);
-
-        TRY_AS_HRPC_STATUS(auto tokenizer_view, hef.get_external_resources(TOKENIZER),
-            LLMCreateSerializer);
-
-        // HRT-16824 - HailoTokenizer should get memview in the c'tor and convert to string if neccesary inside
-        std::string tokenizer_blob(tokenizer_view.size(), '\0');
-        std::memcpy(const_cast<char*>(tokenizer_blob.data()), tokenizer_view.data(), tokenizer_blob.size());
-        TRY_AS_HRPC_STATUS(m_tokenizer, HailoTokenizer::create(tokenizer_blob),
-            LLMCreateSerializer);
+    CHECK_SUCCESS_AS_HRPC_STATUS(wait_for_future_status(resources_creation_future), LLMCreateSerializer);
+    if (ccws_future.valid()) { // In case HEF exists locally, dont need to wait for CCWs
+        CHECK_SUCCESS_AS_HRPC_STATUS(wait_for_future_status(ccws_future), LLMCreateSerializer);
     }
-    LOGGER__GENAI_STATS_END("[create-llm] create tokenizer");
 
     m_recovery.tokens = {m_end_of_sentence_token_id};
 
-    TRY_AS_HRPC_STATUS(auto reply, LLMCreateSerializer::serialize_reply(HAILO_SUCCESS, m_chat_template, embeddings_features), LLMCreateSerializer);
+    TRY_AS_HRPC_STATUS(auto reply, LLMCreateSerializer::serialize_reply(HAILO_SUCCESS, m_chat_template, m_embeddings_features), LLMCreateSerializer);
     return reply;
 }
 
@@ -418,7 +573,7 @@ Expected<Buffer> LLMServer::handle_read_request(const MemoryView &request)
             gen_status = m_recovery.termination_status;
         }
     } else {
-        std::vector<MemoryView> embeddings_views;
+        std::vector<EmbeddingViewWrapper> embeddings_views;
         std::vector<int> combined_tokens;
 
         if (!input.initial_prompt.empty()) {
@@ -445,7 +600,7 @@ Expected<Buffer> LLMServer::handle_read_request(const MemoryView &request)
             // Client-side tokenizer with embeddings
             // Embeddings already contain prefix+input combined (first iter) or single token (subsequent)
             std::transform(input.embeddings.begin(), input.embeddings.end(), std::back_inserter(embeddings_views),
-                [](const BufferPtr &buffer) { return MemoryView(buffer); });
+                [](const auto &emb) { return emb; });
         }
 
         TRY_AS_HRPC_STATUS(auto token_result, generate_next_token_on_demand(input.tokens, embeddings_views),
@@ -607,46 +762,46 @@ Expected<Buffer> LLMServer::handle_generator_release_request(const MemoryView &r
 }
 
 hailo_status LLMServer::process_prefill_inputs_chunk(std::map<std::string, MemoryView> &prefill_inputs,
-    std::map<std::string, MemoryView> &prefill_outputs, const std::vector<MemoryView> &input_embeddings)
+    std::map<std::string, MemoryView> &prefill_outputs, const std::vector<EmbeddingViewWrapper> &input_embeddings)
 {
-    LOGGER__GENAI_STATS_START("[llm-generate-prefill] pre process");
+    LOGGER__GENAI_STATS_START("[generate-prefill] pre process");
     CHECK_SUCCESS(m_pre_process->prepare_inputs_prefill(prefill_inputs, input_embeddings));
-    LOGGER__GENAI_STATS_END("[llm-generate-prefill] pre process");
+    LOGGER__GENAI_STATS_END("[generate-prefill] pre process");
 
-    LOGGER__GENAI_STATS_START("[llm-generate-prefill] update cache offset");
+    LOGGER__GENAI_STATS_START("[generate-prefill] update cache offset");
     CHECK_SUCCESS(m_inference_manager_prefill->update_cache_offset(static_cast<int32_t>(input_embeddings.size())));
-    LOGGER__GENAI_STATS_END("[llm-generate-prefill] update cache offset");
+    LOGGER__GENAI_STATS_END("[generate-prefill] update cache offset");
 
-    LOGGER__GENAI_STATS_START("[llm-generate-prefill] hw-inference prefill");
+    LOGGER__GENAI_STATS_START("[generate-prefill] hw-inference prefill");
     CHECK_SUCCESS(m_inference_manager_prefill->generate(prefill_inputs, prefill_outputs));
-    LOGGER__GENAI_STATS_END("[llm-generate-prefill] hw-inference prefill");
+    LOGGER__GENAI_STATS_END("[generate-prefill] hw-inference prefill");
 
     return HAILO_SUCCESS;
 }
 
 Expected<int> LLMServer::get_next_token_prefill(std::map<std::string, MemoryView> &prefill_inputs,
-    std::map<std::string, MemoryView> &prefill_outputs, const std::vector<MemoryView> &input_embeddings,
+    std::map<std::string, MemoryView> &prefill_outputs, const std::vector<EmbeddingViewWrapper> &input_embeddings,
     const LLMGeneratorParams &params)
 {
     size_t num_full_chunks = input_embeddings.size() / m_pre_process_params.prefill_input_tokens_count;
     size_t remainder_size = input_embeddings.size() % m_pre_process_params.prefill_input_tokens_count;
     // Process the remainder first, if any
     if (remainder_size > 0) {
-        std::vector<MemoryView> first_prefill_embeddings(input_embeddings.begin(), input_embeddings.begin() + remainder_size);
+        std::vector<EmbeddingViewWrapper> first_prefill_embeddings(input_embeddings.begin(), input_embeddings.begin() + remainder_size);
         CHECK_SUCCESS(process_prefill_inputs_chunk(prefill_inputs, prefill_outputs, first_prefill_embeddings));
     }
 
     // Process full prefill chunks
     size_t offset = remainder_size;
     for (size_t i = 0; i < num_full_chunks; ++i) {
-        std::vector<MemoryView> input_embeddings_chunk(input_embeddings.begin() + offset, input_embeddings.begin() + offset + m_pre_process_params.prefill_input_tokens_count);
+        std::vector<EmbeddingViewWrapper> input_embeddings_chunk(input_embeddings.begin() + offset, input_embeddings.begin() + offset + m_pre_process_params.prefill_input_tokens_count);
         CHECK_SUCCESS(process_prefill_inputs_chunk(prefill_inputs, prefill_outputs, input_embeddings_chunk));
         offset += input_embeddings_chunk.size();
     }
 
-    LOGGER__GENAI_STATS_START("[llm-generate-prefill] post process");
+    LOGGER__GENAI_STATS_START("[generate-prefill] post process");
     auto next_token = m_post_process.get_next_token(prefill_outputs.begin()->second, m_tokens_history, params);
-    LOGGER__GENAI_STATS_END("[llm-generate-prefill] post process");
+    LOGGER__GENAI_STATS_END("[generate-prefill] post process");
 
     return next_token;
 }
@@ -700,7 +855,7 @@ bool LLMServer::check_stop_sequences(int latest_token)
 }
 
 Expected<std::pair<int, LLMGeneratorCompletion::Status>> LLMServer::generate_next_token_on_demand(const std::vector<int> &tokens,
-    const std::vector<MemoryView> &embeddings)
+    const std::vector<EmbeddingViewWrapper> &embeddings)
 {
     // This method assumes m_generation_mutex is already held by the caller
 
@@ -715,6 +870,10 @@ Expected<std::pair<int, LLMGeneratorCompletion::Status>> LLMServer::generate_nex
 
 std::string LLMServer::handle_next_token(int next_token)
 {
+    if (INVALID_TOKEN_VALUE == next_token) {
+        return "";
+    }
+
     m_tokens_history.insert(next_token);
 
     // For reasoning models, track tokens generated after reasoning (not including reasoning tokens)
@@ -734,7 +893,7 @@ std::string LLMServer::handle_next_token(int next_token)
 }
 
 Expected<std::pair<int, LLMGeneratorCompletion::Status>> LLMServer::handle_prefill_phase(const std::vector<int> &tokens,
-    const std::vector<MemoryView> &embeddings)
+    const std::vector<EmbeddingViewWrapper> &embeddings)
 {
     int next_token = INVALID_TOKEN_VALUE;
 
@@ -750,9 +909,9 @@ Expected<std::pair<int, LLMGeneratorCompletion::Status>> LLMServer::handle_prefi
         auto start_of_reasoning_token_iter = std::find(tokens.begin(),
             tokens.end(), m_reasoning.start_token_id);
         auto start_of_reasoning_token_index = std::distance(tokens.begin(), start_of_reasoning_token_iter);
-        std::vector<MemoryView> before_reasoning_embeddings(embeddings.begin(),
+        std::vector<EmbeddingViewWrapper> before_reasoning_embeddings(embeddings.begin(),
             embeddings.begin() + start_of_reasoning_token_index);
-        std::vector<MemoryView> after_reasoning_embeddings(embeddings.begin() + start_of_reasoning_token_index + 1,
+        std::vector<EmbeddingViewWrapper> after_reasoning_embeddings(embeddings.begin() + start_of_reasoning_token_index + 1,
             embeddings.end());
 
         // Generate tokens before reasoning (without exporting)
@@ -761,12 +920,12 @@ Expected<std::pair<int, LLMGeneratorCompletion::Status>> LLMServer::handle_prefi
         (void)ignored_next_token;
 
         // Save cache context before reasoning for later recovery
-        LOGGER__GENAI_STATS_START("[llm-generate-reasoning] get local cache for reasoning");
+        LOGGER__GENAI_STATS_START("[generate-reasoning] get local cache for reasoning");
         m_reasoning.tokens_history_before_reasoning = m_tokens_history;
         m_reasoning.pre_process_cache_before_reasoning = m_pre_process->get_local_cache();
         // Track how many tokens we'll process in reasoning section for accurate rollback
         m_reasoning.reasoning_section_token_count = after_reasoning_embeddings.size();
-        LOGGER__GENAI_STATS_END("[llm-generate-reasoning] get local cache for reasoning");
+        LOGGER__GENAI_STATS_END("[generate-reasoning] get local cache for reasoning");
 
         // Generate tokens after reasoning
         TRY(next_token, get_next_token_prefill(m_prefill_inputs, m_prefill_outputs,
@@ -789,6 +948,10 @@ Expected<std::pair<int, LLMGeneratorCompletion::Status>> LLMServer::handle_prefi
         TRY(generation_status, handle_generation_completion(generation_status, next_token));
     }
 
+    // If no tokens are expected back, override the generated token with 'INVALID_TOKEN_VALUE' - which will be ignored along the way
+    if (0 == m_current_generation_params.max_generated_tokens()) {
+        next_token = INVALID_TOKEN_VALUE;
+    }
     return std::make_pair(next_token, generation_status);
 }
 
@@ -804,7 +967,7 @@ LLMGeneratorCompletion::Status LLMServer::get_current_generation_status(int next
     return LLMGeneratorCompletion::Status::GENERATING;
 }
 
-Expected<std::pair<int, LLMGeneratorCompletion::Status>> LLMServer::handle_tbt_phase(const std::vector<MemoryView> &embeddings)
+Expected<std::pair<int, LLMGeneratorCompletion::Status>> LLMServer::handle_tbt_phase(const std::vector<EmbeddingViewWrapper> &embeddings)
 {
     assert(1 == embeddings.size());
     assert(m_inference_manager_tbt);
@@ -813,22 +976,22 @@ Expected<std::pair<int, LLMGeneratorCompletion::Status>> LLMServer::handle_tbt_p
     std::map<std::string, MemoryView> tbt_outputs = m_tbt_outputs;
 
     // TBT preprocessing (restore missing logic from old tbt_generation_loop)
-    LOGGER__GENAI_STATS_START("[llm-generate-tbt] pre process");
+    LOGGER__GENAI_STATS_START("[generate-tbt] pre process");
     CHECK_SUCCESS(m_pre_process->prepare_inputs_tbt(tbt_inputs, embeddings));
-    LOGGER__GENAI_STATS_END("[llm-generate-tbt] pre process");
+    LOGGER__GENAI_STATS_END("[generate-tbt] pre process");
 
-    LOGGER__GENAI_STATS_START("[llm-generate-tbt] update cache offset");
+    LOGGER__GENAI_STATS_START("[generate-tbt] update cache offset");
     CHECK_SUCCESS(m_inference_manager_tbt->update_cache_offset(1));
-    LOGGER__GENAI_STATS_END("[llm-generate-tbt] update cache offset");
+    LOGGER__GENAI_STATS_END("[generate-tbt] update cache offset");
 
-    LOGGER__GENAI_STATS_START("[llm-generate-tbt] hw-inference tbt");
+    LOGGER__GENAI_STATS_START("[generate-tbt] hw-inference tbt");
     CHECK_SUCCESS(m_inference_manager_tbt->generate(tbt_inputs, tbt_outputs));
-    LOGGER__GENAI_STATS_END("[llm-generate-tbt] hw-inference tbt");
+    LOGGER__GENAI_STATS_END("[generate-tbt] hw-inference tbt");
 
-    LOGGER__GENAI_STATS_START("[llm-generate-tbt] post process");
+    LOGGER__GENAI_STATS_START("[generate-tbt] post process");
     int next_token = m_post_process.get_next_token(tbt_outputs.begin()->second,
         m_tokens_history, m_current_generation_params);
-    LOGGER__GENAI_STATS_END("[llm-generate-tbt] post process");
+    LOGGER__GENAI_STATS_END("[generate-tbt] post process");
 
     m_generated_token_count++;
 
@@ -881,8 +1044,12 @@ Expected<LLMGeneratorCompletion::Status> LLMServer::handle_generation_completion
         CHECK_SUCCESS(handle_reasoning_generation_completion());
     }
 
-    // since this is not in cache yet, we need to append the current token to the next generation prefix
-    append_tokens_to_next_generation_prefix({next_token});
+    bool zero_tokens_back = (0 == m_current_generation_params.max_generated_tokens());
+
+    // since this is not in cache yet, we need to append the current token to the next generation prefix - only if this token is returned
+    if (!zero_tokens_back) {
+        append_tokens_to_next_generation_prefix({next_token});
+    }
 
     // After finishing a generation, reset the recent tokens sequence to avoid false stop-token matches
     m_recent_tokens_sequence.clear();
@@ -891,7 +1058,7 @@ Expected<LLMGeneratorCompletion::Status> LLMServer::handle_generation_completion
     bool is_ungraceful_ending = (completion_status == LLMGeneratorCompletion::Status::ABORTED) ||
                                (completion_status == LLMGeneratorCompletion::Status::MAX_TOKENS_REACHED);
 
-    if (is_ungraceful_ending) {
+    if ((is_ungraceful_ending) && !zero_tokens_back) { // In case no tokens are expected back, recovery sequence is not applied
         CHECK_SUCCESS(apply_recovery_sequence(completion_status));
         if (!m_recovery.tokens.empty()) {
             // Recovery tokens will be delivered first, so return GENERATING for now
@@ -918,19 +1085,19 @@ void LLMServer::handle_reasoning_token_tracking(int next_token)
 
 hailo_status LLMServer::handle_reasoning_generation_completion()
 {
-    LOGGER__GENAI_STATS_START("[llm-generate-reasoning] set local cache for reasoning");
+    LOGGER__GENAI_STATS_START("[generate-reasoning] set local cache for reasoning");
     m_tokens_history = m_reasoning.tokens_history_before_reasoning;
     m_pre_process->set_local_cache(std::get<0>(m_reasoning.pre_process_cache_before_reasoning),
         std::get<1>(m_reasoning.pre_process_cache_before_reasoning),
         std::get<2>(m_reasoning.pre_process_cache_before_reasoning),
         std::get<3>(m_reasoning.pre_process_cache_before_reasoning));
-    LOGGER__GENAI_STATS_END("[llm-generate-reasoning] set local cache for reasoning");
+    LOGGER__GENAI_STATS_END("[generate-reasoning] set local cache for reasoning");
 
-    LOGGER__GENAI_STATS_START("[llm-generate-reasoning] update cache offset for reasoning");
+    LOGGER__GENAI_STATS_START("[generate-reasoning] update cache offset for reasoning");
     // Roll back by: reasoning tokens + generated tokens
     const auto total_rollback = m_reasoning.reasoning_section_token_count + m_generated_token_count;
     CHECK_SUCCESS(m_inference_manager_prefill->update_cache_offset(-static_cast<int32_t>(total_rollback)));
-    LOGGER__GENAI_STATS_END("[llm-generate-reasoning] update cache offset for reasoning");
+    LOGGER__GENAI_STATS_END("[generate-reasoning] update cache offset for reasoning");
 
     // Directly prepend tokens instead of converting to text and back to tokens
     append_tokens_to_next_generation_prefix(m_reasoning.after_reasoning_tokens);
@@ -1000,7 +1167,13 @@ hailo_status LLMServer::set_context(const MemoryView &context_buffer)
 
 Expected<std::unique_ptr<LLMServerManager>> LLMServerManager::create(std::shared_ptr<Session> session, std::shared_ptr<VDeviceManager> vdevice_manager)
 {
+    // Check if KV-Cache is already in use
+    CHECK_SUCCESS(vdevice_manager->mark_kv_cache_in_use(), "Failed to mark KV-Cache in use. KV-Cache is already in use by another model!");
+
     auto server = LLMServer::create_unique(session, vdevice_manager);
+    if (server.status() != HAILO_SUCCESS) {
+        vdevice_manager->unmark_kv_cache_in_use();
+    }
     CHECK_EXPECTED(server);
 
     auto ptr = std::make_unique<LLMServerManager>(session, std::move(server.value()));

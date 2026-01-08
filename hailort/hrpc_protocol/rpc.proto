@@ -222,12 +222,17 @@ message HealthMonitorOverCurrentAlertNotification {
     bool is_last_overcurrent_violation_reached = 3;
 }
 
+message ThrottlingStateChangeNotification {
+    uint32 state  = 1;
+}
+
 message DeviceNotificationCallback {
     uint32 notification_id = 1;
     uint32 sequence = 2;
     oneof message {
         HealthMonitorTemperatureAlarmNotification health_monitor_temperature_alarm = 3;
         HealthMonitorOverCurrentAlertNotification health_monitor_overcurrent_alert = 4;
+        ThrottlingStateChangeNotification throttling_state_change = 5;
     }
 }
 

@@ -71,6 +71,8 @@ enum class HailoRpcActionID {
 
     NOTIFICATION,
 
+    SYSTEM__RESET,
+
     MAX_VALUE,
 };
 

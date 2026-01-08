@@ -127,8 +127,8 @@ hailo_status VLMPreProcess::prepare_positional_embed_inputs(std::map<layer_name_
 
 // 'input_embeddings' already have placeholders for the vision tokens inside
 hailo_status VLMPreProcess::prepare_inputs_prefill(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer,
-    std::vector<MemoryView> input_embeddings, const std::vector<MemoryView> &input_frames_embeddings,
-    uint32_t &current_frame_index, uint32_t &current_emb_index_in_frame)
+    std::vector<EmbeddingViewWrapper> input_embeddings, EmbeddingsVectorState &standalone_frame_embeddings_state,
+    EmbeddingsVectorState &video_embeddings_state)
 {
     CHECK(input_embeddings.size() <= m_params.prefill_input_tokens_count, HAILO_INVALID_ARGUMENT,
         "Preparing prefill inputs failed. `input_embeddings` size must be lower then {}, but got {} tokens",
@@ -140,18 +140,25 @@ hailo_status VLMPreProcess::prepare_inputs_prefill(std::map<layer_name_t, Memory
     // Edit input_embeddings in place. Go over all indices of input_embeddings. if these indices are of vision tokens, add the corresponding frame embedding.
     for (size_t i = 0; i < input_embeddings.size(); i++) {
         if (0 == input_embeddings[i].size()) { // placeholder for vision token
-            if (current_emb_index_in_frame >= embeddings_per_frame()) {
-                // Reset the embedding index for the next frame
-                current_emb_index_in_frame = 0;
-                current_frame_index++;
+            MemoryView current_frame;
+            uint32_t current_frame_index;
+            uint32_t current_emb_index_in_frame;
+            if (input_embeddings[i].type() == EmbeddingViewWrapper::EmbeddingType::IMAGE) {
+                TRY(auto index_pair, standalone_frame_embeddings_state.get_next_embedding_index());
+                std::tie(current_frame_index, current_emb_index_in_frame) = index_pair;
+                TRY(current_frame, standalone_frame_embeddings_state.get_frame_embedding_view(current_frame_index));
+            } else if (input_embeddings[i].type() == EmbeddingViewWrapper::EmbeddingType::VIDEO) {
+                TRY(auto index_pair, video_embeddings_state.get_next_embedding_index());
+                std::tie(current_frame_index, current_emb_index_in_frame) = index_pair;
+                TRY(current_frame, video_embeddings_state.get_frame_embedding_view(current_frame_index));
+            } else {
+                CHECK(false, HAILO_INVALID_OPERATION, "Invalid embedding type");
             }
-            assert(current_frame_index < input_frames_embeddings.size());
-            const auto &current_frame = input_frames_embeddings[current_frame_index];
             // View the frame data as a matrix to fetch the appropriate row
             Eigen::Map<const Eigen::Matrix<uint16_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> frame_matrix(
                 reinterpret_cast<const uint16_t*>(current_frame.data()), embeddings_per_frame(), m_local_cached_embeddings.cols());
 
-            input_embeddings[i] = MemoryView::create_const(frame_matrix.row(current_emb_index_in_frame++).data(), frame_matrix.cols() * sizeof(uint16_t));
+            input_embeddings[i] = MemoryView::create_const(frame_matrix.row(current_emb_index_in_frame).data(), frame_matrix.cols() * sizeof(uint16_t));
 
             if (!during_frame) {
                 relative_frames_tokens_indices.emplace_back(i, i);

@@ -92,6 +92,15 @@ std::shared_ptr<LLMGeneratorCompletionWrapper> LLMWrapper::generate(const genai:
     return std::make_shared<LLMGeneratorCompletionWrapper>(std::move(completion_ptr));
 }
 
+std::shared_ptr<LLMGeneratorCompletionWrapper> LLMWrapper::generate(const genai::LLMGeneratorParams &params,
+    const std::vector<std::string> &prompt_json_strings, const std::vector<std::string> &tools_json_strings)
+{
+    auto completion = m_llm->generate(params, prompt_json_strings, tools_json_strings);
+    VALIDATE_EXPECTED(completion);
+    auto completion_ptr = std::make_unique<genai::LLMGeneratorCompletion>(completion.release());
+    return std::make_shared<LLMGeneratorCompletionWrapper>(std::move(completion_ptr));
+}
+
 std::vector<int> LLMWrapper::tokenize(const std::string &prompt)
 {
     auto expected = m_llm->tokenize(prompt);
@@ -177,6 +186,7 @@ void LLMWrapper::bind(py::module &m)
         .def("create_generator_params", &LLMWrapper::create_generator_params)
         .def("generate", static_cast<std::shared_ptr<LLMGeneratorCompletionWrapper>(LLMWrapper::*)(const genai::LLMGeneratorParams&, const std::string&)>(&LLMWrapper::generate))
         .def("generate", static_cast<std::shared_ptr<LLMGeneratorCompletionWrapper>(LLMWrapper::*)(const genai::LLMGeneratorParams&, const std::vector<std::string>&)>(&LLMWrapper::generate))
+        .def("generate", static_cast<std::shared_ptr<LLMGeneratorCompletionWrapper>(LLMWrapper::*)(const genai::LLMGeneratorParams&, const std::vector<std::string>&, const std::vector<std::string>&)>(&LLMWrapper::generate))
         .def("tokenize", &LLMWrapper::tokenize)
         .def("clear_context", &LLMWrapper::clear_context)
         .def("get_context_usage_size", &LLMWrapper::get_context_usage_size)

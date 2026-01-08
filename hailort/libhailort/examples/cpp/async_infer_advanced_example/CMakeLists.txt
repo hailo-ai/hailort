@@ -10,7 +10,7 @@ target_link_libraries(cpp_async_infer_advanced_example PRIVATE HailoRT::libhailo
 if(WIN32)
     target_compile_options(cpp_async_infer_advanced_example PRIVATE
         /DWIN32_LEAN_AND_MEAN
-        /DNOMINMAX                  # NOMINMAX is required in order to play nice with std::min/std::max (otherwise Windows.h defines it's own)
+        /DNOMINMAX                  # NOMINMAX is required in order to avoid conflicts with std::min/std::max (otherwise Windows.h defines it's own)
         /wd4201 /wd4251
     )
 endif()

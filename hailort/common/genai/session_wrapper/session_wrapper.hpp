@@ -53,8 +53,8 @@ public:
     hailo_status close();
 
     // Chunked file transfer methods - consider using read/write in chunks whenever a message is larger than a certain size
-    hailo_status send_file_chunked(const std::string &file_path, size_t file_size_to_send, std::chrono::milliseconds timeout = LONG_TIMEOUT);
-    Expected<std::shared_ptr<Buffer>> receive_file_chunked(uint64_t expected_file_size, std::chrono::milliseconds timeout = LONG_TIMEOUT);
+    hailo_status send_file_chunked(const std::string &file_path, size_t file_size_to_send, uint32_t offset = 0, std::chrono::milliseconds timeout = LONG_TIMEOUT);
+    hailo_status receive_file_chunked(uint64_t expected_file_size, MemoryView buffer, std::chrono::milliseconds timeout = LONG_TIMEOUT);
 
 private:
     std::shared_ptr<Session> m_session;

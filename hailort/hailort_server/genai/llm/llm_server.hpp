@@ -33,6 +33,7 @@
 
 #include "nlohmann/json.hpp"
 #include <queue>
+#include <future>
 
 namespace hailort
 {
@@ -76,11 +77,12 @@ public:
     Expected<Buffer> handle_get_max_context_capacity(const MemoryView &request);
 
 protected:
-    Expected<std::pair<int, LLMGeneratorCompletion::Status>> generate_next_token_on_demand(const std::vector<int> &tokens, const std::vector<MemoryView> &embeddings);
+    Expected<std::pair<int, LLMGeneratorCompletion::Status>> generate_next_token_on_demand(const std::vector<int> &tokens,
+        const std::vector<EmbeddingViewWrapper> &embeddings);
 
     virtual Expected<std::pair<int, LLMGeneratorCompletion::Status>> handle_prefill_phase(const std::vector<int> &tokens,
-        const std::vector<MemoryView> &embeddings);
-    virtual Expected<std::pair<int, LLMGeneratorCompletion::Status>> handle_tbt_phase(const std::vector<MemoryView> &embeddings);
+        const std::vector<EmbeddingViewWrapper> &embeddings);
+    virtual Expected<std::pair<int, LLMGeneratorCompletion::Status>> handle_tbt_phase(const std::vector<EmbeddingViewWrapper> &embeddings);
 
     std::string handle_next_token(int next_token);
 
@@ -101,10 +103,10 @@ protected:
 
     // This function is used to process the prefill inputs and outputs, without handling (exporting) the generated token
     Expected<int> get_next_token_prefill(std::map<std::string, MemoryView> &prefill_inputs,
-        std::map<std::string, MemoryView> &prefill_outputs, const std::vector<MemoryView> &input_embeddings,
+        std::map<std::string, MemoryView> &prefill_outputs, const std::vector<EmbeddingViewWrapper> &input_embeddings,
         const LLMGeneratorParams &params);
     hailo_status process_prefill_inputs_chunk(std::map<std::string, MemoryView> &prefill_inputs,
-        std::map<std::string, MemoryView> &prefill_outputs, const std::vector<MemoryView> &input_embeddings);
+        std::map<std::string, MemoryView> &prefill_outputs, const std::vector<EmbeddingViewWrapper> &input_embeddings);
 
     // Check if current token history matches any custom stop sequence
     bool check_custom_stop_sequences(int latest_token);
@@ -118,6 +120,28 @@ protected:
 
     Expected<Buffer> get_context() const;
     hailo_status set_context(const MemoryView &context_buffer);
+
+    Expected<std::future<hailo_status>> create_resources_async(std::shared_ptr<VDevice>, std::shared_ptr<Buffer> hef_buffer, const std::string lora_name,
+        bool tokenizer_on_host, std::shared_ptr<Event> theta_arrived_event, std::shared_ptr<Event> hailo_config_json_arrived_event,
+        std::shared_ptr<Event> tokenizer_arrived_event, std::shared_ptr<Event> embeddings_arrived_event, std::shared_ptr<Event> shutdown_event);
+
+    virtual std::future<hailo_status> create_inference_managers_future(std::shared_ptr<VDevice> vdevice, const Hef &hef,
+        const std::string &lora_name, std::shared_ptr<Event> external_resources_created_event,
+        std::shared_ptr<Event> inference_models_created_event, std::shared_ptr<Event> shutdown_event);
+
+    virtual std::future<Expected<Eigen::VectorXf>> parse_external_resources_future(const Hef &hef,
+        std::shared_ptr<Event> hailo_config_json_arrived_event, std::shared_ptr<Event> theta_arrived_event,
+        std::shared_ptr<Event> external_resources_created_event, std::shared_ptr<Event> shutdown_event);
+
+    virtual std::future<hailo_status> create_tokenizer_future(const Hef &hef,
+        std::shared_ptr<Event> tokenizer_arrived_event, std::shared_ptr<Event> shutdown_event);
+
+    virtual std::future<hailo_status> create_token_embedder_future(const Hef &hef,
+        std::shared_ptr<Event> embeddings_arrived_event, std::shared_ptr<Event> pre_process_created_event, std::shared_ptr<Event> shutdown_event);
+
+    virtual std::future<hailo_status> create_pre_process_future(const Hef &hef,
+        std::shared_ptr<Event> inference_models_created_event, std::future<Expected<Eigen::VectorXf>> &external_resources_future,
+        std::shared_ptr<Event> pre_process_created_event, std::shared_ptr<Event> shutdown_event);
 
     SessionWrapper m_session;
     std::shared_ptr<VDeviceManager> m_vdevice_manager;
@@ -199,6 +223,7 @@ protected:
     std::vector<std::vector<int>> m_tokenized_stop_sequences;
 
     std::string m_chat_template;
+    uint32_t m_embeddings_features;
 
     std::vector<int> m_next_input_prompt_prefix_tokens;             // The prefix tokens of the next input prompt, which is used to chain the generated output without reasoning
 
@@ -221,6 +246,19 @@ public:
 
 protected:
     std::unique_ptr<LLMServer> m_server;
+};
+
+class EventGuard {
+public:
+    EventGuard(std::shared_ptr<Event> event) : m_event(event) {}
+    ~EventGuard() {
+        auto status = m_event->signal();
+        if (HAILO_SUCCESS != status) {
+            LOGGER__ERROR("Failed to signal event: {}", status);
+        }
+    }
+private:
+    std::shared_ptr<Event> m_event;
 };
 
 } /* namespace genai */

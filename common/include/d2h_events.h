@@ -65,6 +65,7 @@ typedef enum {
 
     /* SCMI Event IDs */
     NN_CORE_CRC_ERROR_EVENT_ID,
+    THROTTLING_STATE_CHANGE_EVENT_ID,
 
     D2H_EVENT_ID_COUNT /* Must be last*/
 } D2H_EVENT_ID_t;
@@ -161,6 +162,12 @@ typedef struct {
 
 #define D2H_EVENT_CONTEXT_SWITCH_RUN_TIME_ERROR_EVENT_PARAMETER_COUNT  (5)
 
+typedef struct {
+    uint16_t throttling_state;
+} D2H_EVENT_throttling_state_change_message_t;
+
+#define D2H_EVENT_THROTTLING_STATE_CHANGE_PARAMETER_COUNT  (1)
+
 /* D2H_EVENT__message_parameters_t should be in the same order as hailo_notification_message_parameters_t */
 typedef union {
     D2H_EVENT_rx_error_event_message_t rx_error_event;
@@ -174,6 +181,7 @@ typedef union {
     D2H_EVENT_health_monitor_clock_changed_event_message_t health_monitor_clock_changed_event;
     D2H_EVENT_hw_infer_mamager_infer_done_message_t hw_infer_manager_infer_done_event;
     D2H_EVENT_context_switch_run_time_error_event_message_t context_switch_run_time_error_event;
+    D2H_EVENT_throttling_state_change_message_t throttling_state_change;
 } D2H_EVENT__message_parameters_t;
 
 typedef struct {

@@ -186,6 +186,12 @@ PcieDevice::PcieDevice(std::unique_ptr<HailoRTDriver> &&driver, hailo_status &st
         m_is_control_version_supported = false;
     }
 
+    status = set_default_notification_callbacks();
+    if (HAILO_SUCCESS != status) {
+        LOGGER__ERROR("Failed to set default notification callbacks for PcieDevice: {}", status);
+        return;
+    }
+
     status = HAILO_SUCCESS;
 }
 

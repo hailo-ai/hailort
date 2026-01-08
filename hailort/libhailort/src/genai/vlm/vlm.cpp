@@ -63,8 +63,12 @@ void VLMParams::set_optimize_memory_on_device(bool optimize_memory_on_device)
 
 Expected<VLM> VLM::create(std::shared_ptr<hailort::VDevice> vdevice, const VLMParams &vlm_params)
 {
-    TRY(auto pimpl, Impl::create_unique(vdevice, vlm_params));
-    return VLM(std::move(pimpl));
+    auto pimpl = Impl::create_unique(vdevice, vlm_params);
+    if (!pimpl) {
+        LOGGER__ERROR("Failed to create VLM with status {}. Check device logs for more details.", pimpl.status());
+        return make_unexpected(pimpl.status());
+    }
+    return VLM(pimpl.release());
 }
 
 Expected<std::unique_ptr<VLM::Impl>> VLM::Impl::create_unique(std::shared_ptr<hailort::VDevice> vdevice, const VLMParams &vlm_params)
@@ -86,70 +90,83 @@ Expected<std::unique_ptr<VLM::Impl>> VLM::Impl::create_unique(std::shared_ptr<ha
     TRY(auto check_hef_exists_on_server_request, GenAICheckHefExistsSerializer::serialize_request(hef_path, hef_hash));
     TRY(auto check_hef_exists_on_server_reply, session_wrapper->execute(MemoryView(check_hef_exists_on_server_request)));
     TRY(auto hef_exists, GenAICheckHefExistsSerializer::deserialize_reply(MemoryView(*check_hef_exists_on_server_reply)));
+    CHECK_AS_EXPECTED(!(hef_exists && vlm_params.optimize_memory_on_device()), HAILO_INVALID_OPERATION,
+        "Failed to create VLM. When 'optimize_memory_on_device' is set to true, the HEF must not exist on the server.");
 
     Buffer create_vlm_request;
     std::shared_ptr<Buffer> create_vlm_reply;
+    std::unordered_set<std::string> local_resources;
     std::shared_ptr<HailoTokenizer> tokenizer;
     std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder;
     BufferPtr token_embedder_buffer;
+
     if (!hef_exists) {
-        // Get file size for chunked transfer
-        TRY(auto file_size, get_istream_size(hef_path));
         if (vlm_params.optimize_memory_on_device()) {
 #ifndef HAILO_CLIENT_TOKENIZER_ENABLED
             LOGGER__ERROR("Host-tokenization is not enabled in lib compilation");
             return make_unexpected(HAILO_NOT_IMPLEMENTED);
 #else
-            // Reduce external-info file-sizes form HEF file size
-            TRY(auto external_resources, Hef::extract_hef_external_resources(hef_path));
-            for (const auto &[name, resource_buffer] : external_resources) {
-                // Counting on the fact that tokenizer and embeddings are always at the end of the HEF file
-                if (name == TOKENIZER) {
-                    std::string tokenizer_blob(resource_buffer->size(), '\0');
-                    std::memcpy(const_cast<char*>(tokenizer_blob.data()), resource_buffer->data(), resource_buffer->size());
-                    TRY(tokenizer, HailoTokenizer::create(tokenizer_blob));
-                    file_size -= resource_buffer->size();
-                } else if (name == INPUT_EMB_BINARY) {
-                    // Create token_embedder after getting the embedding features from the server
-                    token_embedder_buffer = resource_buffer;
-                    file_size -= resource_buffer->size();
-                }
-            }
+            local_resources = {TOKENIZER, INPUT_EMB_BINARY};
 #endif // HAILO_CLIENT_TOKENIZER_ENABLED
         }
 
-        // Create request with file size for chunked transfer
-        TRY(create_vlm_request, VLMCreateSerializer::serialize_request(vdevice_params, "", file_size, vlm_params.optimize_memory_on_device()));
+        // Parse HEF once to get both chunk offsets and buffers of local_resources
+        // local_resources will be in exterlocal_resources_buffersnal_resources but not in chunks
+        TRY(auto parse_result, Hef::parse_hef_for_transfer(hef_path, local_resources));
+
+        // Create request with chunks info for chunked transfer
+        TRY(create_vlm_request, VLMCreateSerializer::serialize_request(vdevice_params, "", parse_result.chunks, parse_result.total_hef_size, vlm_params.optimize_memory_on_device()));
         CHECK_SUCCESS(session_wrapper->write(MemoryView(create_vlm_request)));
-        CHECK_SUCCESS(session_wrapper->send_file_chunked(hef_path, file_size));
+
+        // Send chunks one-by-one
+        LOGGER__INFO("Sending {} HEF chunks to server", parse_result.chunks.size());
+        for (const auto &chunk : parse_result.chunks) {
+            LOGGER__DEBUG("Sending HEF chunk '{}' (offset: {}, size: {} bytes)", chunk.name, chunk.offset, chunk.size);
+            CHECK_SUCCESS(session_wrapper->send_file_chunked(hef_path, chunk.size, static_cast<uint32_t>(chunk.offset)));
+        }
+
+#ifdef HAILO_CLIENT_TOKENIZER_ENABLED
+        // Create tokenizer from the external resources, in parallel to the model's creation in the server
+        if (vlm_params.optimize_memory_on_device()) {
+            CHECK_AS_EXPECTED(nullptr != parse_result.local_resources_buffers[TOKENIZER], HAILO_NOT_AVAILABLE, "Tokenizer buffer is not available");
+            auto &tokenizer_buffer = parse_result.local_resources_buffers[TOKENIZER];
+            TRY(tokenizer, HailoTokenizer::create(tokenizer_buffer->as_view()));
+
+            token_embedder_buffer = parse_result.local_resources_buffers[INPUT_EMB_BINARY];
+        }
+#endif // HAILO_CLIENT_TOKENIZER_ENABLED
+
         TRY(create_vlm_reply, session_wrapper->read());
     } else {
         TRY(create_vlm_request, VLMCreateSerializer::serialize_request(vdevice_params, hef_path, vlm_params.optimize_memory_on_device()));
         TRY(create_vlm_reply, session_wrapper->execute(MemoryView(create_vlm_request)));
     }
-    TRY(auto vlm_info_tuple, VLMCreateSerializer::deserialize_reply(MemoryView(*create_vlm_reply)), "Failed to create VLM");
+    TRY(auto vlm_create_reply_info, VLMCreateSerializer::deserialize_reply(MemoryView(*create_vlm_reply)), "Failed to create VLM");
 
-    auto input_frame_shape = std::get<0>(vlm_info_tuple);
-    auto input_frame_format = std::get<1>(vlm_info_tuple);
+    auto input_frame_shape = vlm_create_reply_info.input_frame_shape;
+    auto input_frame_format = vlm_create_reply_info.input_frame_format;
 
-    auto chat_template = std::get<2>(vlm_info_tuple);
+    auto chat_template = vlm_create_reply_info.prompt_template;
     TRY(auto prompt_template_handler, PromptTemplateHandler::create(chat_template));
     auto prompt_template_handler_ptr = make_shared_nothrow<PromptTemplateHandler>(std::move(prompt_template_handler));
     CHECK_NOT_NULL_AS_EXPECTED(prompt_template_handler_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     if (vlm_params.optimize_memory_on_device()) {
 #ifndef HAILO_CLIENT_TOKENIZER_ENABLED
+        (void)token_embedder_buffer;
         LOGGER__ERROR("Host-tokenization is not enabled in lib compilation");
         return make_unexpected(HAILO_NOT_IMPLEMENTED);
 #else
-        auto embedding_features = std::get<3>(vlm_info_tuple);
-        auto image_pad_token_id = std::get<4>(vlm_info_tuple);
-        auto embeddings_per_frame = std::get<5>(vlm_info_tuple);
+        CHECK_AS_EXPECTED(nullptr != token_embedder_buffer, HAILO_NOT_AVAILABLE,
+            "Token embedder buffer is not available. This might happen if the HEF exists locally on the server, but 'optimize_memory_on_device' is set to true.");
+        auto embedding_features = vlm_create_reply_info.embedding_features;
+        auto image_pad_token_id = vlm_create_reply_info.image_pad_token_id;
+        auto video_pad_token_id = vlm_create_reply_info.video_pad_token_id;
+        auto embeddings_per_frame = vlm_create_reply_info.embeddings_per_frame;
 
-        CHECK_AS_EXPECTED(nullptr != token_embedder_buffer, HAILO_NOT_AVAILABLE, "Token embedder buffer is not available");
         TRY(token_embedder, TokenEmbedder<uint16_t>::create(token_embedder_buffer,
             token_embedder_buffer->size() / (sizeof(uint16_t) * embedding_features), embedding_features,
-            image_pad_token_id, embeddings_per_frame));
+            image_pad_token_id, video_pad_token_id, embeddings_per_frame));
 #endif // HAILO_CLIENT_TOKENIZER_ENABLED
     }
 
@@ -420,7 +437,6 @@ Expected<std::vector<std::string>> VLM::Impl::get_stop_tokens()
     } else {
 #ifdef HAILO_CLIENT_TOKENIZER_ENABLED
         if (m_tokenizer) {
-            std::vector<std::string> stop_tokens_results;
             for (const auto &tokenized_sequence : stop_tokens_tokenized) {
                 TRY(auto stop_token_str, m_tokenizer->tokens_to_text(tokenized_sequence));
                 stop_tokens_results.push_back(stop_token_str);
@@ -456,22 +472,25 @@ Expected<LLMGeneratorParams> VLM::Impl::create_generator_params()
 }
 
 Expected<LLMGeneratorCompletion> VLM::generate(const LLMGeneratorParams &params,
-    const std::vector<std::string> &messages_json_strings, const std::vector<MemoryView> &input_frames)
+    const std::vector<std::string> &messages_json_strings, const std::vector<MemoryView> &input_frames,
+    const std::vector<std::vector<MemoryView>> &input_videos)
 {
-    return m_pimpl->generate(params, messages_json_strings, input_frames);
+    return m_pimpl->generate(params, messages_json_strings, input_frames, input_videos);
 }
 
-Expected<LLMGeneratorCompletion> VLM::generate(const std::vector<std::string> &messages_json_strings, const std::vector<MemoryView> &input_frames)
+Expected<LLMGeneratorCompletion> VLM::generate(const std::vector<std::string> &messages_json_strings, const std::vector<MemoryView> &input_frames,
+    const std::vector<std::vector<MemoryView>> &input_videos)
 {
     TRY(auto generator_params, create_generator_params());
-    return m_pimpl->generate(generator_params, messages_json_strings, input_frames);
+    return m_pimpl->generate(generator_params, messages_json_strings, input_frames, input_videos);
 }
 
 Expected<LLMGeneratorCompletion> VLM::Impl::generate(const LLMGeneratorParams &params,
-    const std::vector<std::string> &messages_json_strings, const std::vector<MemoryView> &input_frames)
+    const std::vector<std::string> &messages_json_strings, const std::vector<MemoryView> &input_frames,
+    const std::vector<std::vector<MemoryView>> &input_videos)
 {
     TRY(auto generator, create_generator(params));
-    TRY(auto completion, generator.generate(messages_json_strings, input_frames));
+    TRY(auto completion, generator.generate(messages_json_strings, input_frames, input_videos));
     // Generator is kept alive via shared_from_this() in VLMGenerator::Impl::generate()
     return completion;
 }
@@ -485,7 +504,7 @@ Expected<VLMGenerator> VLM::Impl::create_generator(const LLMGeneratorParams &par
     CHECK_SUCCESS(LLMGeneratorCreateSerializer::deserialize_reply(MemoryView(*create_generator_reply)), "Failed to create LLM generator");
 
     auto pimpl = make_unique_nothrow<VLMGenerator::Impl>(m_session, m_prompt_template_handler,
-        m_tokenizer, m_token_embedder);
+        m_tokenizer, m_token_embedder, params.max_generated_tokens());
     CHECK_NOT_NULL_AS_EXPECTED(pimpl, HAILO_OUT_OF_HOST_MEMORY);
     return VLMGenerator(std::move(pimpl));
 }
@@ -500,8 +519,7 @@ hailo_status VLM::Impl::validate_generator_params(const LLMGeneratorParams &para
         "top_k should be greater than or equal to '1'. received: '{}'", params.top_k());
     CHECK_AS_EXPECTED(0 != params.frequency_penalty(), HAILO_INVALID_ARGUMENT,
         "frequency_penalty must be a nonzero value. received: '{}'", params.frequency_penalty());
-    CHECK_AS_EXPECTED(0 < params.max_generated_tokens(), HAILO_INVALID_ARGUMENT,
-        "max_generated_tokens should be greater than or equal to '1'. received: '{}'", params.max_generated_tokens());
+
     return HAILO_SUCCESS;
 }
 
@@ -510,31 +528,64 @@ VLMGenerator::VLMGenerator(std::shared_ptr<Impl> pimpl) :
 {}
 
 VLMGenerator::Impl::Impl(std::shared_ptr<SessionWrapper> session, std::shared_ptr<PromptTemplateHandler> prompt_template_handler,
-    std::shared_ptr<HailoTokenizer> tokenizer, std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder) :
+    std::shared_ptr<HailoTokenizer> tokenizer, std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder, uint32_t max_generated_tokens) :
         m_session(session), m_prompt_template_handler(prompt_template_handler),
         m_tokenizer(tokenizer),
-        m_token_embedder(token_embedder)
+        m_token_embedder(token_embedder),
+        m_max_generated_tokens(max_generated_tokens)
 {}
 
-Expected<LLMGeneratorCompletion> VLMGenerator::generate(const std::string &prompt, const std::vector<MemoryView> &input_frames)
+Expected<LLMGeneratorCompletion> VLMGenerator::generate(const std::string &prompt, const std::vector<MemoryView> &input_frames,
+    const std::vector<std::vector<MemoryView>> &input_videos)
 {
-    return m_pimpl->generate(prompt, input_frames);
+    return m_pimpl->generate(prompt, input_frames, input_videos);
 }
 
-Expected<LLMGeneratorCompletion> VLMGenerator::generate(const std::vector<std::string> &messages_json_strings, const std::vector<MemoryView> &input_frames)
+Expected<LLMGeneratorCompletion> VLMGenerator::generate(const std::vector<std::string> &messages_json_strings, const std::vector<MemoryView> &input_frames,
+    const std::vector<std::vector<MemoryView>> &input_videos)
 {
-    return m_pimpl->generate(messages_json_strings, input_frames);
+    return m_pimpl->generate(messages_json_strings, input_frames, input_videos);
 }
 
-Expected<LLMGeneratorCompletion> VLMGenerator::Impl::generate(const std::string &prompt, const std::vector<MemoryView> &input_frames)
+Expected<LLMGeneratorCompletion> VLMGenerator::Impl::generate(const std::string &prompt, const std::vector<MemoryView> &input_frames,
+    const std::vector<std::vector<MemoryView>> &input_videos)
 {
     CHECK_AS_EXPECTED(!prompt.empty(), HAILO_INVALID_ARGUMENT, "Prompt cannot be empty");
 
-    TRY(auto generator_generate_request, VLMGeneratorGenerateSerializer::serialize_request(static_cast<uint32_t>(input_frames.size())));
+    // Build vector of raw frame counts per video for the server
+    std::vector<uint32_t> raw_video_frames_count_per_video;
+    raw_video_frames_count_per_video.reserve(input_videos.size());
+    uint32_t sum_of_video_frames = 0;
+    for (const auto &video : input_videos) {
+        uint32_t frame_count = static_cast<uint32_t>(video.size());
+        raw_video_frames_count_per_video.push_back(frame_count);
+        sum_of_video_frames += frame_count;
+    }
+
+    TRY(auto generator_generate_request, VLMGeneratorGenerateSerializer::serialize_request(
+        static_cast<uint32_t>(input_frames.size()), raw_video_frames_count_per_video));
+
     std::vector<MemoryView> write_buffers;
-    write_buffers.reserve(input_frames.size() + 2);
+    write_buffers.reserve(1 + input_frames.size() + sum_of_video_frames); // generate_req + standalone_frames + video_frames
     write_buffers.push_back(MemoryView(generator_generate_request));
     write_buffers.insert(write_buffers.end(), input_frames.begin(), input_frames.end());
+    for (const auto &video : input_videos) {
+        write_buffers.insert(write_buffers.end(), video.begin(), video.end());
+    }
+
+    // If tokenizer on host, update the token embedder with the number of video frames per video
+    if (m_tokenizer) {
+#ifdef HAILO_CLIENT_TOKENIZER_ENABLED
+        // Build vector of frame counts per video (encoder outputs half the input frames, rounded up)
+        std::vector<size_t> processed_video_frames_count_per_video;
+        processed_video_frames_count_per_video.reserve(input_videos.size());
+        for (const auto &video : input_videos) {
+            uint32_t processed_frames = (static_cast<uint32_t>(video.size()) + 1) / 2;
+            processed_video_frames_count_per_video.push_back(processed_frames);
+        }
+        m_token_embedder->set_video_frames_count(processed_video_frames_count_per_video);
+# endif // HAILO_CLIENT_TOKENIZER_ENABLED
+    }
 
     TRY(auto generator_generate_reply, m_session->execute(write_buffers));
     CHECK_SUCCESS(VLMGeneratorGenerateSerializer::deserialize_reply(MemoryView(*generator_generate_reply)),
@@ -550,16 +601,26 @@ Expected<LLMGeneratorCompletion> VLMGenerator::Impl::generate(const std::string 
     auto pimpl = make_unique_nothrow<LLMGeneratorCompletion::Impl>(m_session, shared_from_this(),
         std::move(client_token_queue), shutdown_event, m_tokenizer, m_token_embedder, prompt);
     CHECK_NOT_NULL_AS_EXPECTED(pimpl, HAILO_OUT_OF_HOST_MEMORY);
-    return LLMGeneratorCompletion(std::move(pimpl));
+
+    LLMGeneratorCompletion obj(std::move(pimpl));
+    // In case no tokens are expected back, make sure you get an empty respone from server before returning
+    if (0 == m_max_generated_tokens) {
+        TRY(auto vlm_response, obj.read(LONG_TIMEOUT));
+        CHECK(vlm_response.empty(), HAILO_INTERNAL_FAILURE, "Received text '{}' while no text is expected back", vlm_response);
+        CHECK(LLMGeneratorCompletion::Status::MAX_TOKENS_REACHED == obj.generation_status(),
+            HAILO_INTERNAL_FAILURE, "Generation status is not MAX_TOKENS_REACHED");
+    }
+    return obj;
 }
 
-Expected<LLMGeneratorCompletion> VLMGenerator::Impl::generate(const std::vector<std::string> &messages_json_strings, const std::vector<MemoryView> &input_frames)
+Expected<LLMGeneratorCompletion> VLMGenerator::Impl::generate(const std::vector<std::string> &messages_json_strings, const std::vector<MemoryView> &input_frames,
+    const std::vector<std::vector<MemoryView>> &input_videos)
 {
     CHECK_AS_EXPECTED(!messages_json_strings.empty(), HAILO_INVALID_ARGUMENT, "Messages cannot be empty");
 
     TRY(auto processed_prompt, apply_vlm_template_from_json(messages_json_strings));
 
-    return generate(processed_prompt, input_frames);
+    return generate(processed_prompt, input_frames, input_videos);
 }
 
 Expected<std::string> VLMGenerator::Impl::apply_vlm_template_from_json(const std::vector<std::string> &messages_json_strings)

@@ -105,6 +105,7 @@ Expected<std::string> DmaBufferUtils::get_dma_heap_path()
     static const std::vector<std::string> VALID_DMA_HEAPS = {
         "/dev/dma_heap/hailo_media_buf,cma",   // vpu
         "/dev/dma_heap/linux,cma",   // accelerator
+        "/dev/dma_heap/system"
     };
 
     for (const auto &path : VALID_DMA_HEAPS) {

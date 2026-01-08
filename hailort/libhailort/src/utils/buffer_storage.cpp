@@ -171,7 +171,7 @@ Expected<vdma::DmaAbleBufferPtr> DmaStorage::get_dma_able_buffer()
 Expected<ContinuousStoragePtr> ContinuousStorage::create(size_t size)
 {
     TRY(auto driver, HailoRTDriver::create_integrated_nnc());
-    TRY(auto continuous_buffer, vdma::ContinuousBuffer::create(size, *driver.get()));
+    TRY(auto continuous_buffer, vdma::CmaBuffer::create(size, *driver.get()));
 
     auto result = make_shared_nothrow<ContinuousStorage>(std::move(driver), std::move(continuous_buffer));
     CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
@@ -179,7 +179,7 @@ Expected<ContinuousStoragePtr> ContinuousStorage::create(size_t size)
     return result;
 }
 
-ContinuousStorage::ContinuousStorage(std::unique_ptr<HailoRTDriver> driver, vdma::ContinuousBuffer &&continuous_buffer) :
+ContinuousStorage::ContinuousStorage(std::unique_ptr<HailoRTDriver> driver, vdma::CmaBuffer &&continuous_buffer) :
     m_driver(std::move(driver)),
     m_continuous_buffer(std::move(continuous_buffer))
 {}

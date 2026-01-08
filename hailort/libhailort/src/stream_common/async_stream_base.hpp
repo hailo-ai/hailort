@@ -184,7 +184,7 @@ private:
     std::unique_ptr<StreamBufferPool> m_buffer_pool;
 
     // Queue of buffers that was read from the hw and are pending to read by the user.
-    SafeQueue<TransferBuffer> m_pending_buffers;
+    SafeQueue<StreamBuffer> m_pending_buffers;
 
     std::atomic_size_t m_ongoing_transfers;
 

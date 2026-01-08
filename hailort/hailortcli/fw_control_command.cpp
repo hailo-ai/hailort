@@ -59,18 +59,6 @@ static std::string extended_device_information_supported_features(hailo_device_s
 {
     std::string supported_features_str;
 
-    if(supported_features.current_monitoring) {
-        supported_features_str.append("Current Monitoring, ");
-    }
-    if(supported_features.ethernet) {
-        supported_features_str.append("Ethernet, ");
-    }
-    if(supported_features.mipi) {
-        supported_features_str.append("MIPI, ");
-    }
-    if(supported_features.mdio) {
-        supported_features_str.append("MDIO, ");
-    }
     if(supported_features.pcie) {
         supported_features_str.append("PCIE, ");
     }
@@ -145,7 +133,7 @@ static void print_extended_device_information(const hailo_extended_device_inform
             }
             sku_id_str = std::to_string(sku_id);
         }
-        std::cout << "board SKU-ID: " << sku_id_str << std::endl;
+        std::cout << "Board SKU-ID: " << sku_id_str << std::endl;
     }
 }
 
@@ -188,7 +176,7 @@ static std::string identity_arch_string(const hailo_device_identity_t &identity)
         return "HAILO15M";
     case HAILO_ARCH_HAILO10H:
         return "HAILO10H";
-    case HAILO_ARCH_MARS:
+    case HAILO_ARCH_HAILO12L:
         return "MARS";
     default:
         return "Unknown";
@@ -236,6 +224,7 @@ FwControlResetCommand::FwControlResetCommand(CLI::App &parent_app) :
             { "nn_core", HAILO_RESET_DEVICE_MODE_NN_CORE },
             { "soft", HAILO_RESET_DEVICE_MODE_SOFT },
             { "forced_soft", HAILO_RESET_DEVICE_MODE_FORCED_SOFT },
+            { "reboot", HAILO_RESET_DEVICE_MODE_REBOOT  },
         }));
 }
 

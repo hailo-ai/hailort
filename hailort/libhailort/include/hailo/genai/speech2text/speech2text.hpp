@@ -72,13 +72,22 @@ public:
     hailo_status set_task(Speech2TextTask task);
 
     /**
-     * Sets the language to use in the generation process. In the format of ISO-639-1 two-letter code, for example: "en", "fr", etc.
+     * Sets the language to use in the generation process.
      *
      * @param[in] language          The language to use in the generation process.
      *                              In the format of ISO-639-1 two-letter code, for example: "en", "fr", etc.
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     * @note If the language is not set, the model will automatically detect it.
      */
     hailo_status set_language(std::string_view language);
+
+    /**
+    * Sets the repetition penalty used during the generation process.
+    *
+    * @param[in] repetition_penalty         The repetition penalty value.
+    * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+    */
+    hailo_status set_repetition_penalty(float32_t repetition_penalty);
 
     /**
      * @return The task for the Speech2Text model to perform.
@@ -87,17 +96,25 @@ public:
 
     /**
      * @return The language to use in the generation process.
+     * @note An empty string means that the model will automatically detect the language.
      */
     std::string_view language() const;
 
+    /**
+     * @return The repetition penalty for the generation process.
+     */
+    float32_t repetition_penalty() const;
 
-    Speech2TextGeneratorParams(Speech2TextTask task, std::string_view language);
+    Speech2TextGeneratorParams(Speech2TextTask task, std::string_view language, float32_t repetition_penalty);
+
 private:
-    Speech2TextGeneratorParams();
+    Speech2TextGeneratorParams() = default;
     friend class Speech2Text;
+    friend class Speech2TextWrapper;
 
     Speech2TextTask m_task;
     std::string m_language;
+    float32_t m_repetition_penalty;
 };
 
 /*! Represents the Speech2Text Model.

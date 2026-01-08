@@ -31,9 +31,9 @@ public:
     SgBuffer& operator=(const SgBuffer &) = delete;
     SgBuffer& operator=(SgBuffer &&) = delete;
 
-    virtual Type type() const override
+    virtual BufferType type() const override
     {
-        return Type::SCATTER_GATHER;
+        return BufferType::SCATTER_GATHER;
     }
 
     virtual size_t size() const override;

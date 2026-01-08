@@ -12,7 +12,7 @@
 
 #include "rpc_connection.hpp"
 #include "hrpc/connection_context.hpp"
-#include "vdma/channel/transfer_common.hpp"
+#include "vdma/transfer_common.hpp"
 #include "rpc_callbacks/rpc_callbacks_dispatcher.hpp"
 #include "common/object_pool.hpp"
 #include "utils/thread_safe_map.hpp"

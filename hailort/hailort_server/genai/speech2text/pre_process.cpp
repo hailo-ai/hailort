@@ -16,11 +16,8 @@ namespace hailort
 namespace genai
 {
  
-// TODO: HRT-18577 - Take params from hef
-constexpr int N_MELS = 80;
 constexpr int N_FFT = 400;
 constexpr float32_t FMIN = 0.0f;
-
 constexpr float32_t MIN_CLIP_VALUE = 1e-10f;
 constexpr float32_t DB_DYNAMIC_RANGE = 8.0f;
 constexpr float32_t NORMALIZATION_BIAS = 4.0f;
@@ -46,7 +43,7 @@ Eigen::Matrix<float32_t, 1, Eigen::Dynamic, Eigen::RowMajor> pad_audio(MemoryVie
 }
 
 // TODO: HRT-18595 - (use multiple threads, avoid runtime allocations if possible)
-Eigen::MatrixXf Speech2TextPreProcess::compute_log_mel(const MemoryView audio_chunk, size_t chunk_size, int sample_rate, int hop_length)
+Eigen::MatrixXf Speech2TextPreProcess::compute_log_mel(const MemoryView audio_chunk, size_t chunk_size, int sample_rate, int hop_length, int n_mels)
 {
     // The padding is a "silent chunk" for the model's productivity
     // ref: https://github.com/openai/whisper/blob/main/whisper/audio.py#L146
@@ -57,7 +54,7 @@ Eigen::MatrixXf Speech2TextPreProcess::compute_log_mel(const MemoryView audio_ch
 
     auto max_freq = sample_rate / 2;
     auto mel = librosa::Feature::melspectrogram(padded_audio_map, sample_rate, N_FFT, hop_length, HANN_WINDOW, HANN_CENTERED,
-        REFLECT_MODE, POWER, N_MELS, FMIN, max_freq);
+        REFLECT_MODE, POWER, n_mels, FMIN, max_freq);
 
     mel = mel.array().max(MIN_CLIP_VALUE);
     mel = mel.array().log10();

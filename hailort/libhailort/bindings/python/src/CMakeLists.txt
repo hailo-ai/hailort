@@ -28,8 +28,8 @@ set(HAILORT_COMMON_DIR "${CMAKE_CURRENT_LIST_DIR}/../../../../../hailort/")
 set(HAILO_EXTERNALS_CMAKE_SCRIPTS ${HAILORT_COMMON_DIR}/cmake/external/)
 set(HAILO_EXTERNAL_DIR ${HAILORT_COMMON_DIR}/external) # used in pybind11.cmake
 set(HAILORT_VERSION_MAJOR 5)
-set(HAILORT_VERSION_MINOR 1)
-set(HAILORT_VERSION_REVISION 1)
+set(HAILORT_VERSION_MINOR 2)
+set(HAILORT_VERSION_REVISION 0)
 
 if(UNIX)
     # PYTHON_MODULE_EXTENSION does not take the CMAKE_SYSTEM_PROCESSOR into account so it needs to be added manually
@@ -104,7 +104,7 @@ if(WIN32)
     target_link_libraries(_pyhailort PRIVATE Ws2_32)
     target_compile_options(_pyhailort PRIVATE
         /DWIN32_LEAN_AND_MEAN
-        /DNOMINMAX                  # NOMINMAX is required in order to play nice with std::min/std::max (otherwise Windows.h defines it's own)
+        /DNOMINMAX                  # NOMINMAX is required in order to avoid conflicts with std::min/std::max (otherwise Windows.h defines it's own)
         /wd4201                     # Anonymous union/struct
         /wd4251                     # C++ ABI with STL
     )

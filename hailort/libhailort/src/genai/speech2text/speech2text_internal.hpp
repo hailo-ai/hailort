@@ -21,8 +21,6 @@ namespace hailort
 namespace genai
 {
 
-static const std::string SPEECH2TEXT_DEFAULT_LANGUAGE = "en";
-
 class Speech2Text::Impl final
 {
 public:
@@ -35,13 +33,14 @@ public:
     Expected<std::vector<Speech2Text::SegmentInfo>> generate_all_segments(MemoryView audio_buffer, std::chrono::milliseconds timeout);
     Expected<std::vector<int>> tokenize(const std::string &text);
 
-    Impl(std::shared_ptr<SessionWrapper> session, const Speech2TextParams &speech2text_params);
+    Impl(std::shared_ptr<SessionWrapper> session, const Speech2TextParams &speech2text_params, Speech2TextGeneratorParams &&default_generator_params);
     ~Impl();
 private:
     Expected<std::vector<Speech2Text::SegmentInfo>> generate_impl(MemoryView audio_buffer, const Speech2TextGeneratorParams &generator_params, std::chrono::milliseconds timeout);
 
     std::shared_ptr<SessionWrapper> m_session;
     Speech2TextParams m_speech2text_params;
+    Speech2TextGeneratorParams m_default_generator_params;
 };
 
 

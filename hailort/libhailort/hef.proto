@@ -500,6 +500,9 @@ message ProtoHEFNetworkGroupMetadata {
 
     // config information regarding the cfg channels
     repeated ProtoHEFCfgChannelConfig cfg_channels_config = 7;
+
+    // number of ops of the network group
+    uint64 computational_ops = 8;
 }
 
 message ProtoHEFFusedLayersMetadata {

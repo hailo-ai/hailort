@@ -107,6 +107,9 @@ namespace hailort
 /* Set HW infer Tool to use CCB for Boundary Channels*/
 #define HAILO_HW_INFER_BOUNDARY_CHANNELS_OVER_CCB_ENV_VAR ("HAILO_HW_INFER_BOUNDARY_CHANNELS_OVER_CCB")
 
+/* Allow DDR-portal layers to use SRAM as optimization (Pluto only) */
+#define HAILO_HW_INFER_ALLOW_DDR_PORTALS_OVER_SRAM_ENV_VAR ("HAILO_HW_INFER_ALLOW_DDR_PORTALS_OVER_SRAM")
+
 /* Disables the post process operations on HEFs that have it - Hailo10 only! */
 #define HAILO_DISABLE_PP_ENV_VAR ("HAILO_DISABLE_PP")
 

@@ -1341,12 +1341,13 @@ Expected<std::shared_ptr<ResourcesManager>> ResourcesManagerBuilder::build(uint8
         CHECK_SUCCESS_AS_EXPECTED(status);
     }
 
-    if (hef.pimpl->zero_copy_config_over_descs()) {
+    const bool zero_copy_config = hef.pimpl->zero_copy_config_over_descs();
+    if (zero_copy_config) {
         status = ResourcesManagerBuilder::prepare_aligned_ccws_resources(hef, resources_manager, driver);
         CHECK_SUCCESS_AS_EXPECTED(status);
     }
 
-    TRY(auto activation_context, resources_manager.add_new_context(CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_ACTIVATION, hef.pimpl->zero_copy_config_over_descs()));
+    TRY(auto activation_context, resources_manager.add_new_context(CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_ACTIVATION, zero_copy_config));
     status = fill_activation_config_recepies_for_multi_context(activation_context.get(),
         resources_manager, core_op_metadata, hw_arch);
     CHECK_SUCCESS_AS_EXPECTED(status);
@@ -1355,18 +1356,18 @@ Expected<std::shared_ptr<ResourcesManager>> ResourcesManagerBuilder::build(uint8
     const auto activation_context_boundary_input_layers =
         activation_context.get().get_edge_layers(LayerType::BOUNDARY, HAILO_H2D_STREAM);
 
-    TRY(auto batch_switching_context, resources_manager.add_new_context(CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_BATCH_SWITCHING, hef.pimpl->zero_copy_config_over_descs()));
+    TRY(auto batch_switching_context, resources_manager.add_new_context(CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_BATCH_SWITCHING, zero_copy_config));
     status = fill_batch_switching_context_config_recepies_for_multi_context(batch_switching_context.get(),
         *core_op_metadata, resources_manager, hw_arch, activation_context_boundary_input_layers);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     const auto is_single_context = (core_op_metadata->dynamic_contexts().size() == 1);
     TRY(auto preliminary_context, resources_manager.add_new_context(CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_PRELIMINARY,
-        hef.pimpl->zero_copy_config_over_descs(), core_op_metadata->preliminary_context().config_buffers_info()));
+        zero_copy_config, core_op_metadata->preliminary_context().config_buffers_info()));
 
     status = fill_preliminary_config_recepies_for_multi_context(hw_arch, preliminary_context.get(),
         resources_manager, core_op_metadata, core_op_metadata->preliminary_context(), is_single_context,
-        hef.pimpl->zero_copy_config_over_descs());
+        zero_copy_config);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     const auto caches_in_use = core_op_metadata->get_cache_layers_count() > 0;
@@ -1374,25 +1375,34 @@ Expected<std::shared_ptr<ResourcesManager>> ResourcesManagerBuilder::build(uint8
         "Caches are in use but the network is single context");
 
     const uint16_t num_dynamic_contexts = static_cast<uint16_t>(core_op_metadata->dynamic_contexts().size());
+
+    // Pre-reserve space in resources_manager to avoid reallocations
+    resources_manager.reserve_contexts(num_dynamic_contexts);
+
     for (uint16_t context_index = 0; context_index < num_dynamic_contexts; context_index++) {
         const auto &context_metadata = core_op_metadata->dynamic_contexts()[context_index];
         TRY(auto new_context, resources_manager.add_new_context(CONTROL_PROTOCOL__CONTEXT_SWITCH_CONTEXT_TYPE_DYNAMIC,
-            hef.pimpl->zero_copy_config_over_descs(), context_metadata.config_buffers_info()));
+            zero_copy_config, context_metadata.config_buffers_info()));
+
         //Add edge layers mapping
 	    status = parse_and_fill_edge_layers_mapping(new_context.get(), context_metadata, resources_manager, hw_arch);
 	    CHECK_SUCCESS(status);
     }
 
+    const bool split_allow_input_action = resources_manager.get_supported_features().split_allow_input_action;
+    const uint16_t num_dynamic_minus_one = static_cast<uint16_t>(num_dynamic_contexts - 1);
+    auto &context_resources = resources_manager.get_context_resources();
+
     for (uint16_t context_index = 0; context_index < num_dynamic_contexts; context_index++) {
         const auto &context_metadata = core_op_metadata->dynamic_contexts()[context_index];
-        const bool is_last_context = (context_index == (num_dynamic_contexts - 1));
-        const uint16_t config_context_index = resources_manager.get_supported_features().split_allow_input_action ?
+        const bool is_last_context = (context_index == num_dynamic_minus_one);
+        const uint16_t config_context_index = split_allow_input_action ?
             (is_last_context ? 0 : static_cast<uint16_t>(context_index + 1)) : context_index;
-	    status = fill_context_recipes_for_multi_context(hw_arch, resources_manager.get_context_resources()[
+	    status = fill_context_recipes_for_multi_context(hw_arch, context_resources[
             context_index + CONTROL_PROTOCOL__CONTEXT_SWITCH_NUMBER_OF_NON_DYNAMIC_CONTEXTS], resources_manager,
             static_cast<uint16_t>(config_context_index), *core_op_metadata, context_metadata, is_single_context,
-            is_last_context, caches_in_use, hef.pimpl->zero_copy_config_over_descs(), config_params.enable_kv_cache,
-            resources_manager.get_context_resources()[config_context_index + CONTROL_PROTOCOL__CONTEXT_SWITCH_NUMBER_OF_NON_DYNAMIC_CONTEXTS]);
+            is_last_context, caches_in_use, zero_copy_config, config_params.enable_kv_cache,
+            context_resources[config_context_index + CONTROL_PROTOCOL__CONTEXT_SWITCH_NUMBER_OF_NON_DYNAMIC_CONTEXTS]);
         CHECK_SUCCESS_AS_EXPECTED(status);
     }
 

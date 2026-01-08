@@ -45,6 +45,7 @@ The following examples below demonstrate the HailoRT API:
   - `power_measurement_example` - Demonstrates how to perform a continuous power measurement on the device.
   - `query_performance_and_health_stats_example` - Demonstrates how to get performance and health queries from the device.
   - `multi_model_inference_example` - Demonstrates how to run multiple models using the HailoRT C++ API.
+  - `multi_process_example` - Demonstrates how to infer in multiple processes using the HailoRT C++ API.
 
 - GenAI examples:
   - `chat_example` - Demonstrates LLM-based chat application using HailoRT C++ API.

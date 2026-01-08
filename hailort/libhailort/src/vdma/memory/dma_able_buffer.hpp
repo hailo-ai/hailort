@@ -16,7 +16,8 @@
 #define _HAILO_DMA_ABLE_BUFFER_HPP_
 
 #include "hailo/expected.hpp"
-#include "vdma/driver/hailort_driver.hpp"
+
+#include <memory>
 
 namespace hailort {
 namespace vdma {

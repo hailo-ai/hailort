@@ -10,6 +10,7 @@
 
 #include "core_op/resource_manager/config_buffer.hpp"
 #include "vdma/memory/sg_edge_layer.hpp"
+#include "vdma/memory/cma_buffer.hpp"
 #include "vdma/memory/continuous_edge_layer.hpp"
 #include "vdma/memory/buffer_requirements.hpp"
 #include "common/internal_env_vars.hpp"
@@ -34,7 +35,7 @@ Expected<vdma::BufferSizesRequirements> ConfigBuffer::get_sg_buffer_requirements
     const bool NOT_DDR = false;
 
     return vdma::BufferSizesRequirements::get_buffer_requirements_multiple_transfers(
-        vdma::VdmaBuffer::Type::SCATTER_GATHER, desc_sizes_params, desc_sizes_params.max_page_size, 1, cfg_sizes, NOT_CIRCULAR,
+        vdma::BufferType::SCATTER_GATHER, desc_sizes_params, desc_sizes_params.max_page_size, 1, cfg_sizes, NOT_CIRCULAR,
         FORCE_DEFAULT_PAGE_SIZE, FORCE_BATCH_SIZE, NOT_DDR);
 }
 
@@ -114,7 +115,6 @@ hailo_status CopiedConfigBuffer::pad_with_nops()
     return HAILO_SUCCESS;
 }
 
-
 hailo_status CopiedConfigBuffer::write(const MemoryView &data)
 {
     CHECK(data.size() <= size_left(), HAILO_INTERNAL_FAILURE, "Write too many config words");
@@ -169,34 +169,28 @@ Expected<std::unique_ptr<vdma::VdmaEdgeLayer>> CopiedConfigBuffer::create_sg_buf
     CHECK_NOT_NULL_AS_EXPECTED(buffer_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     static const auto DEFAULT_OFFSET = 0;
-    TRY(auto edge_layer, vdma::SgEdgeLayer::create(std::move(buffer_ptr), requirements.buffer_size(), DEFAULT_OFFSET,
-        driver, requirements.descs_count(), requirements.desc_page_size(), NOT_CIRCULAR, channel_id));
+    TRY(auto edge_layer_ptr, vdma::SgEdgeLayer::create_unique(std::move(buffer_ptr), requirements.buffer_size(),
+        DEFAULT_OFFSET, driver, requirements.descs_count(), requirements.desc_page_size(), NOT_CIRCULAR, channel_id));
 
-    auto edge_layer_ptr = make_unique_nothrow<vdma::SgEdgeLayer>(std::move(edge_layer));
-    CHECK_NOT_NULL_AS_EXPECTED(edge_layer_ptr, HAILO_OUT_OF_HOST_MEMORY);
-
-    return std::unique_ptr<vdma::VdmaEdgeLayer>(std::move(edge_layer_ptr));
+    return edge_layer_ptr;
 }
 
 Expected<std::unique_ptr<vdma::VdmaEdgeLayer>> CopiedConfigBuffer::create_ccb_buffer(HailoRTDriver &driver,
     uint32_t buffer_size)
 {
-    TRY(const auto requirements, get_ccb_buffer_requirements(buffer_size, driver.get_ccb_desc_params()));
+    TRY(const auto requirements, get_ccb_buffer_requirements(buffer_size, driver.get_continuous_desc_params()));
 
     TRY_WITH_ACCEPTABLE_STATUS(HAILO_OUT_OF_HOST_CMA_MEMORY, auto buffer,
-        vdma::ContinuousBuffer::create(requirements.buffer_size(), driver));
+        vdma::CmaBuffer::create(requirements.buffer_size(), driver));
 
-    auto buffer_ptr = make_shared_nothrow<vdma::ContinuousBuffer>(std::move(buffer));
+    auto buffer_ptr = make_shared_nothrow<vdma::CmaBuffer>(std::move(buffer));
     CHECK_NOT_NULL_AS_EXPECTED(buffer_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     static const auto DEFAULT_OFFSET = 0;
-    TRY(auto edge_layer, vdma::ContinuousEdgeLayer::create(std::move(buffer_ptr), requirements.buffer_size(),
+    TRY(auto edge_layer_ptr, vdma::ContinuousEdgeLayer::create_unique(std::move(buffer_ptr), requirements.buffer_size(),
         DEFAULT_OFFSET, requirements.desc_page_size(), requirements.descs_count()));
 
-    auto edge_layer_ptr = make_unique_nothrow<vdma::ContinuousEdgeLayer>(std::move(edge_layer));
-    CHECK_NOT_NULL_AS_EXPECTED(edge_layer_ptr, HAILO_OUT_OF_HOST_MEMORY);
-
-    return std::unique_ptr<vdma::VdmaEdgeLayer>(std::move(edge_layer_ptr));
+    return edge_layer_ptr;
 }
 
 Expected<vdma::BufferSizesRequirements> CopiedConfigBuffer::get_ccb_buffer_requirements(uint32_t buffer_size,
@@ -212,7 +206,7 @@ Expected<vdma::BufferSizesRequirements> CopiedConfigBuffer::get_ccb_buffer_requi
     static const bool IS_NOT_DDR = false;
 
     return vdma::BufferSizesRequirements::get_buffer_requirements_single_transfer(
-        vdma::VdmaBuffer::Type::CONTINUOUS, desc_sizes_params, desc_sizes_params.max_page_size, DEFAULT_BATCH_SIZE,
+        vdma::BufferType::CMA, desc_sizes_params, desc_sizes_params.max_page_size, DEFAULT_BATCH_SIZE,
         DEFAULT_BATCH_SIZE, buffer_size, NOT_CIRCULAR, FORCE_DEFAULT_PAGE_SIZE, FORCE_BATCH_SIZE, IS_VDMA_ALIGNED_BUFFER,
         IS_NOT_DDR);
 }
@@ -272,7 +266,7 @@ Expected<uint32_t> ZeroCopyConfigBuffer::program_descriptors(const std::vector<u
 
     const size_t padding_count = page_size - (total_dma_transfers_size % page_size);
     if (padding_count > 0) {
-        auto status = m_desc_list->program(*m_nops_buffer, padding_count, 0, m_channel_id, current_desc_index, 1);
+        auto status = m_desc_list->program(m_nops_buffer, padding_count, 0, m_channel_id, current_desc_index, 1);
         CHECK_SUCCESS(status, "Failed to program nops buffer");
         current_desc_index += 1;
     }
@@ -317,7 +311,7 @@ Expected<uint32_t> ZeroCopyConfigBuffer::program_descriptors_for_transfer(uint64
 
         // We transfer the minimum of what remains to be transferred and what is available in the current buffer.
         const uint64_t curr_bytes_to_transfer = std::min(ccw_burst_size - bytes_transferred, available_bytes);
-        CHECK_SUCCESS(m_desc_list->program(*curr_buffer, curr_bytes_to_transfer, offset_in_buffer, m_channel_id,
+        CHECK_SUCCESS(m_desc_list->program(curr_buffer, curr_bytes_to_transfer, offset_in_buffer, m_channel_id,
                                            current_desc_index + transfer_desc_count));
 
         transfer_desc_count += m_desc_list->descriptors_in_buffer(curr_bytes_to_transfer);
@@ -328,7 +322,7 @@ Expected<uint32_t> ZeroCopyConfigBuffer::program_descriptors_for_transfer(uint64
 
 CONTROL_PROTOCOL__host_buffer_info_t ZeroCopyConfigBuffer::get_host_buffer_info() const
 {
-    return vdma::VdmaEdgeLayer::get_host_buffer_info(vdma::VdmaEdgeLayer::Type::SCATTER_GATHER, m_desc_list->dma_address(),
+    return vdma::VdmaEdgeLayer::get_host_buffer_info(vdma::DmaType::SCATTER_GATHER, m_desc_list->dma_address(),
         m_desc_list->desc_page_size(), m_desc_list->count(), m_acc_desc_count * m_desc_list->desc_page_size());
 }
 

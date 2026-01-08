@@ -130,7 +130,7 @@ struct DeviceInfo {
         device_id(device_id), device_arch(device_arch), device_has_drained_everything(true),
         device_utilization_duration(0), last_measured_utilization_timestamp(std::chrono::steady_clock::now()),
         current_core_op_handle(INVALID_CORE_OP_HANDLE), requested_transferred_frames_h2d(), finished_transferred_frames_d2h(),
-        monitor_count(0)
+        monitor_count(1)
     {}
     std::string device_id;
     std::string device_arch;

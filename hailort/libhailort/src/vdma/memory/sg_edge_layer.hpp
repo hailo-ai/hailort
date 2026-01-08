@@ -18,8 +18,6 @@
 #include "vdma/driver/hailort_driver.hpp"
 #include "vdma/memory/vdma_edge_layer.hpp"
 #include "vdma/memory/sg_buffer.hpp"
-#include "vdma/memory/descriptor_list.hpp"
-#include "vdma/memory/mapped_buffer.hpp"
 
 
 namespace hailort {
@@ -27,31 +25,42 @@ namespace vdma {
 
 class SgEdgeLayer final : public VdmaEdgeLayer {
 public:
-    static Expected<SgEdgeLayer> create(std::shared_ptr<SgBuffer> &&buffer, size_t size, size_t offset,
-    HailoRTDriver &driver, uint32_t desc_count, uint16_t desc_page_size, bool is_circular, ChannelId channel_id);
+    static Expected<std::unique_ptr<VdmaEdgeLayer>> create_unique(std::shared_ptr<SgBuffer> &&buffer, size_t size,
+        size_t offset, HailoRTDriver &driver, uint32_t desc_count, uint16_t desc_page_size, bool is_circular,
+        ChannelId channel_id);
 
     virtual ~SgEdgeLayer() = default;
 
-    SgEdgeLayer(const SgEdgeLayer &) = delete;
     SgEdgeLayer(SgEdgeLayer &&) = default;
-    SgEdgeLayer& operator=(const SgEdgeLayer &) = delete;
-    SgEdgeLayer& operator=(SgEdgeLayer &&) = delete;
 
-    virtual Type type() const override
+    virtual DmaType type() const override
     {
-        return Type::SCATTER_GATHER;
+        return DmaType::SCATTER_GATHER;
     }
 
-    virtual uint64_t dma_address() const override;
-    virtual uint16_t desc_page_size() const override;
-    virtual uint32_t descs_count() const override;
+    uint64_t dma_address() const override
+    {
+        return m_desc_list.dma_address();
+    }
+
+    uint16_t desc_page_size() const override
+    {
+        return m_desc_list.desc_page_size();
+    }
+
+    uint32_t descs_count() const override
+    {
+        return static_cast<uint32_t>(m_desc_list.count());
+    }
 
     virtual Expected<uint32_t> program_descriptors(size_t transfer_size, size_t desc_offset,
         size_t buffer_offset = 0, uint32_t batch_size = 1) override;
 
 private:
-    SgEdgeLayer(std::shared_ptr<SgBuffer> &&buffer, DescriptorList &&desc_list,
-        size_t size, size_t offset, ChannelId channel_id);
+    SgEdgeLayer(std::shared_ptr<SgBuffer> &&buffer, DescriptorList &&desc_list, size_t size, size_t offset,
+        ChannelId channel_id) :
+        VdmaEdgeLayer(std::move(buffer), size, offset), m_desc_list(std::move(desc_list)), m_channel_id(channel_id)
+    {}
 
     vdma::MappedBufferPtr get_mapped_buffer()
     {

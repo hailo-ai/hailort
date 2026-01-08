@@ -113,7 +113,7 @@ static Expected<DescSizesParamsPerType> get_desc_params(Hef &hef)
     case HAILO_ARCH_HAILO10H:
         min_ccb_desc_count = 16;
         break;
-    case HAILO_ARCH_MARS:
+    case HAILO_ARCH_HAILO12L:
         min_ccb_desc_count = 32;
         break;
     default:
@@ -146,7 +146,7 @@ static Expected<HailoRTDriver::DmaType> get_dma_type(Hef &hef)
     case HAILO_ARCH_HAILO15L:
     case HAILO_ARCH_HAILO15M:
     case HAILO_ARCH_HAILO10H:
-    case HAILO_ARCH_MARS:
+    case HAILO_ARCH_HAILO12L:
         return HailoRTDriver::DmaType::DRAM;
     case HAILO_ARCH_MAX_ENUM:
         break;

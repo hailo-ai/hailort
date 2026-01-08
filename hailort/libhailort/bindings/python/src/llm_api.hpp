@@ -46,6 +46,7 @@ public:
 
     std::shared_ptr<LLMGeneratorCompletionWrapper> generate(const genai::LLMGeneratorParams &params, const std::string &prompt);
     std::shared_ptr<LLMGeneratorCompletionWrapper> generate(const genai::LLMGeneratorParams &params, const std::vector<std::string> &prompt_json_strings);
+    std::shared_ptr<LLMGeneratorCompletionWrapper> generate(const genai::LLMGeneratorParams &params, const std::vector<std::string> &prompt_json_strings, const std::vector<std::string> &tools_json_strings);
     void release();
     std::vector<int> tokenize(const std::string &prompt);
     size_t get_context_usage_size();

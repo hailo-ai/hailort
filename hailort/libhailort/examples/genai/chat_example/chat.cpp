@@ -22,14 +22,15 @@ int main(int argc, char **argv)
 {
     try {
         if (2 != argc) {
-            throw hailort::hailort_error(HAILO_INVALID_ARGUMENT, "Missing HEF file path!\nUsage: example <hef_path>");
+            auto bin_name = std::string(argv[0]);
+            throw hailort::hailort_error(HAILO_INVALID_ARGUMENT, "Missing HEF file path!\nUsage: " + bin_name + " <hef_path>");
         }
         std::string llm_hef_path = argv[1];
 
         std::cout << "Starting LLM - " << llm_hef_path << "...\n";
         auto vdevice = hailort::VDevice::create_shared().expect("Failed to create VDevice");
 
-        auto llm_params = hailort::genai::LLMParams(llm_hef_path, "", true);
+        auto llm_params = hailort::genai::LLMParams(llm_hef_path);
         auto llm = hailort::genai::LLM::create(vdevice, llm_params).expect("Failed to create LLM");
 
         std::cout << "Enter prompt: (use Ctrl+C to exit)\n";

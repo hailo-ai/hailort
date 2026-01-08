@@ -25,21 +25,23 @@
 #include "speech2text/post_process.hpp"
 
 #include "hailort_server.hpp"
+#include "utils.hpp"
 
 namespace hailort
 {
 namespace genai
 {
 
-// TODO: HRT-18577 - Get from hef
-constexpr int TIMESTAMP_BEGIN_TOKEN_ID = 50364;         // "<|0.00|>"
-
 class Speech2TextServer
 {
 public:
+    static constexpr Speech2TextTask DEFAULT_SPEECH2TEXT_TASK = Speech2TextTask::TRANSCRIBE;
+    static constexpr std::string_view DEFAULT_SPEECH2TEXT_LANGUAGE = "";
+    static constexpr float32_t DEFAULT_SPEECH2TEXT_REPETITION_PENALTY = Speech2TextPostProcess::NO_REPETITION_PENALTY_VALUE;
+
     static Expected<std::unique_ptr<Speech2TextServer>> create_unique(std::shared_ptr<Session> session, std::shared_ptr<VDeviceManager> vdevice_manager);
 
-    Speech2TextServer(std::shared_ptr<Session> session, std::shared_ptr<VDeviceManager> vdevice_manager);
+    Speech2TextServer(std::shared_ptr<Session> session, std::shared_ptr<VDeviceManager> vdevice_manager, Speech2TextGeneratorParams &&generator_params);
     Speech2TextServer(Speech2TextServer &&) = delete;
     Speech2TextServer(const Speech2TextServer &) = delete;
     Speech2TextServer &operator=(Speech2TextServer &&) = delete;
@@ -51,13 +53,16 @@ public:
     Expected<Buffer> handle_tokenize_request(const MemoryView &request);
 
 private:
+    hailo_status parse_config_json(const nlohmann::json &hailo_config_json);
+    hailo_status set_default_config_params();
     Expected<int> language_to_token_id(const std::string &language);
     Expected<int> task_to_token_id(Speech2TextTask task);
-    Expected<std::vector<Speech2Text::SegmentInfo>> process_input_audio(const MemoryView &audio, const std::vector<int> &context_tokens);
+    Expected<std::vector<Speech2Text::SegmentInfo>> process_input_audio(const MemoryView &audio);
     Expected<std::pair<std::vector<int>, float32_t>> decoder_loop(const std::vector<int> &context_tokens);
     Eigen::Map<Eigen::VectorXf> get_next_token_scores(int next_token_idx);
     Expected<int> update_segments_and_calc_seek(const std::vector<int> &tokens, float32_t sum_logprobs, int seek, float32_t segment_duration_sec,
         uint32_t segment_size, float32_t time_offset, int input_stride, std::vector<Speech2Text::SegmentInfo> &segments_infos);
+    Expected<int> detect_language();
 
     SessionWrapper m_session;
     std::shared_ptr<VDeviceManager> m_vdevice_manager;
@@ -85,10 +90,29 @@ private:
     
     std::unordered_map<Speech2TextTask, int> m_task_to_token_id_map;
 
-    inline static bool is_timestamp_token(int token)
+    int m_decoder_start_token_id;
+    int m_task_transcribe_token_id;
+    int m_task_translate_token_id;
+    int m_timestamp_begin_token_id;
+    int m_eos_token_id;
+    int m_first_language_token_id;
+    int m_last_language_token_id;
+    int m_chunk_size_seconds;
+    int m_num_mel_bins;
+    int m_n_audio_ctx;
+    int m_repetition_penalty_window_size;
+    std::vector<int> m_special_tokens_ids_to_suppress;
+    std::string m_encoder_model_name;
+    std::string m_decoder_model_name;
+    std::string m_decoder_input_name__common_encoder_decoder_layer;
+    std::string m_decoder_input_name__input_tokens_layer;
+    std::vector<std::string> m_decoder_ordered_outputs_names__embeddings;
+
+    inline bool is_timestamp_token(int token) const
     {
-        // Token larger than TIMESTAMP_BEGIN_TOKEN_ID is a timestamp token
-        return token >= TIMESTAMP_BEGIN_TOKEN_ID;
+        // Token larger than the first timestamp token is a timestamp token
+        // TODO: Consider adding a check for the max timestamp token id
+        return token >= m_timestamp_begin_token_id;
     }
 };
 

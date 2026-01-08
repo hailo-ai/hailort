@@ -1,7 +1,7 @@
 appdirs==1.4.4
 distlib==0.3.6
 filelock==3.8.0
-future==0.18.2
+future==1.0.0
 importlib-metadata==5.1.0
 importlib-resources==5.1.2
 numpy

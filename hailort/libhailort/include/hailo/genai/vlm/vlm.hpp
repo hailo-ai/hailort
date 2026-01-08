@@ -86,14 +86,17 @@ public:
      * Returns an LLMGeneratorCompletion, which allows fetching generated tokens incrementally.
      *
      * @param[in] prompt        The prompt to be processed by the VLM model. The prompt is written as-is without any template formatting.
-     * @param[in] input_frames  The input frames to be sent to the VLM model. This can be empty, in which case the model will generate text only.
+     * @param[in] input_frames  The input standalone-frames to be sent to the VLM model, Can be empty.
+     * @param[in] input_videos  The input videos to be sent to the VLM model, can be empty. Each video is represented as a vector of raw frames.
      *
      * @return Upon success, returns Expected of LLMGeneratorCompletion. Otherwise, returns Unexpected of ::hailo_status error.
      * @note Calling this function while the model is already generating may lead to undefined behavior.
      * @note Only one `LLMGeneratorCompletion` instance should exist at a time. Creating multiple instances concurrently may lead to undefined behavior.
      *       A subsequent LLMGeneratorCompletion must only be created once the previous one has been fully destructed.
+     * @note Each frame or video frame should be in the format expected by the VLM model.
      */
-    Expected<LLMGeneratorCompletion> generate(const std::string &prompt, const std::vector<MemoryView> &input_frames);
+    Expected<LLMGeneratorCompletion> generate(const std::string &prompt, const std::vector<MemoryView> &input_frames,
+        const std::vector<std::vector<MemoryView>> &input_videos = {});
 
     /**
      * Initiates generation from structured messages in JSON format and input frames to the VLM model.
@@ -105,17 +108,23 @@ public:
      *                                  Each element in the vector represents a message in JSON format following the VLM message structure.
      * @param[in] input_frames          The input frames to be sent to the VLM model, corresponding to image placeholders in the messages.
      *                                  The number of frames must match the number of image references in the messages.
+     * @param[in] input_videos          The input videos to be sent to the VLM model, can be empty. Each video is represented as a vector of raw frames.
+     *                                  The number of videos must match the number of video references in the messages.
      *
      * @return Upon success, returns Expected of LLMGeneratorCompletion. Otherwise, returns Unexpected of ::hailo_status error.
      * @note Currently only supported content type is "image" and "text".
      * @note In case a given key is not supported by the model's template, or if an expected key is missing (e.g., "content" without "role"), the word `None` will replace it.
-     * @note Image references in the JSON messages are replaced with appropriate vision tokens during template processing.
-     * @note The number of input_frames must match the total number of image entries across all messages.
+     * @note Image and video references in the JSON messages are replaced with appropriate vision tokens during template processing.
+     * @note The number of input_frames must equal the total number of image entries across all messages; the same requirement applies to input_videos.
      * @note Calling this function while the model is already generating may lead to undefined behavior.
      * @note Only one `LLMGeneratorCompletion` instance should exist at a time. Creating multiple instances concurrently may lead to undefined behavior.
      *       A subsequent LLMGeneratorCompletion must only be created once the previous one has been fully destructed.
+     * @note System role messages can only be provided on a fresh context.
+     *       Providing them on consecutive calls will result in an error.
+     * @note Each frame or video frame should be in the format expected by the VLM model.
      */
-    Expected<LLMGeneratorCompletion> generate(const std::vector<std::string> &messages_json_strings, const std::vector<MemoryView> &input_frames);
+    Expected<LLMGeneratorCompletion> generate(const std::vector<std::string> &messages_json_strings, const std::vector<MemoryView> &input_frames,
+        const std::vector<std::vector<MemoryView>> &input_videos = {});
 
     class Impl;
     VLMGenerator(std::shared_ptr<Impl> pimpl);
@@ -169,16 +178,25 @@ public:
      * This is a convenience method that creates a generator with default parameters, writes the structured prompt, and initiates generation.
      *
      * @param[in] messages_json_strings A vector of JSON strings representing structured messages.
-     * @param[in] input_frames          The input frames to be sent to the VLM model.
+     * @param[in] input_frames          The input frames to be sent to the VLM model, corresponding to image placeholders in the messages.
+     *                                  The number of frames must match the number of image references in the messages.
+     * @param[in] input_videos          The input videos to be sent to the VLM model, can be empty. Each video is represented as a vector of raw frames.
+     *                                  The number of videos must match the number of video references in the messages.
+     *
      * @return Upon success, returns Expected of LLMGeneratorCompletion. Otherwise, returns Unexpected of ::hailo_status error.
      * @note This method uses the model's default generation parameters.
      * @note This method is equivalent to: create_generator() -> generate(messages_json_strings, input_frames).
      * @note Since this function creates a generator, and only one generator can be active at a time,
      *       no other generator can be created while this function is running.
+     * @note The number of input_frames must equal the total number of image entries across all messages; the same requirement applies to input_videos.
      * @note Only one `LLMGeneratorCompletion` instance should exist at a time. Creating multiple instances concurrently may lead to undefined behavior.
      *       A subsequent LLMGeneratorCompletion must only be created once the previous one has been fully destructed.
+     * @note System role messages can only be provided on a fresh context.
+     *       Providing them on consecutive calls will result in an error.
+     * @note Each frame or video frame should be in the format expected by the VLM model.
      */
-    Expected<LLMGeneratorCompletion> generate(const std::vector<std::string> &messages_json_strings, const std::vector<MemoryView> &input_frames);
+    Expected<LLMGeneratorCompletion> generate(const std::vector<std::string> &messages_json_strings, const std::vector<MemoryView> &input_frames,
+        const std::vector<std::vector<MemoryView>> &input_videos = {});
 
     /**
      * Generates text directly using structured JSON messages and input frames without explicitly creating a generator.
@@ -186,16 +204,24 @@ public:
      *
      * @param[in] params                The LLMGeneratorParams used to configure generation.
      * @param[in] messages_json_strings A vector of JSON strings representing structured messages.
-     * @param[in] input_frames          The input frames to be sent to the VLM model.
+     * @param[in] input_frames          The input frames to be sent to the VLM model, corresponding to image placeholders in the messages.
+     *                                  The number of frames must match the number of image references in the messages.
+     * @param[in] input_videos          The input videos to be sent to the VLM model, can be empty. Each video is represented as a vector of raw frames.
+     *                                  The number of videos must match the number of video references in the messages.
+     *
      * @return Upon success, returns Expected of LLMGeneratorCompletion. Otherwise, returns Unexpected of ::hailo_status error.
      * @note This method is equivalent to: create_generator(params) -> generate(messages_json_strings, input_frames).
      * @note Since this function creates a generator, and only one generator can be active at a time,
      *       no other generator can be created while this function is running.
+     * @note The number of input_frames must equal the total number of image entries across all messages; the same requirement applies to input_videos.
      * @note Only one `LLMGeneratorCompletion` instance should exist at a time. Creating multiple instances concurrently may lead to undefined behavior.
      *       A subsequent LLMGeneratorCompletion must only be created once the previous one has been fully destructed.
+     * @note System role messages can only be provided on a fresh context.
+     *       Providing them on consecutive calls will result in an error.
+     * @note Each frame or video frame should be in the format expected by the VLM model.
      */
     Expected<LLMGeneratorCompletion> generate(const LLMGeneratorParams &params, const std::vector<std::string> &messages_json_strings,
-        const std::vector<MemoryView> &input_frames);
+        const std::vector<MemoryView> &input_frames, const std::vector<std::vector<MemoryView>> &input_videos = {});
 
     /**
      * Tokenizes a given string into a vector of integers representing the tokens.

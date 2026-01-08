@@ -17,7 +17,7 @@
 #include "common/internal_env_vars.hpp"
 #include "common/buffer_pool.hpp"
 #include "utils/pool_allocator.hpp"
-#include "vdma/channel/transfer_common.hpp"
+#include "vdma/transfer_common.hpp"
 
 #define RPC_MESSAGE_MAGIC (0x8A554432)
 #define HAILORT_SERVER_PORT (12133)
@@ -38,8 +38,9 @@ struct rpc_message_header_t
 
 struct rpc_message_t
 {
-    rpc_message_header_t header;
     BufferPtr buffer;
+    rpc_message_header_t header;
+    MemoryView body;
 };
 
 class RpcConnection;
@@ -53,29 +54,29 @@ public:
         static Expected<Params> create(std::shared_ptr<Session> session);
 
         std::shared_ptr<Session> session;
-        std::shared_ptr<PoolAllocator> write_rpc_headers_allocator;
-        std::shared_ptr<PoolAllocator> read_rpc_headers_allocator;
-        std::shared_ptr<PoolAllocator> read_rpc_body_allocator;
+        std::shared_ptr<PoolAllocator> write_messages_allocator;
+        std::shared_ptr<PoolAllocator> read_messages_allocator;
     };
 
     RpcConnection() = default;
     RpcConnection(Params &&params) :
-            m_session(params.session), m_write_rpc_headers_allocator(params.write_rpc_headers_allocator),
-            m_read_rpc_headers_allocator(params.read_rpc_headers_allocator), m_read_rpc_body_allocator(params.read_rpc_body_allocator),
+            m_session(params.session), m_write_messages_allocator(params.write_messages_allocator),
+            m_read_messages_allocator(params.read_messages_allocator),
             m_is_active(true) {}
     ~RpcConnection() = default;
 
-    Expected<rpc_message_t> read_message();
+    Expected<BufferPtr> allocate_message_buffer();
+    static void fill_message_buffer(BufferPtr buffer, const rpc_message_header_t &header, const MemoryView &body);
+
+    Expected<BufferPtr> read_message();
+    std::tuple<rpc_message_header_t, MemoryView> parse_message(BufferPtr buffer);
 
     hailo_status read_buffer(MemoryView buffer);
     Expected<std::shared_ptr<FileDescriptor>> read_dmabuf_fd();
     hailo_status read_buffers(std::vector<TransferBuffer> &&buffers);
 
     hailo_status wait_for_write_message_async_ready(size_t buffer_size, std::chrono::milliseconds timeout);
-    hailo_status write_message_async(const rpc_message_header_t &header, const MemoryView &buffer,
-        std::function<void(hailo_status)> &&callback);
-
-    hailo_status write_message_async(const rpc_message_header_t &header, TransferRequest &&transfer_request);
+    hailo_status write_message_async(TransferRequest &&transfer_request);
 
     hailo_status wait_for_write_buffer_async_ready(size_t buffer_size, std::chrono::milliseconds timeout);
     hailo_status write_buffer_async(const MemoryView &buffer, std::function<void(hailo_status)> &&callback);
@@ -87,9 +88,8 @@ public:
 
 private:
     std::shared_ptr<Session> m_session;
-    std::shared_ptr<PoolAllocator> m_write_rpc_headers_allocator;
-    std::shared_ptr<PoolAllocator> m_read_rpc_headers_allocator;
-    std::shared_ptr<PoolAllocator> m_read_rpc_body_allocator;
+    std::shared_ptr<PoolAllocator> m_write_messages_allocator;
+    std::shared_ptr<PoolAllocator> m_read_messages_allocator;
     EventPtr m_shutdown_event;
     std::mutex m_read_mutex;
     std::condition_variable m_read_cv;

@@ -89,7 +89,7 @@ StreamParams::StreamParams() : IoParams(), flags(HAILO_STREAM_FLAGS_NONE)
 NetworkParams::NetworkParams() : hef_path(), net_group_name(), vstream_params(), stream_params(),
     scheduling_algorithm(HAILO_SCHEDULING_ALGORITHM_ROUND_ROBIN), multi_process_service(false),
     batch_size(HAILO_DEFAULT_BATCH_SIZE), scheduler_threshold(0), scheduler_timeout_ms(0),
-    buffer_type(BufferType::VIEW), framerate(UNLIMITED_FRAMERATE), measure_hw_latency(false),
+    buffer_type(BufferType::VIEW), framerate(UNLIMITED_FRAMERATE), should_print_ops(false), measure_hw_latency(false),
     measure_overall_latency(false)
 {
 }
@@ -117,7 +117,8 @@ NetworkRunner::NetworkRunner(const NetworkParams &params, const std::string &nam
     m_infer_model(infer_model),
     m_configured_infer_model(configured_infer_model),
     m_overall_latency_meter(nullptr),
-    m_latency_barrier(nullptr)
+    m_latency_barrier(nullptr),
+    m_last_measured_fps(0)
 {
 }
 
@@ -211,6 +212,7 @@ Expected<std::shared_ptr<FullAsyncNetworkRunner>> FullAsyncNetworkRunner::create
         CHECK_NOT_NULL_AS_EXPECTED(latency_barrier, HAILO_OUT_OF_HOST_MEMORY);
         res->set_latency_barrier(latency_barrier);
     }
+
     return res;
 }
 
@@ -309,7 +311,7 @@ Expected<std::shared_ptr<NetworkRunner>> NetworkRunner::create_shared(VDevice &v
             }
 
             // We use a barrier for both hw and overall latency
-            auto latency_barrier = make_shared_nothrow<Barrier>(static_cast<int>(input_names.size() + output_names.size()));
+            auto latency_barrier = make_shared_nothrow<Barrier>(static_cast<size_t>(input_names.size() + output_names.size()));
             CHECK_NOT_NULL_AS_EXPECTED(latency_barrier, HAILO_OUT_OF_HOST_MEMORY);
             net_runner_ptr->set_latency_barrier(latency_barrier);
         }
@@ -343,7 +345,20 @@ hailo_status NetworkRunner::run(EventPtr shutdown_event, LiveStats &live_stats, 
 
     // If we measure latency (hw or overall) we send frames one at a time. Hence we don't measure fps.
     const auto measure_fps = !m_params.measure_hw_latency && !m_params.measure_overall_latency;
-    auto net_live_track = std::make_shared<NetworkLiveTrack>(m_name, m_cng, m_configured_infer_model, m_overall_latency_meter, measure_fps, m_params.hef_path);
+    
+    // Get computational_ops if print_ops is enabled
+    uint64_t computational_ops = 0;
+    if (m_params.should_print_ops) {
+        auto hef_exp = Hef::create(m_params.hef_path); // HRT-18228: Init Hef only once in run2
+        CHECK_EXPECTED_AS_STATUS(hef_exp, "Failed to create HEF from {}", m_params.hef_path);
+        auto ops_exp = hef_exp->get_computational_ops(m_name);
+        if (ops_exp) {
+            computational_ops = ops_exp.value();
+        }
+    }
+    
+    auto net_live_track = std::make_shared<NetworkLiveTrack>(m_name, m_cng, m_configured_infer_model, 
+        m_overall_latency_meter, measure_fps, m_params.hef_path, m_params.should_print_ops, computational_ops);
     live_stats.add(net_live_track, 1); //support progress over multiple outputs
 
 #if defined(_MSC_VER)

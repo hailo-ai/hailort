@@ -42,7 +42,7 @@ struct EdgeLayerPlan {
 };
 
 struct BufferPlan {
-    vdma::VdmaBuffer::Type buffer_type;
+    vdma::BufferType buffer_type;
     size_t buffer_size;
     std::vector<EdgeLayerPlan> edge_layer_plans;
 };
@@ -108,6 +108,8 @@ public:
         const std::map<EdgeLayerKey, EdgeLayerInfo> &edge_layer_infos, HailoRTDriver::DmaType dma_type,
         size_t number_of_contexts, const DescSizesParams &sg_desc_params, const DescSizesParams &ccb_desc_params,
         bool force_sg_type_buffer = false);
+    static Expected<InternalBufferPlanning> create_sram_buffer_planning(
+        const std::map<EdgeLayerKey, EdgeLayerInfo> &edge_layer_infos, const DescSizesParams &continuous_desc_params);
     // Reporting functions
     static BufferPlanReport report_planning_info(const InternalBufferPlanning &buffer_planning);
 
@@ -119,7 +121,7 @@ private:
     static std::vector<std::pair<EdgeLayerKey, EdgeLayerInfo>> sort_edge_layers_by_size(
         const std::map<EdgeLayerKey, EdgeLayerInfo> &edge_layers);
     static Expected<vdma::BufferSizesRequirements> return_buffer_requirements(
-        const EdgeLayerInfo &edge_layer, const vdma::VdmaBuffer::Type buffer_type,
+        const EdgeLayerInfo &edge_layer, const vdma::BufferType buffer_type,
         const DescSizesParams &desc_sizes_params);
 
     // Planning phase functions
@@ -131,12 +133,12 @@ private:
         const std::vector<ContextBufferUsageSegments> &context_buffer_usage_vector, uint16_t start_context, uint16_t end_context);
     static hailo_status add_edge_layer_to_planning(const std::pair<EdgeLayerKey, EdgeLayerInfo> &edge_layer,
         std::vector<std::vector<BufferUsageSegment>> &context_buffer_usage_vector, BufferPlan &buffer_plan,
-        const vdma::VdmaBuffer::Type buffer_type, const DescSizesParams &desc_sizes_params);
+        const vdma::BufferType buffer_type, const DescSizesParams &desc_sizes_params);
 
 
     static Expected<InternalBufferPlanning> create_single_buffer_planning(
         const std::map<EdgeLayerKey, EdgeLayerInfo> &sg_edge_layers, size_t number_of_contexts,
-        const vdma::VdmaBuffer::Type buffer_type, const DescSizesParams &desc_sizes_params);
+        const vdma::BufferType buffer_type, const DescSizesParams &desc_sizes_params);
 };
 
 } /* namespace hailort */

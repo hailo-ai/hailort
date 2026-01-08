@@ -12,7 +12,7 @@
 
 #include "hailo/buffer.hpp"
 #include "hailo/hailort.h"
-#include "eigen.hpp"
+#include "common/genai/eigen.hpp"
 
 namespace hailort
 {
@@ -25,7 +25,7 @@ class Speech2TextPreProcess
 public:
     Speech2TextPreProcess() = delete;
 
-    static Eigen::MatrixXf compute_log_mel(const MemoryView chunk, size_t chunk_size, int sample_rate, int hop_length);
+    static Eigen::MatrixXf compute_log_mel(const MemoryView chunk, size_t chunk_size, int sample_rate, int hop_length, int n_mels);
     static void pad_or_trim(const Eigen::MatrixXf &input, Eigen::Map<Eigen::MatrixXf> &output);
 };
 

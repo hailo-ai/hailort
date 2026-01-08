@@ -18,7 +18,7 @@
 #include "common/shared_memory_buffer.hpp"
 
 #include "utils/exported_resource_manager.hpp"
-#include "vdma/memory/continuous_buffer.hpp"
+#include "vdma/memory/cma_buffer.hpp"
 #include "vdma/memory/mapped_buffer.hpp"
 
 #include <memory>
@@ -150,7 +150,7 @@ class ContinuousStorage : public BufferStorage
 {
 public:
     static Expected<ContinuousStoragePtr> create(size_t size);
-    ContinuousStorage(std::unique_ptr<HailoRTDriver> driver, vdma::ContinuousBuffer &&continuous_buffer);
+    ContinuousStorage(std::unique_ptr<HailoRTDriver> driver, vdma::CmaBuffer &&continuous_buffer);
     ContinuousStorage(ContinuousStorage&& other) noexcept;
     ContinuousStorage(const ContinuousStorage &) = delete;
     ContinuousStorage &operator=(ContinuousStorage &&) = delete;
@@ -164,7 +164,7 @@ public:
 
 private:
     std::unique_ptr<HailoRTDriver> m_driver;
-    vdma::ContinuousBuffer m_continuous_buffer;
+    vdma::CmaBuffer m_continuous_buffer;
 };
 
 using SharedMemoryStoragePtr = std::shared_ptr<SharedMemoryStorage>;

@@ -18,7 +18,7 @@ import json
 from hailo_platform.common.logger.logger import default_logger
 import hailo_platform.pyhailort._pyhailort as _pyhailort
 
-from hailo_platform.pyhailort._pyhailort import (TemperatureInfo, # noqa F401
+from hailo_platform.pyhailort._pyhailort import (HailoRTException, TemperatureInfo, # noqa F401
                                                  DvmTypes, PowerMeasurementTypes,  # noqa F401
                                                  PowerMeasurementData, NotificationId,  # noqa F401
                                                  OvercurrentAlertState,
@@ -40,9 +40,6 @@ BOARD_INFO_NOT_CONFIGURED_ATTR = "<N/A>"
 
 
 class HailoSchedulingAlgorithm(_pyhailort.SchedulingAlgorithm):
-    pass
-
-class HailoRTException(Exception):
     pass
 
 class InvalidProtocolVersionException(HailoRTException):
@@ -1016,14 +1013,14 @@ class Detection(object):
 class DetectionWithByteMask(object):
     """Represents a detection with byte mask information"""
 
-    def __init__(self, detection):
+    def __init__(self, raw_output_buffer, detection):
         self._y_min = detection.box.y_min
         self._x_min = detection.box.x_min
         self._y_max = detection.box.y_max
         self._x_max = detection.box.x_max
         self._score = detection.score
         self._class_id = detection.class_id
-        self._mask = detection.mask()
+        self._mask = numpy.array(raw_output_buffer[detection.mask_offset:detection.mask_offset + detection.mask_size])
 
     @property
     def y_min(self):
@@ -1214,7 +1211,7 @@ class HailoRTTransformUtils(object):
         detections = _pyhailort.convert_nms_with_byte_mask_buffer_to_detections(raw_output_buffer)
         converted_output_frame = []
         for detection in detections:
-            converted_output_frame.append(DetectionWithByteMask(detection))
+            converted_output_frame.append(DetectionWithByteMask(raw_output_buffer, detection))
 
         return converted_output_frame
 
@@ -1247,7 +1244,7 @@ class HailoRTTransformUtils(object):
                 return
             bbox = numpy.array([detection.box.y_min, detection.box.x_min, detection.box.y_max, detection.box.x_max,
                     detection.score, detection.class_id])
-            bbox_mask = detection.mask()
+            bbox_mask = numpy.array(raw_output_buffer[detection.mask_offset:detection.mask_offset + detection.mask_size])
 
             y_min = numpy.ceil(bbox[0] * image_height)
             x_min = numpy.ceil(bbox[1] * image_width)
@@ -1399,8 +1396,8 @@ class HailoFormatFlags(_pyhailort.FormatFlags):
 
 SUPPORTED_PROTOCOL_VERSION = 2
 SUPPORTED_FW_MAJOR = 5
-SUPPORTED_FW_MINOR = 1
-SUPPORTED_FW_REVISION = 1
+SUPPORTED_FW_MINOR = 2
+SUPPORTED_FW_REVISION = 0
 
 MEGA_MULTIPLIER = 1000.0 * 1000.0
 
@@ -4199,16 +4196,17 @@ class LLM:
         return gen_params
 
     @staticmethod
-    def _convert_messages_json(prompt):
-        if not isinstance(prompt, list):
-            raise HailoRTException("prompt must be a list of dicts in chat format")
-        for item in prompt:
+    def _convert_to_json_strings(items, item_name="item"):
+        if items is None:
+            return []
+        if not isinstance(items, list):
+            raise HailoRTException(f"{item_name} must be a list of dicts")
+        for item in items:
             if not isinstance(item, dict):
-                raise HailoRTException("prompt must be a list of dicts")
-        # Convert list of dictionaries to list of JSON strings
-        return [json.dumps(item) for item in prompt]
+                raise HailoRTException(f"{item_name} must be a list of dicts")
+        return [json.dumps(item) for item in items]
 
-    def generate(self, prompt, temperature=None, top_p=None, top_k=None, frequency_penalty=None, max_generated_tokens=None, do_sample=None, seed=None):
+    def generate(self, prompt, tools=None, temperature=None, top_p=None, top_k=None, frequency_penalty=None, max_generated_tokens=None, do_sample=None, seed=None):
         """
         Generate text in streaming mode, yielding tokens as they are produced.
 
@@ -4220,6 +4218,9 @@ class LLM:
             prompt (str or list): Input prompt. Can be:
                 - str: Raw text prompt, to be inserted to the model as is.
                 - list: Structured chat format [{"role": "user", "content": "..."}]
+            tools (list, optional): List of tool/function definitions for function calling.
+                Each tool should be a dict with tool schema. Only allowed on first prompt.
+                Example: [{"type": "function", "function": {"name": "get_weather", ...}}]
             temperature (float, optional): Sampling temperature (0.0-2.0).
                 Lower values = more deterministic, higher = more creative. Default varies by model.
             top_p (float, optional): Nucleus sampling threshold (0.0-1.0).
@@ -4245,6 +4246,14 @@ class LLM:
                 for token in gen:
                     print(token, end='', flush=True)
 
+            # Streaming with tools (function calling)
+            tools = [{"type": "function", "function": {"name": "get_weather",
+                     "description": "Get weather", "parameters": {...}}}]
+            prompt = [{"role": "user", "content": "What's the weather?"}]
+            with llm.generate(prompt, tools=tools, temperature=0.7) as gen:
+                for token in gen:
+                    print(token, end='', flush=True)
+
             # Streaming with raw prompt
             with llm.generate("Once upon a time", temperature=0.7) as gen:
                 for token in gen:
@@ -4252,19 +4261,27 @@ class LLM:
 
         Note:
             The conversation context is automatically maintained between calls.
-            Use ``clear_context()`` to reset the conversation history.
+            Use ``clear_context()`` to reset the conversation history and get a fresh context.
+
+            Tools and system-role messages (e.g. `{"role": "system", "content": "..."}`) can only be provided on a fresh context.
+            Providing them on consecutive calls will raise an error.
         """
         # Validate that prompt is either string or a list of JSON-like dicts
         if not isinstance(prompt, str):
-            prompt = LLM._convert_messages_json(prompt)
+            prompt = LLM._convert_to_json_strings(prompt, "prompt")
+        # Convert tools if provided
+        tools_json = LLM._convert_to_json_strings(tools, "tools")
 
         with ExceptionWrapper():
             generation_params = self._llm.create_generator_params()
             generation_params = LLM._fill_generator_params(generation_params, temperature, top_p, top_k, frequency_penalty, max_generated_tokens, do_sample, seed)
-            return LLMGeneratorCompletion(self._llm.generate(generation_params, prompt))
+            if tools_json:
+                return LLMGeneratorCompletion(self._llm.generate(generation_params, prompt, tools_json))
+            else:
+                return LLMGeneratorCompletion(self._llm.generate(generation_params, prompt))
 
-    def generate_all(self, prompt, temperature=None, top_p=None, top_k=None, frequency_penalty=None, max_generated_tokens=None, do_sample=None,
-        seed=None, timeout_ms=600000):
+    def generate_all(self, prompt, tools=None, temperature=None, top_p=None, top_k=None, frequency_penalty=None, max_generated_tokens=None,
+        do_sample=None, seed=None, timeout_ms=600000):
         """
         Generate complete text response in non-streaming mode.
 
@@ -4276,6 +4293,9 @@ class LLM:
             prompt (str or list): Input prompt. Can be:
                 - str: Raw text prompt, to be inserted to the model as is.
                 - list: Structured chat format [{"role": "user", "content": "..."}]
+            tools (list, optional): List of tool/function definitions for function calling.
+                Each tool should be a dict with tool schema. Only allowed on first prompt.
+                Example: [{"type": "function", "function": {"name": "get_weather", ...}}]
             temperature (float, optional): Sampling temperature (0.0-2.0).
                 Lower values = more deterministic, higher = more creative.
             top_p (float, optional): Nucleus sampling threshold (0.0-1.0).
@@ -4315,9 +4335,12 @@ class LLM:
 
         Note:
             The conversation context is automatically maintained between calls.
-            Use ``clear_context()`` to reset the conversation history.
+            Use ``clear_context()`` to reset the conversation history and get a fresh context.
+
+            Tools and system-role messages (e.g. `{"role": "system", "content": "..."}`) can only be provided on a fresh context.
+            Providing them on consecutive calls will raise an error.
         """
-        with self.generate(prompt, temperature, top_p, top_k, frequency_penalty, max_generated_tokens, do_sample, seed) as gen_completion:
+        with self.generate(prompt, tools, temperature, top_p, top_k, frequency_penalty, max_generated_tokens, do_sample, seed) as gen_completion:
             return gen_completion.read_all(timeout_ms)
 
     def tokenize(self, text):
@@ -4635,7 +4658,14 @@ class VLM:
             if not hasattr(arr, 'dtype') or not hasattr(arr, 'nbytes'):
                 raise HailoRTException("each frame must be a numpy array")
 
-    def generate(self, prompt, frames, temperature=None, top_p=None, top_k=None, frequency_penalty=None,
+    @staticmethod
+    def _ensure_videos(videos):
+        if not isinstance(videos, list):
+            raise HailoRTException("videos must be a list of lists of numpy arrays")
+        for video in videos:
+            VLM._ensure_frames(video)
+
+    def generate(self, prompt, frames, videos=None, temperature=None, top_p=None, top_k=None, frequency_penalty=None,
         max_generated_tokens=None, do_sample=None, seed=None):
         """
         Generate text in streaming mode with vision input, yielding tokens as they are produced.
@@ -4649,6 +4679,8 @@ class VLM:
                 - str: Raw text prompt, to be inserted to the model as is.
                 - list: Structured chat format with or without vision content [{"role": "user", "content": [{"type": "text", "text": "..."}, {"type": "image"}]}]
             frames (list): List of numpy arrays representing input images/frames. Empty list means no vision input. Must match model's expected input format.
+            videos (list, optional): List of lists of numpy arrays representing input videos as a list of frames. Each frame must match model's expected input format.
+                An empty list means no video input.
             temperature (float, optional): Sampling temperature (0.0-2.0).
                 Lower values = more deterministic, higher = more creative. Default varies by model.
             top_p (float, optional): Nucleus sampling threshold (0.0-1.0).
@@ -4676,19 +4708,25 @@ class VLM:
 
         Note:
             The conversation context is automatically maintained between calls.
-            Use ``clear_context()`` to reset the conversation history.
+            Use ``clear_context()`` to reset the conversation history and get a fresh context.
+
+            System-role messages (e.g. `{"role": "system", "content": "..."}`) can only be provided on a fresh context.
+            Providing them on consecutive calls will raise an error.
         """
         # Validate that prompt is either string or a list of JSON-like dicts
+        if videos is None:
+            videos = []
         if not isinstance(prompt, str):
-            prompt = LLM._convert_messages_json(prompt)
+            prompt = LLM._convert_to_json_strings(prompt, "prompt")
         VLM._ensure_frames(frames)
+        VLM._ensure_videos(videos)
 
         with ExceptionWrapper():
             generation_params = self._vlm.create_generator_params()
             generation_params = LLM._fill_generator_params(generation_params, temperature, top_p, top_k, frequency_penalty, max_generated_tokens, do_sample, seed)
-            return LLMGeneratorCompletion(self._vlm.generate(generation_params, prompt, frames))
+            return LLMGeneratorCompletion(self._vlm.generate(generation_params, prompt, frames, videos))
 
-    def generate_all(self, prompt, frames, temperature=None, top_p=None, top_k=None, frequency_penalty=None, max_generated_tokens=None,
+    def generate_all(self, prompt, frames, videos=None, temperature=None, top_p=None, top_k=None, frequency_penalty=None, max_generated_tokens=None,
         do_sample=None, seed=None, timeout_ms=600000):
         """
         Generate complete text response in non-streaming mode with vision input.
@@ -4702,6 +4740,8 @@ class VLM:
                 - str: Raw text prompt, to be inserted to the model as is.
                 - list: Structured chat format with vision content [{"role": "user", "content": [{"type": "text", "text": "..."}, {"type": "image"}]}]
             frames (list): List of numpy arrays representing input images/frames. Empty list means no vision input. Must match model's expected input format.
+            videos (list, optional): List of lists of numpy arrays representing input videos as a list of frames. Each frame must match model's expected input format.
+                An empty list means no video input.
             temperature (float, optional): Sampling temperature (0.0-2.0).
                 Lower values = more deterministic, higher = more creative.
             top_p (float, optional): Nucleus sampling threshold (0.0-1.0).
@@ -4728,16 +4768,21 @@ class VLM:
                     {"type": "image"}
                 ]}
             ]
-            print(vlm.generate_all(prompt, frames=[image_array], temperature=0.1))
+            print(vlm.generate_all(prompt, frames=[image_array], videos=[video_array], temperature=0.1))
 
             # Simple text generation (without vision)
             response = vlm.generate_all("Tel me a joke", frames=[])
 
         Note:
             The conversation context is automatically maintained between calls.
-            Use ``clear_context()`` to reset the conversation history.
+            Use ``clear_context()`` to reset the conversation history and get a fresh context.
+
+            System-role messages (e.g. `{"role": "system", "content": "..."}`) can only be provided on a fresh context.
+            Providing them on consecutive calls will raise an error.
         """
-        with self.generate(prompt, frames, temperature, top_p, top_k, frequency_penalty,
+        if videos is None:
+            videos = []
+        with self.generate(prompt, frames, videos, temperature, top_p, top_k, frequency_penalty,
                            max_generated_tokens, do_sample, seed) as gen_completion:
             return gen_completion.read_all(timeout_ms)
 
@@ -5183,14 +5228,25 @@ class Speech2Text:
         self.release()
         return False
 
-    def generate_all_text(self, audio_data, task=Speech2TextTask.TRANSCRIBE, language="en", timeout_ms=10000):
+    @staticmethod
+    def _fill_generator_params(gen_params, task, language, repetition_penalty):
+        if task is not None:
+            gen_params.set_task(task)
+        if language is not None:
+            gen_params.set_language(language)
+        if repetition_penalty is not None:
+            gen_params.set_repetition_penalty(repetition_penalty)
+        return gen_params
+
+    def generate_all_text(self, audio_data, task=Speech2TextTask.TRANSCRIBE, language=None, repetition_penalty=1.0, timeout_ms=10000):
         """
         Generate complete transcription as a single string.
 
         Args:
             audio_data (numpy.ndarray): Audio data as numpy array in PCM float32 format (normalized to [-1.0, 1.0), mono, little-endian, 16 kHz).
             task (Speech2TextTask, optional): Task to perform (transcribe or translate). Defaults to TRANSCRIBE.
-            language (str, optional): Language to use for translation, in the format of ISO-639-1 two-letter code, for example: "en", "fr", etc. Defaults to "en".
+            language (str, optional): Language to use for translation, in the format of ISO-639-1 two-letter code, for example: "en", "fr", etc. Defaults to None, which means that the model will automatically detect the language.
+            repetition_penalty (float, optional): Repetition penalty to use for the generation process. Defaults to 1.0, which means that the model will not apply any repetition penalty.
             timeout_ms (int, optional): Timeout in milliseconds. Defaults to 10000.
 
         Returns:
@@ -5202,16 +5258,19 @@ class Speech2Text:
             print(f"Transcription: {complete_text}")
         """
         with ExceptionWrapper():
-            return self._speech2text.generate_all_text(audio_data, task.value, language, timeout_ms)
+            generation_params = self._speech2text.create_generator_params()
+            generation_params = Speech2Text._fill_generator_params(generation_params, task.value, language, repetition_penalty)
+            return self._speech2text.generate_all_text(audio_data, generation_params, timeout_ms)
 
-    def generate_all_segments(self, audio_data, task=Speech2TextTask.TRANSCRIBE, language="en", timeout_ms=10000):
+    def generate_all_segments(self, audio_data, task=Speech2TextTask.TRANSCRIBE, language=None, repetition_penalty=1.0, timeout_ms=10000):
         """
         Generate transcription with timestamped segments.
 
         Args:
             audio_data (numpy.ndarray): Audio data as numpy array in PCM float32 format (normalized to [-1.0, 1.0), mono, little-endian, 16 kHz).
             task (Speech2TextTask, optional): Task to perform (transcribe or translate). Defaults to TRANSCRIBE.
-            language (str, optional): Language to use for translation, in the format of ISO-639-1 two-letter code, for example: "en", "fr", etc. Defaults to "en".
+            language (str, optional): Language to use for translation, in the format of ISO-639-1 two-letter code, for example: "en", "fr", etc. Defaults to None, which means that the model will automatically detect the language.
+            repetition_penalty (float, optional): Repetition penalty to use for the generation process. Defaults to 1.0, which means that the model will not apply any repetition penalty.
             timeout_ms (int, optional): Timeout in milliseconds. Defaults to 10000.
 
         Returns:
@@ -5224,7 +5283,9 @@ class Speech2Text:
                 print(f"[{segment.start_sec:.2f}s-{segment.end_sec:.2f}s] {segment.text}")
         """
         with ExceptionWrapper():
-            raw_segments = self._speech2text.generate_all_segments(audio_data, task.value, language, timeout_ms)
+            generation_params = self._speech2text.create_generator_params()
+            generation_params = Speech2Text._fill_generator_params(generation_params, task.value, language, repetition_penalty)
+            raw_segments = self._speech2text.generate_all_segments(audio_data, generation_params, timeout_ms)
             return [SegmentInfo(segment) for segment in raw_segments]
 
     def tokenize(self, text):

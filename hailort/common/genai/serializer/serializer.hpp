@@ -15,6 +15,8 @@
 #include "hailo/expected.hpp"
 #include "common/utils.hpp"
 
+#include "common/genai/tokenizer/embedding_view_wrapper.hpp"
+
 #include "hailo/genai/llm/llm.hpp"
 #include "hailo/genai/speech2text/speech2text.hpp"
 
@@ -91,21 +93,26 @@ struct LLMCreateSerializer
 {
     struct RequestInfo {
         RequestInfo() = default;
-        RequestInfo(const std::string &lora_name, const std::string &hef_path, const std::string &group_id, uint64_t file_size, bool tokenizer_on_host) :
-            lora_name(lora_name), hef_path(hef_path), group_id(group_id), file_size(file_size), tokenizer_on_host(tokenizer_on_host) {}
+        RequestInfo(const std::string &lora_name, const std::string &hef_path, const std::string &group_id,
+            const std::vector<Hef::HefChunksInfo> &chunks_to_transfer, bool tokenizer_on_host, uint64_t total_hef_size = 0) :
+                lora_name(lora_name), hef_path(hef_path), group_id(group_id), chunks_to_transfer(chunks_to_transfer),
+                tokenizer_on_host(tokenizer_on_host), total_hef_size(total_hef_size)
+            {}
 
         std::string lora_name;
         std::string hef_path;
         std::string group_id;
-        uint64_t file_size;
+        std::vector<Hef::HefChunksInfo> chunks_to_transfer;
         bool tokenizer_on_host;
+        uint64_t total_hef_size;
     };
 
 
     LLMCreateSerializer() = delete;
 
     static Expected<Buffer> serialize_request(const hailo_vdevice_params_t &vdevice_params, const LLMParams &llm_params, const std::string &hef_path = "");
-    static Expected<Buffer> serialize_request(const hailo_vdevice_params_t &vdevice_params, const LLMParams &llm_params, const std::string &hef_path, uint64_t file_size);
+    static Expected<Buffer> serialize_request(const hailo_vdevice_params_t &vdevice_params, const LLMParams &llm_params,
+        const std::string &hef_path, const std::vector<Hef::HefChunksInfo> &chunks_to_transfer, uint64_t total_hef_size);
     static Expected<RequestInfo> deserialize_request(const MemoryView &serialized_request);
 
     static Expected<Buffer> serialize_reply(hailo_status status, const std::string &prompt_template = "", uint32_t embedding_features = 0);
@@ -164,7 +171,7 @@ struct LLMGeneratorReadSerializer
 
         std::string initial_prompt;
         std::vector<int> tokens;            // Client-side tokenizer: combined prefix+input tokens | Server-side tokenizer: prefix tokens (first iter) or single token (subsequent)
-        std::vector<BufferPtr> embeddings; // TODO: (HRT-18669) think how to manage memory better to prevent allocations
+        std::vector<EmbeddingViewWrapper> embeddings;
     };
 
     struct TextGenerationOutput {
@@ -335,22 +342,41 @@ struct VLMCreateSerializer
     VLMCreateSerializer() = delete;
 
     static Expected<Buffer> serialize_request(const hailo_vdevice_params_t &vdevice_params, const std::string &hef_path = "", bool optimize_memory_on_device = false);
-    static Expected<Buffer> serialize_request(const hailo_vdevice_params_t &vdevice_params, const std::string &hef_path, uint64_t file_size, bool optimize_memory_on_device = false);
-    // group_id, hef_path, file_size, tokenizer_on_host
-    static Expected<std::tuple<std::string, std::string, uint64_t, bool>> deserialize_request(const MemoryView &serialized_request);
+    static Expected<Buffer> serialize_request(const hailo_vdevice_params_t &vdevice_params, const std::string &hef_path,
+        const std::vector<Hef::HefChunksInfo> &chunks_to_transfer, uint64_t total_hef_size, bool optimize_memory_on_device = false);
+    // group_id, hef_path, chunks_to_transfer, tokenizer_on_host, total_hef_size
+    static Expected<std::tuple<std::string, std::string, std::vector<Hef::HefChunksInfo>, bool, uint64_t>> deserialize_request(const MemoryView &serialized_request);
+
 
     static Expected<Buffer> serialize_reply(hailo_status status,
         hailo_3d_image_shape_t input_frame_shape = {}, hailo_format_t input_frame_format = {}, const std::string &prompt_template = "", uint32_t embedding_features = 0,
-        uint32_t image_pad_token_id = 0, uint32_t embeddings_per_frame = 0);
-    static Expected<std::tuple<hailo_3d_image_shape_t, hailo_format_t, std::string, uint32_t, uint32_t, uint32_t>> deserialize_reply(const MemoryView &serialized_reply);
+        uint32_t image_pad_token_id = 0, uint32_t video_pad_token_id = 0, uint32_t embeddings_per_frame = 0);
+
+    struct ReplyInfo {
+        hailo_3d_image_shape_t input_frame_shape;
+        hailo_format_t input_frame_format;
+        std::string prompt_template;
+        uint32_t embedding_features;
+        uint32_t image_pad_token_id;
+        uint32_t video_pad_token_id;
+        uint32_t embeddings_per_frame;
+
+        ReplyInfo(hailo_3d_image_shape_t input_frame_shape, hailo_format_t input_frame_format, const std::string &prompt_template, uint32_t embedding_features,
+            uint32_t image_pad_token_id, uint32_t video_pad_token_id, uint32_t embeddings_per_frame) :
+                input_frame_shape(input_frame_shape), input_frame_format(input_frame_format), prompt_template(prompt_template),
+                embedding_features(embedding_features), image_pad_token_id(image_pad_token_id), video_pad_token_id(video_pad_token_id),
+                embeddings_per_frame(embeddings_per_frame)
+            {}
+    };
+    static Expected<ReplyInfo> deserialize_reply(const MemoryView &serialized_reply);
 };
 
 struct VLMGeneratorGenerateSerializer
 {
     VLMGeneratorGenerateSerializer() = delete;
 
-    static Expected<Buffer> serialize_request(uint32_t input_frames_count);
-    static Expected<size_t> deserialize_request(const MemoryView &serialized_request);
+    static Expected<Buffer> serialize_request(uint32_t number_of_standalone_frames, const std::vector<uint32_t> &video_frames_count_per_video);
+    static Expected<std::tuple<uint32_t, std::vector<uint32_t>>> deserialize_request(const MemoryView &serialized_request);
 
     static Expected<Buffer> serialize_reply(hailo_status status);
     static hailo_status deserialize_reply(const MemoryView &serialized_reply);
@@ -374,8 +400,8 @@ struct Speech2TextCreateSerializer
     static Expected<Buffer> serialize_request(const hailo_vdevice_params_t &vdevice_params);
     static Expected<std::string> deserialize_request(const MemoryView &serialized_request);
     
-    static Expected<Buffer> serialize_reply(hailo_status status);
-    static hailo_status deserialize_reply(const MemoryView &serialized_reply);
+    static Expected<Buffer> serialize_reply(hailo_status status, const Speech2TextGeneratorParams &generator_params = {{}, {}, {}});
+    static Expected<Speech2TextGeneratorParams> deserialize_reply(const MemoryView &serialized_reply);
 };
 
 struct Speech2TextGenerateSerializer

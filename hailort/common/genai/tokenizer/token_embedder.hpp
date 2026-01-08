@@ -14,7 +14,8 @@
 #include "hailo/buffer.hpp"
 #include "hailo/expected.hpp"
 #include "hailo/hailort_common.hpp"
-#include "eigen.hpp"
+#include "common/genai/eigen.hpp"
+#include "common/genai/tokenizer/embedding_view_wrapper.hpp"
 
 namespace hailort
 {
@@ -31,19 +32,22 @@ public:
     using eigen_map_2d_t = Eigen::Map<eigen_matrix_2d_t>;
 
     static Expected<std::unique_ptr<TokenEmbedder>> create(BufferPtr embeddings, size_t rows, size_t cols,
-        int special_token_id = INVALID_TOKEN_VALUE, size_t special_token_embeddings_count = 1)
+        int image_token_id = INVALID_TOKEN_VALUE, int video_token_id = INVALID_TOKEN_VALUE,
+        size_t special_token_embeddings_count = 1)
     {
-        TRY(auto ptr, create(embeddings->as_view(), rows, cols, special_token_id, special_token_embeddings_count));
+        TRY(auto ptr, create(embeddings->as_view(), rows, cols, image_token_id, video_token_id, special_token_embeddings_count));
         ptr->set_resource_guard(embeddings);
         return ptr;
     }
 
     static Expected<std::unique_ptr<TokenEmbedder>> create(const MemoryView &embeddings, size_t rows, size_t cols,
-        int special_token_id = INVALID_TOKEN_VALUE, size_t special_token_embeddings_count = 1)
+        int image_token_id = INVALID_TOKEN_VALUE, int video_token_id = INVALID_TOKEN_VALUE,
+        size_t special_token_embeddings_count = 1)
     {
         eigen_map_2d_t embeddings_matrix(embeddings.as_pointer<T>(), rows, cols);
 
-        auto ptr = std::make_unique<TokenEmbedder>(std::move(embeddings_matrix), special_token_id, special_token_embeddings_count);
+        auto ptr = std::make_unique<TokenEmbedder>(std::move(embeddings_matrix), image_token_id, video_token_id,
+            special_token_embeddings_count);
         CHECK_NOT_NULL_AS_EXPECTED(ptr, HAILO_OUT_OF_HOST_MEMORY); // Consider returning different status
 
         return ptr;
@@ -57,7 +61,8 @@ public:
 
     void tokens_to_embeddings(MemoryView embeddings_buffer, std::vector<int> &input_tokens)
     {
-        assert(m_special_token_id == INVALID_TOKEN_VALUE); // This method doesnt work with special-tokens-id see the other tokens_to_embeddings()
+        assert(m_image_token_id == INVALID_TOKEN_VALUE); // This method doesnt work with special-tokens-id see the other tokens_to_embeddings()
+        assert(m_video_token_id == INVALID_TOKEN_VALUE); // This method doesnt work with special-tokens-id see the other tokens_to_embeddings()
         assert(embeddings_buffer.size() >= (input_tokens.size() * m_embeddings_matrix.cols() * sizeof(T)));
 
         Eigen::Map<Eigen::VectorXi> input_tokens_eigen = Eigen::Map<Eigen::VectorXi>(input_tokens.data(), input_tokens.size());
@@ -69,9 +74,11 @@ public:
         }
     }
 
-    TokenEmbedder(eigen_map_2d_t &&embeddings_matrix, int special_token_id, size_t special_token_embeddings_count) :
+    TokenEmbedder(eigen_map_2d_t &&embeddings_matrix, int image_token_id, int video_token_id, size_t special_token_embeddings_count) :
         m_embeddings_matrix(std::move(embeddings_matrix)),
-        m_special_token_id(special_token_id),
+        m_image_token_id(image_token_id),
+        m_video_token_id(video_token_id),
+        m_video_frames_count_per_video(),
         m_special_token_embeddings_count(special_token_embeddings_count)
     {}
 
@@ -88,22 +95,39 @@ public:
         return MemoryView::create_const(row_ptr, row_bytes);
     }
 
-    std::vector<MemoryView> tokens_to_embeddings(const std::vector<int> &tokens) const
+    std::vector<EmbeddingViewWrapper> tokens_to_embeddings(const std::vector<int> &tokens) const
     {
-        std::vector<MemoryView> views;
+        std::vector<EmbeddingViewWrapper> views;
         views.reserve(tokens.size());
+        size_t current_video_idx = 0;
         for (int token : tokens) {
-            if ((INVALID_TOKEN_VALUE != m_special_token_id) && (token == m_special_token_id)) {
+            if ((INVALID_TOKEN_VALUE != m_image_token_id) && (token == m_image_token_id)) {
                 // Special tokens are not a part of the embeddings-vocab. Setting empty view for placeholder 'special_token_embeddings_size' times
                 for (size_t i = 0; i < m_special_token_embeddings_count; i++) {
-                    views.emplace_back(MemoryView());
+                        views.emplace_back(MemoryView(), EmbeddingViewWrapper::EmbeddingType::IMAGE);
+                    }
+            } else if ((INVALID_TOKEN_VALUE != m_video_token_id) && (token == m_video_token_id)) {
+                // Special tokens are not a part of the embeddings-vocab. Setting empty view for placeholder 'special_token_embeddings_size' times
+                // TODO (HRT-19393): Return error if current_video_idx is out of bounds
+                assert(current_video_idx < m_video_frames_count_per_video.size());
+                size_t frames_count_for_this_video = (current_video_idx < m_video_frames_count_per_video.size()) ? m_video_frames_count_per_video[current_video_idx] : 1;
+                for (size_t i = 0; i < (m_special_token_embeddings_count * frames_count_for_this_video); i++) {
+                    views.emplace_back(MemoryView(), EmbeddingViewWrapper::EmbeddingType::VIDEO);
                 }
+                current_video_idx++;
             } else {
                 assert((0 <= token) && (token < m_embeddings_matrix.rows()));
                 views.emplace_back(get_text_embedding(token));
             }
         }
         return views;
+    }
+
+    void set_video_frames_count(const std::vector<size_t> &processed_frames_per_video)
+    {
+        // Whenever a text with video appears, we should set here the number of video-frames per video that will be inferenced by the VLM
+        //   -> the number of outputs from the vision-encoder for each video on this generation request
+        m_video_frames_count_per_video = processed_frames_per_video;
     }
 
     TokenEmbedder(TokenEmbedder &&) = delete;
@@ -114,7 +138,9 @@ public:
 
 private:
     eigen_map_2d_t m_embeddings_matrix;
-    int m_special_token_id;
+    int m_image_token_id;
+    int m_video_token_id;
+    std::vector<size_t> m_video_frames_count_per_video;
     size_t m_special_token_embeddings_count;
     BufferPtr m_embeddings;
 };

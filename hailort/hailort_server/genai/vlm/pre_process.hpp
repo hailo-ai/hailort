@@ -27,6 +27,35 @@ static const uint32_t VISION_PATH_SIZE = 14;
 static const uint32_t MERGE_SIZE_H = 2;
 static const uint32_t MERGE_SIZE_W = 2;
 
+class EmbeddingsVectorState {
+public:
+    EmbeddingsVectorState(const std::vector<BufferPtr> &embeddings_vector, uint32_t embeddings_per_frame) :
+        m_embeddings_vector(embeddings_vector), m_current_frame_index(0), m_current_embedding_index_in_frame(0),
+        m_embeddings_per_frame(embeddings_per_frame) {}
+
+    Expected<std::pair<uint32_t, uint32_t>> get_next_embedding_index()
+    {
+        if (m_current_embedding_index_in_frame >= m_embeddings_per_frame) {
+            m_current_frame_index++;
+            m_current_embedding_index_in_frame = 0;
+        }
+        return std::make_pair(m_current_frame_index, m_current_embedding_index_in_frame++);
+    }
+
+    Expected<MemoryView> get_frame_embedding_view(uint32_t frame_index) const
+    {
+        CHECK(frame_index < m_embeddings_vector.size(), HAILO_INVALID_OPERATION, "Frame index {} is out of bounds, expected to be less than {}", frame_index, m_embeddings_vector.size());
+        return MemoryView(m_embeddings_vector[frame_index]);
+    }
+
+private:
+    std::vector<BufferPtr> m_embeddings_vector;
+    uint32_t m_current_frame_index;
+    uint32_t m_current_embedding_index_in_frame;
+    uint32_t m_embeddings_per_frame;
+};
+
+
 class VLMPreProcess : public LLMPreProcess
 {
 public:
@@ -36,8 +65,8 @@ public:
         const InputLayersNamesSuffixes &input_layers_names_suffixes, const PreProcessParams &pre_process_params);
 
     hailo_status prepare_inputs_prefill(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer,
-        std::vector<MemoryView> input_embeddings, const std::vector<MemoryView> &input_frames_embeddings,
-        uint32_t &current_frame_index, uint32_t &current_emb_index_in_frame);
+        std::vector<EmbeddingViewWrapper> input_embeddings, EmbeddingsVectorState &standalone_frame_embeddings_state,
+        EmbeddingsVectorState &video_embeddings_state);
 
     VLMPreProcess(Eigen::VectorXf &&theta, Eigen::Matrix<uint16_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> &&local_cached_embeddings,
         const std::map<std::string, size_t> &prefill_inputs_frame_size, const std::map<std::string, size_t> &tbt_inputs_frame_size,

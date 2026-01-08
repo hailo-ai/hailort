@@ -26,7 +26,6 @@ Expected<std::shared_ptr<VDeviceCoreOp>> VDeviceCoreOp::create(VDevice &vdevice,
     CoreOpsSchedulerWeakPtr core_ops_scheduler, vdevice_core_op_handle_t core_op_handle,
     const std::string &hef_hash)
 {
-
     for (auto &core_op : core_ops) {
         core_op.second->set_vdevice_core_op_handle(core_op_handle);
         for (auto &stream : core_op.second->get_input_streams()) {

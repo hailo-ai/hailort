@@ -37,7 +37,7 @@
 #include "vdma/channel/boundary_channel.hpp"
 #include "vdma/pcie/pcie_device.hpp"
 #include "internal_buffer_manager.hpp"
-#include "vdma/memory/continuous_buffer.hpp"
+#include "vdma/memory/cma_buffer.hpp"
 
 namespace hailort
 {
@@ -178,6 +178,11 @@ public:
         CONTROL_PROTOCOL__context_switch_context_type_t context_type,
         bool zero_copy_config_over_descs, const ConfigBufferInfoMap &config_info={});
 
+    void reserve_contexts(size_t additional_contexts)
+    {
+        m_contexts_resources.reserve(m_contexts_resources.size() + additional_contexts);
+    }
+
     const SupportedFeatures &get_supported_features() const
     {
         return m_core_op_metadata->supported_features();
@@ -310,7 +315,7 @@ private:
     // Mapped buffers would be used only in hw only flow
     std::map<vdma::ChannelId, std::shared_ptr<vdma::MappedBuffer>> m_hw_only_desc_boundary_buffers;
     // Use ccb buffer for hw only flow
-    std::map<vdma::ChannelId, std::shared_ptr<vdma::ContinuousBuffer>> m_hw_only_ccb_boundary_buffers;
+    std::map<vdma::ChannelId, std::shared_ptr<vdma::CmaBuffer>> m_hw_only_ccb_boundary_buffers;
     std::shared_ptr<InternalBufferManager> m_internal_buffer_manager;
     std::shared_ptr<ActionListBufferBuilder> m_action_list_buffer_builder;
     CONTROL_PROTOCOL__hw_infer_channels_info_t m_hw_infer_channels_info;

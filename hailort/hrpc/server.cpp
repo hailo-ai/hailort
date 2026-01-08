@@ -142,24 +142,25 @@ hailo_status Server::serve_client(ClientConnectionPtr client_connection)
 
 hailo_status Server::handle_client_request(ClientConnectionPtr client_connection, std::shared_ptr<ActionHandler> &handler)
 {
-    TRY_WITH_ACCEPTABLE_STATUS(HAILO_COMMUNICATION_CLOSED, auto request, client_connection->read_message());
-    TRY(handler, m_dispatcher.create_handler(request.header.action_id));
+    TRY_WITH_ACCEPTABLE_STATUS(HAILO_COMMUNICATION_CLOSED, auto request_buffer, client_connection->read_message());
+    auto [request_header, request_body] = client_connection->parse_message(request_buffer);
 
-    auto status = handler->parse_request(MemoryView(request.buffer->data(), request.header.size), client_connection);
+    TRY(handler, m_dispatcher.create_handler(request_header.action_id));
+
+    auto status = handler->parse_request(request_body, client_connection);
     if (HAILO_COMMUNICATION_CLOSED == status) {
         LOGGER__INFO("Client communication closed, client id: {}", client_connection->client_id());
         return HAILO_COMMUNICATION_CLOSED;
     }
 
-    ResponseWriter response_writer(request.header, client_connection, m_write_mutex);
+    ResponseWriter response_writer(request_header, client_connection, m_write_mutex);
     if (HAILO_SUCCESS != status) {
         // If the read buffers failed for some reason, try to write the unsuccessful status back to the client.
         return response_writer.write(status);
     }
 
-    status = client_connection->enqueue_action([handler, response_writer, buffer = request.buffer] () mutable -> hailo_status {
+    status = client_connection->enqueue_action([handler, response_writer, buffer = request_buffer] () mutable -> hailo_status {
         // Capturing buffer here to prevent it from being freed before do_action, because on some actions we deserialize the request there.
-        // This can be optimized by moving the deserialization to the parse_request function
         auto status = handler->do_action(response_writer);
         if (HAILO_SUCCESS != status) {
             // If the action failed for some reason, try to write the unsuccessful status back to the client.

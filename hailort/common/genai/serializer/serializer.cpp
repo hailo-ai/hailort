@@ -101,7 +101,7 @@ Expected<Buffer> LLMCreateSerializer::serialize_request(const hailo_vdevice_para
 }
 
 Expected<Buffer> LLMCreateSerializer::serialize_request(const hailo_vdevice_params_t &vdevice_params, const LLMParams &llm_params,
-    const std::string &hef_path, uint64_t file_size)
+    const std::string &hef_path, const std::vector<Hef::HefChunksInfo> &chunks_to_transfer, uint64_t total_hef_size)
 {
     LLM_Create_Request llm_create;
 
@@ -113,10 +113,16 @@ Expected<Buffer> LLMCreateSerializer::serialize_request(const hailo_vdevice_para
     std::string group_id = get_group_id_as_string(vdevice_params);
     llm_create.set_group_id(group_id);
 
-    // Set file size for chunked transfer
-    llm_create.set_file_size(file_size);
+    // Set chunks to transfer with names
+    for (const auto &chunk : chunks_to_transfer) {
+        auto *chunk_proto = llm_create.add_chunks_to_transfer();
+        chunk_proto->set_name(chunk.name);
+        chunk_proto->set_size(chunk.size);
+        chunk_proto->set_offset(chunk.offset);
+    }
 
     llm_create.set_tokenizer_on_host(llm_params.optimize_memory_on_device());
+    llm_create.set_total_hef_size(total_hef_size);
 
     return get_serialized_message<LLM_Create_Request>(llm_create, static_cast<uint32_t>(HailoGenAIActionID::LLM__CREATE), "LLM_Create_Request");
 }
@@ -126,8 +132,15 @@ Expected<LLMCreateSerializer::RequestInfo> LLMCreateSerializer::deserialize_requ
     TRY(auto llm_create, get_deserialized_message<LLM_Create_Request>(serialized_request,
         static_cast<uint32_t>(HailoGenAIActionID::LLM__CREATE), "LLM_Create_Request"));
 
+    std::vector<Hef::HefChunksInfo> chunks_to_transfer;
+    chunks_to_transfer.reserve(llm_create.chunks_to_transfer_size());
+    for (const auto &chunk : llm_create.chunks_to_transfer()) {
+        chunks_to_transfer.emplace_back(chunk.name(), chunk.size(), chunk.offset());
+    }
+
     return LLMCreateSerializer::RequestInfo(
-        llm_create.lora_name(), llm_create.hef_path(), llm_create.group_id(), llm_create.file_size(), llm_create.tokenizer_on_host());
+        llm_create.lora_name(), llm_create.hef_path(), llm_create.group_id(), chunks_to_transfer,
+        llm_create.tokenizer_on_host(), llm_create.total_hef_size());
 }
 
 Expected<Buffer> LLMCreateSerializer::serialize_reply(hailo_status status, const std::string &prompt_template, uint32_t embedding_features)
@@ -341,7 +354,8 @@ Expected<Buffer> LLMGeneratorReadSerializer::serialize_request(const std::chrono
 
     for (const auto &embedding : request.embeddings) {
         auto *embedding_proto = generation_input_proto->add_embeddings();
-        embedding_proto->assign(reinterpret_cast<const char*>(embedding->data()), embedding->size());
+        embedding_proto->set_data(reinterpret_cast<const char*>(embedding.data()), embedding.size());
+        embedding_proto->set_type(static_cast<uint32_t>(embedding.type()));
     }
 
     return get_serialized_message<LLM_Generator_Read_Request>(llm_generator_read,
@@ -361,8 +375,8 @@ Expected<std::pair<std::chrono::milliseconds, LLMGeneratorReadSerializer::TextGe
     }
 
     for (const auto &embedding : llm_generator_read.generation_input().embeddings()) {
-        TRY(auto buffer, Buffer::create_shared(reinterpret_cast<const uint8_t*>(embedding.data()), embedding.size()));
-        input.embeddings.push_back(buffer);
+        TRY(auto buffer, Buffer::create_shared(reinterpret_cast<const uint8_t*>(embedding.data().data()), embedding.data().size(), BufferStorageParams::create_dma()));
+        input.embeddings.emplace_back(buffer, static_cast<EmbeddingViewWrapper::EmbeddingType>(embedding.type()));
     }
 
     return std::make_pair(std::chrono::milliseconds(llm_generator_read.timeout_ms()), input);
@@ -932,8 +946,8 @@ Expected<Buffer> VLMCreateSerializer::serialize_request(const hailo_vdevice_para
         static_cast<uint32_t>(HailoGenAIActionID::VLM__CREATE), "VLM_Create_Request");
 }
 
-Expected<Buffer> VLMCreateSerializer::serialize_request(const hailo_vdevice_params_t &vdevice_params, const std::string &hef_path, uint64_t file_size,
-    bool optimize_memory_on_device)
+Expected<Buffer> VLMCreateSerializer::serialize_request(const hailo_vdevice_params_t &vdevice_params,
+    const std::string &hef_path, const std::vector<Hef::HefChunksInfo> &chunks_to_transfer, uint64_t total_hef_size, bool optimize_memory_on_device)
 {
     VLM_Create_Request vlm_create;
 
@@ -943,27 +957,39 @@ Expected<Buffer> VLMCreateSerializer::serialize_request(const hailo_vdevice_para
         vlm_create.set_hef_path(hef_path);
     }
 
-    // Set file size for chunked transfer
-    vlm_create.set_file_size(file_size);
+    // Set chunks for chunked transfer
+    for (const auto &chunk : chunks_to_transfer) {
+        auto *chunk_proto = vlm_create.add_chunks_to_transfer();
+        chunk_proto->set_name(chunk.name);
+        chunk_proto->set_size(chunk.size);
+        chunk_proto->set_offset(chunk.offset);
+    }
 
     vlm_create.set_tokenizer_on_host(optimize_memory_on_device);
+    vlm_create.set_total_hef_size(total_hef_size);
 
     return get_serialized_message<VLM_Create_Request>(vlm_create,
         static_cast<uint32_t>(HailoGenAIActionID::VLM__CREATE), "VLM_Create_Request");
 }
 
-Expected<std::tuple<std::string, std::string, uint64_t, bool>> VLMCreateSerializer::deserialize_request(const MemoryView &serialized_request)
+Expected<std::tuple<std::string, std::string, std::vector<Hef::HefChunksInfo>, bool, uint64_t>> VLMCreateSerializer::deserialize_request(const MemoryView &serialized_request)
 {
     TRY(auto vlm_create, get_deserialized_message<VLM_Create_Request>(serialized_request,
         static_cast<uint32_t>(HailoGenAIActionID::VLM__CREATE), "VLM_Create_Request"));
 
-    return std::tuple<std::string, std::string, uint64_t, bool>(
-        vlm_create.group_id(), vlm_create.hef_path(), vlm_create.file_size(), vlm_create.tokenizer_on_host());
+    std::vector<Hef::HefChunksInfo> chunks_to_transfer;
+    chunks_to_transfer.reserve(vlm_create.chunks_to_transfer_size());
+    for (const auto &chunk : vlm_create.chunks_to_transfer()) {
+        chunks_to_transfer.emplace_back(chunk.name(), chunk.size(), chunk.offset());
+    }
+
+    return std::tuple<std::string, std::string, std::vector<Hef::HefChunksInfo>, bool, uint64_t>(
+        vlm_create.group_id(), vlm_create.hef_path(), chunks_to_transfer, vlm_create.tokenizer_on_host(), vlm_create.total_hef_size());
 }
 
 Expected<Buffer> VLMCreateSerializer::serialize_reply(hailo_status status,
     hailo_3d_image_shape_t input_frame_shape, hailo_format_t input_frame_format, const std::string &prompt_template, uint32_t embedding_features,
-    uint32_t image_pad_token_id, uint32_t embeddings_per_frame)
+    uint32_t image_pad_token_id, uint32_t video_pad_token_id, uint32_t embeddings_per_frame)
 {
     VLM_Create_Reply vlm_create;
     vlm_create.set_status(status);
@@ -981,13 +1007,14 @@ Expected<Buffer> VLMCreateSerializer::serialize_reply(hailo_status status,
     vlm_create.set_embedding_features(embedding_features);
 
     vlm_create.set_image_pad_token_id(image_pad_token_id);
+    vlm_create.set_video_pad_token_id(video_pad_token_id);
     vlm_create.set_embeddings_per_frame(embeddings_per_frame);
 
     return get_serialized_message<VLM_Create_Reply>(vlm_create,
         static_cast<uint32_t>(HailoGenAIActionID::VLM__CREATE), "VLM_Create_Reply");
 }
 
-Expected<std::tuple<hailo_3d_image_shape_t, hailo_format_t, std::string, uint32_t, uint32_t, uint32_t>> VLMCreateSerializer::deserialize_reply(const MemoryView &serialized_reply)
+Expected<VLMCreateSerializer::ReplyInfo> VLMCreateSerializer::deserialize_reply(const MemoryView &serialized_reply)
 {
     TRY(auto vlm_create, get_deserialized_message<VLM_Create_Reply>(serialized_reply,
         static_cast<uint32_t>(HailoGenAIActionID::VLM__CREATE), "VLM_Create_Reply"));
@@ -1004,25 +1031,35 @@ Expected<std::tuple<hailo_3d_image_shape_t, hailo_format_t, std::string, uint32_
     input_frame_format.order = static_cast<hailo_format_order_t>(vlm_create.frame_format().format_order());
     input_frame_format.type = static_cast<hailo_format_type_t>(vlm_create.frame_format().format_type());
 
-    return std::make_tuple(input_frame_shape, input_frame_format, vlm_create.prompt_template(), vlm_create.embedding_features(),
-        vlm_create.image_pad_token_id(), vlm_create.embeddings_per_frame());
+    return VLMCreateSerializer::ReplyInfo(input_frame_shape, input_frame_format, vlm_create.prompt_template(), vlm_create.embedding_features(),
+        vlm_create.image_pad_token_id(), vlm_create.video_pad_token_id(), vlm_create.embeddings_per_frame());
 }
 
-Expected<Buffer> VLMGeneratorGenerateSerializer::serialize_request(uint32_t number_of_frames)
+Expected<Buffer> VLMGeneratorGenerateSerializer::serialize_request(uint32_t number_of_standalone_frames,
+    const std::vector<uint32_t> &video_frames_count_per_video)
 {
     VLM_Generator_Generate_Request vlm_generator_generate;
-    vlm_generator_generate.set_number_of_frames(number_of_frames);
+    vlm_generator_generate.set_number_of_frames(number_of_standalone_frames);
+    for (auto count : video_frames_count_per_video) {
+        vlm_generator_generate.add_video_frames_count_per_video(count);
+    }
 
     return get_serialized_message<VLM_Generator_Generate_Request>(vlm_generator_generate,
         static_cast<uint32_t>(HailoGenAIActionID::VLM__GENERATOR_GENERATE), "VLM_Generator_Generate_Request");
 }
 
-Expected<size_t> VLMGeneratorGenerateSerializer::deserialize_request(const MemoryView &serialized_request)
+Expected<std::tuple<uint32_t, std::vector<uint32_t>>> VLMGeneratorGenerateSerializer::deserialize_request(const MemoryView &serialized_request)
 {
     TRY(auto vlm_generator_generate, get_deserialized_message<VLM_Generator_Generate_Request>(serialized_request,
         static_cast<uint32_t>(HailoGenAIActionID::VLM__GENERATOR_GENERATE), "VLM_Generator_Generate_Request"));
 
-    return vlm_generator_generate.number_of_frames();
+        std::vector<uint32_t> video_frames_count_per_video;
+        video_frames_count_per_video.reserve(vlm_generator_generate.video_frames_count_per_video_size());
+        for (int i = 0; i < vlm_generator_generate.video_frames_count_per_video_size(); i++) {
+            video_frames_count_per_video.push_back(vlm_generator_generate.video_frames_count_per_video(i));
+        }
+    
+        return std::make_tuple(vlm_generator_generate.number_of_frames(), video_frames_count_per_video);
 }
 
 Expected<Buffer> VLMGeneratorGenerateSerializer::serialize_reply(hailo_status status)
@@ -1100,29 +1137,39 @@ Expected<std::string> Speech2TextCreateSerializer::deserialize_request(const Mem
     return std::string(speech2text_create.group_id());
 }
 
-Expected<Buffer> Speech2TextCreateSerializer::serialize_reply(hailo_status status)
+Expected<Buffer> Speech2TextCreateSerializer::serialize_reply(hailo_status status, const Speech2TextGeneratorParams &generator_params)
 {
     Speech2Text_Create_Reply speech2text_create;
     speech2text_create.set_status(status);
+    auto generator_params_proto = speech2text_create.mutable_generator_params();
+    generator_params_proto->set_task_type(static_cast<uint32_t>(generator_params.task()));
+    generator_params_proto->set_language(std::string(generator_params.language()));
+    generator_params_proto->set_repetition_penalty(generator_params.repetition_penalty());
 
     return get_serialized_message<Speech2Text_Create_Reply>(speech2text_create,
         static_cast<uint32_t>(HailoGenAIActionID::SPEECH2TEXT__CREATE), "Speech2Text_Create_Reply");
 }
 
-hailo_status Speech2TextCreateSerializer::deserialize_reply(const MemoryView &serialized_reply)
+Expected<Speech2TextGeneratorParams> Speech2TextCreateSerializer::deserialize_reply(const MemoryView &serialized_reply)
 {
     TRY(auto speech2text_create, get_deserialized_message<Speech2Text_Create_Reply>(serialized_reply,
         static_cast<uint32_t>(HailoGenAIActionID::SPEECH2TEXT__CREATE), "Speech2Text_Create_Reply"));
 
     CHECK(speech2text_create.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to de-serialize 'Speech2Text_Create_Reply'");
-    return static_cast<hailo_status>(speech2text_create.status());
+    CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(speech2text_create.status()), "Failed to create Speech2Text");
+
+    Speech2TextGeneratorParams generator_params(static_cast<Speech2TextTask>(speech2text_create.generator_params().task_type()),
+        std::string(speech2text_create.generator_params().language()), speech2text_create.generator_params().repetition_penalty());
+    return generator_params;
 }
 
 Expected<Buffer> Speech2TextGenerateSerializer::serialize_request(const Speech2TextGeneratorParams &generator_params)
 {
     Speech2Text_Generate_Request speech2text_generate;
-    speech2text_generate.set_task_type(static_cast<uint32_t>(generator_params.task()));
-    speech2text_generate.set_language(std::string(generator_params.language()));
+    auto generator_params_proto = speech2text_generate.mutable_generator_params();
+    generator_params_proto->set_task_type(static_cast<uint32_t>(generator_params.task()));
+    generator_params_proto->set_language(std::string(generator_params.language()));
+    generator_params_proto->set_repetition_penalty(generator_params.repetition_penalty());
 
     return get_serialized_message<Speech2Text_Generate_Request>(speech2text_generate,
         static_cast<uint32_t>(HailoGenAIActionID::SPEECH2TEXT__GENERATE), "Speech2Text_Generate_Request");
@@ -1133,7 +1180,8 @@ Expected<Speech2TextGeneratorParams> Speech2TextGenerateSerializer::deserialize_
     TRY(auto speech2text_generate, get_deserialized_message<Speech2Text_Generate_Request>(serialized_request,
         static_cast<uint32_t>(HailoGenAIActionID::SPEECH2TEXT__GENERATE), "Speech2Text_Generate_Request"));
 
-    Speech2TextGeneratorParams generator_params(static_cast<Speech2TextTask>(speech2text_generate.task_type()), std::string(speech2text_generate.language()));
+    Speech2TextGeneratorParams generator_params(static_cast<Speech2TextTask>(speech2text_generate.generator_params().task_type()),
+        std::string(speech2text_generate.generator_params().language()), speech2text_generate.generator_params().repetition_penalty());
     return generator_params;
 }
 

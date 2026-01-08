@@ -70,7 +70,7 @@ public:
 
     // Map descriptors starting at offset to the start of buffer, wrapping around the descriptor list as needed
     // On hailo8, we allow configuring buffer without specific channel index (default is INVALID_VDMA_CHANNEL_INDEX).
-    hailo_status program(MappedBuffer& buffer, size_t buffer_size, size_t buffer_offset,
+    hailo_status program(MappedBufferPtr buffer, size_t buffer_size, size_t buffer_offset,
         ChannelId channel_id, uint32_t starting_desc = 0,
         uint32_t batch_size = 1,
         InterruptsDomain last_desc_interrupts = InterruptsDomain::NONE);

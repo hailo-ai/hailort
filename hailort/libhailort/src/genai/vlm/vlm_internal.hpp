@@ -31,10 +31,13 @@ class VLMGenerator::Impl final : public TextGeneratorBase
 {
 public:
     Impl(std::shared_ptr<SessionWrapper> session, std::shared_ptr<PromptTemplateHandler> prompt_template_handler,
-        std::shared_ptr<HailoTokenizer> tokenizer, std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder);
+        std::shared_ptr<HailoTokenizer> tokenizer, std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder,
+        uint32_t max_generated_tokens);
 
-    Expected<LLMGeneratorCompletion> generate(const std::string &prompt, const std::vector<MemoryView> &input_frames);
-    Expected<LLMGeneratorCompletion> generate(const std::vector<std::string> &messages_json_strings, const std::vector<MemoryView> &input_frames);
+    Expected<LLMGeneratorCompletion> generate(const std::string &prompt, const std::vector<MemoryView> &input_frames,
+        const std::vector<std::vector<MemoryView>> &input_videos);
+    Expected<LLMGeneratorCompletion> generate(const std::vector<std::string> &messages_json_strings, const std::vector<MemoryView> &input_frames,
+        const std::vector<std::vector<MemoryView>> &input_videos);
 
 private:
     Expected<std::string> apply_vlm_template_from_json(const std::vector<std::string> &messages_json_strings);
@@ -45,6 +48,7 @@ private:
     // Optionals, only used if optimize_memory_on_device is true
     std::shared_ptr<HailoTokenizer> m_tokenizer;
     std::shared_ptr<TokenEmbedder<uint16_t>> m_token_embedder;
+    uint32_t m_max_generated_tokens;
 };
 
 
@@ -76,7 +80,7 @@ public:
 
     // Direct generation method for JSON structured prompts
     Expected<LLMGeneratorCompletion> generate(const LLMGeneratorParams &params, const std::vector<std::string> &messages_json_strings,
-        const std::vector<MemoryView> &input_frames);
+        const std::vector<MemoryView> &input_frames, const std::vector<std::vector<MemoryView>> &input_videos);
 
     ~Impl();
 

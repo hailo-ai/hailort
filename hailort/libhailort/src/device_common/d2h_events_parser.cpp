@@ -36,6 +36,7 @@ static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_health_monitor_clock_changed_even
 static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_hw_infer_manager_infer_done_notification(D2H_EVENT_MESSAGE_t *d2h_notification_message);
 static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_context_switch_run_time_error_notification(D2H_EVENT_MESSAGE_t *d2h_notification_message);
 static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_nn_core_crc_error_notification(D2H_EVENT_MESSAGE_t *d2h_notification_message);
+static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_throttling_state_change_notification(D2H_EVENT_MESSAGE_t *d2h_notification_message);
 
 /**********************************************************************
  * Globals
@@ -55,6 +56,7 @@ firmware_notifications_parser_t g_firmware_notifications_parser[D2H_EVENT_ID_COU
     D2H_EVENTS__parse_hw_infer_manager_infer_done_notification,
     D2H_EVENTS__parse_context_switch_run_time_error_notification,
     D2H_EVENTS__parse_nn_core_crc_error_notification,
+    D2H_EVENTS__parse_throttling_state_change_notification,
 };
 /**********************************************************************
  * Internal Functions
@@ -432,10 +434,31 @@ static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_nn_core_crc_error_notification(D2
     return status;
 }
 
+static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_throttling_state_change_notification(D2H_EVENT_MESSAGE_t *d2h_notification_message)
+{
+    HAILO_COMMON_STATUS_t status = HAILO_COMMON_STATUS__UNINITIALIZED;
+
+    CHECK_COMMON_STATUS(D2H_EVENT_THROTTLING_STATE_CHANGE_PARAMETER_COUNT == d2h_notification_message->header.parameter_count,
+            HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_COUNT,
+            "d2h event invalid parameter count: {}", d2h_notification_message->header.parameter_count);
+
+    CHECK_COMMON_STATUS(d2h_notification_message->header.payload_length ==
+            sizeof(d2h_notification_message->message_parameters.throttling_state_change),
+            HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_LENGTH,
+            "d2h event invalid payload_length: {}", d2h_notification_message->header.payload_length);
+
+    LOGGER__INFO("Got Throttling-State Change event. New state is: {}",
+            d2h_notification_message->message_parameters.throttling_state_change.throttling_state);
+
+    status = HAILO_COMMON_STATUS__SUCCESS;
+
+    return status;
+}
+
 /**********************************************************************
  * Public Functions
  **********************************************************************/
-HAILO_COMMON_STATUS_t D2H_EVENTS__parse_event(D2H_EVENT_MESSAGE_t *d2h_notification_message){
+HAILO_COMMON_STATUS_t D2H_EVENTS__parse_event(D2H_EVENT_MESSAGE_t *d2h_notification_message) {
 
     HAILO_COMMON_STATUS_t status = HAILO_COMMON_STATUS__UNINITIALIZED;
 

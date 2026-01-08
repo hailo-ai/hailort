@@ -36,7 +36,6 @@ set(SRC_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/channel/channels_group.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/channel/interrupts_dispatcher.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/channel/transfer_launcher.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/channel/transfer_common.cpp
 
     ${CMAKE_CURRENT_SOURCE_DIR}/memory/descriptor_list.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/memory/vdma_edge_layer.cpp
@@ -46,8 +45,7 @@ set(SRC_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/memory/multi_sg_edge_layer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/memory/continuous_edge_layer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/memory/buffer_requirements.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/memory/vdma_buffer.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/memory/continuous_buffer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/memory/cma_buffer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/memory/sg_buffer.cpp
 
     ${DRIVER_SRC_FILES}

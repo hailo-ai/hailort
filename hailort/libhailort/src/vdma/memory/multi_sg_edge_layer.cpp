@@ -36,7 +36,7 @@ Expected<MultiSgEdgeLayer> MultiSgEdgeLayer::create(std::shared_ptr<SgBuffer> &&
     for (uint32_t i = 0; i < num_descriptor_lists; i++) {
         TRY(auto desc_list, DescriptorList::create(desc_count, desc_page_size, is_circular, driver));
 
-        auto status = desc_list.program(*(buffer->get_mapped_buffer()), size, offset, channel_id);
+        auto status = desc_list.program(buffer->get_mapped_buffer(), size, offset, channel_id);
         CHECK_SUCCESS(status);
 
         desc_lists.emplace_back(std::move(desc_list));
@@ -78,7 +78,7 @@ Expected<uint32_t> MultiSgEdgeLayer::program_descriptors(size_t transfer_size,
 {
     // Program the next descriptor list (for single list, next == current)
     uint32_t next_desc_list_index = get_next_descriptor_list_index();
-    CHECK_SUCCESS(m_desc_lists[next_desc_list_index].program(*get_mapped_buffer(), transfer_size, buffer_offset, m_channel_id,
+    CHECK_SUCCESS(m_desc_lists[next_desc_list_index].program(get_mapped_buffer(), transfer_size, buffer_offset, m_channel_id,
         static_cast<uint32_t>(desc_offset), batch_size,
         InterruptsDomain::NONE));
 

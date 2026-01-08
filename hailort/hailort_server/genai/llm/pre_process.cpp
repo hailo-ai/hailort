@@ -113,11 +113,11 @@ LLMPreProcess::LLMPreProcess(Eigen::VectorXf &&theta, eigen_matrix_2d_u16_t &&lo
     int position_ids_features = m_params.prefill_input_tokens_count;
     m_local_cached_pos_ids = Eigen::Tensor<uint32_t, 4, Eigen::RowMajor>(position_ids_height, position_ids_width, position_ids_features, 1);
 
-    const int MROPE_SECTIONS_COUNT = MROPE_SECTION_ORIGINAL.size();
-
     // Generate cumulative mrope_section indices
-    m_mrope_section = std::vector<int>(MROPE_SECTIONS_COUNT);
-    std::partial_sum(MROPE_SECTION_ORIGINAL.begin(), MROPE_SECTION_ORIGINAL.end(), m_mrope_section.begin());
+    m_mrope_section_doubled = m_params.mrope_section;
+    m_mrope_section_doubled.insert(m_mrope_section_doubled.end(), m_params.mrope_section.begin(), m_params.mrope_section.end());
+    m_cumulative_mrope_section.resize(m_mrope_section_doubled.size());
+    std::partial_sum(m_mrope_section_doubled.begin(), m_mrope_section_doubled.end(), m_cumulative_mrope_section.begin());
 }
 
 void LLMPreProcess::prepare_embeddings_input(MemoryView &layer_buffer, uint32_t number_of_tokens)
@@ -216,9 +216,9 @@ std::pair<Eigen::Tensor<float32_t, 4, Eigen::RowMajor>, Eigen::Tensor<float32_t,
 
     int current_col = 0;
     
-    for (size_t section = 0; section < MROPE_SECTION_ORIGINAL.size(); ++section) {
-        int start_idx = (section == 0) ? 0 : m_mrope_section[section - 1];
-        int slice_size = MROPE_SECTION_ORIGINAL[section];
+    for (size_t section = 0; section < m_mrope_section_doubled.size(); ++section) {
+        int start_idx = (section == 0) ? 0 : m_cumulative_mrope_section[section - 1];
+        int slice_size = m_mrope_section_doubled[section];
         int section_mod_3 = static_cast<int>(section % 3);
 
         for (int j = 0; j < position_ids_width; ++j) {
@@ -256,7 +256,7 @@ hailo_status LLMPreProcess::prepare_positional_embed_inputs(std::map<layer_name_
     return fill_positional_embed(layer_name_to_input_buffer, rope_pair.first, rope_pair.second);
 }
 
-void LLMPreProcess::update_cache_from_embeddings(const std::vector<MemoryView> &embedding_rows_views)
+void LLMPreProcess::update_cache_from_embeddings(const std::vector<EmbeddingViewWrapper> &embedding_rows_views)
 {
     auto single_row_bytes = static_cast<size_t>(m_local_cached_embeddings.cols() * sizeof(uint16_t));
     auto num_rows = static_cast<int>(embedding_rows_views.size());
@@ -304,7 +304,7 @@ void LLMPreProcess::shift_local_cached_positional_embeds(int tokens_count)
 }
 
 hailo_status LLMPreProcess::prepare_inputs_prefill(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer,
-    const std::vector<MemoryView> &input_tokens_embeddings)
+    const std::vector<EmbeddingViewWrapper> &input_tokens_embeddings)
 {
     int num_rows = static_cast<int>(input_tokens_embeddings.size());
     CHECK(static_cast<size_t>(num_rows) <= m_params.prefill_input_tokens_count, HAILO_INVALID_ARGUMENT,
@@ -322,7 +322,7 @@ hailo_status LLMPreProcess::prepare_inputs_prefill(std::map<layer_name_t, Memory
     return HAILO_SUCCESS;
 }
 
-hailo_status LLMPreProcess::prepare_inputs_tbt(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer, const std::vector<MemoryView> &input_token_embedding)
+hailo_status LLMPreProcess::prepare_inputs_tbt(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer, const std::vector<EmbeddingViewWrapper> &input_token_embedding)
 {
     CHECK_SUCCESS(validate_inputs(layer_name_to_input_buffer, m_tbt_inputs_frame_size));
 

@@ -120,7 +120,7 @@ Expected<std::unique_ptr<StreamBufferPool>> VdmaInputStream::allocate_buffer_poo
             m_channel->get_desc_list().desc_page_size(), m_channel->get_desc_list().count(), frame_size));
 
         // Bind the buffer to the channel to avoid the need to do it on every transfer.
-        CHECK_SUCCESS(m_channel->bind_buffer(circular_pool->get_base_buffer()));
+        CHECK_SUCCESS(m_channel->bind_cyclic_buffer(circular_pool->get_base_buffer()));
 
         return std::unique_ptr<StreamBufferPool>(std::move(circular_pool));
     }
@@ -174,7 +174,7 @@ Expected<TransferRequest> VdmaInputStream::align_transfer_request(TransferReques
 
 hailo_status VdmaInputStream::prepare_transfer(TransferRequest &&transfer_request)
 {
-    if (TransferBufferType::MEMORYVIEW == transfer_request.transfer_buffers[0].type()) {
+    if (transfer_request.transfer_buffers[0].is_memview()) {
         const auto is_request_aligned = transfer_request.transfer_buffers[0].is_aligned_for_dma();
         if (!is_request_aligned) {
             // Best effort, if buffer is not aligned - will program descriptors later
@@ -189,7 +189,7 @@ hailo_status VdmaInputStream::write_async_impl(TransferRequest &&transfer_reques
 {
     TRACE(FrameDequeueH2DTrace, m_device.get_dev_id(), m_core_op_handle, name());
 
-    if (transfer_request.transfer_buffers[0].type() == TransferBufferType::DMABUF) {
+    if (transfer_request.transfer_buffers[0].is_dmabuf()) {
         return m_channel->launch_transfer(std::move(transfer_request));
     } else {
         const auto is_request_aligned = transfer_request.transfer_buffers[0].is_aligned_for_dma();
@@ -287,7 +287,7 @@ Expected<std::unique_ptr<StreamBufferPool>> VdmaOutputStream::allocate_buffer_po
             m_channel->get_desc_list().desc_page_size(), m_channel->get_desc_list().count(), m_transfer_size));
 
         // Bind the buffer to the channel to avoid the need to do it on every transfer.
-        CHECK_SUCCESS(m_channel->bind_buffer(circular_pool->get_base_buffer()));
+        CHECK_SUCCESS(m_channel->bind_cyclic_buffer(circular_pool->get_base_buffer()));
 
         return std::unique_ptr<StreamBufferPool>(std::move(circular_pool));
     }
@@ -360,7 +360,7 @@ hailo_status VdmaOutputStream::read_async_impl(TransferRequest &&transfer_reques
             original_callback(status);
         };
     }
-    if (transfer_request.transfer_buffers[0].type() == TransferBufferType::DMABUF) {
+    if (transfer_request.transfer_buffers[0].is_dmabuf()) {
         return m_channel->launch_transfer(std::move(transfer_request));
     } else {
         const auto is_request_aligned = transfer_request.transfer_buffers[0].is_aligned_for_dma();
@@ -387,7 +387,7 @@ hailo_status VdmaOutputStream::read_async_impl(TransferRequest &&transfer_reques
 
 hailo_status VdmaOutputStream::prepare_transfer(TransferRequest &&transfer_request)
 {
-    if (TransferBufferType::MEMORYVIEW == transfer_request.transfer_buffers[0].type()) {
+    if (transfer_request.transfer_buffers[0].is_memview()) {
         const auto is_request_aligned = transfer_request.transfer_buffers[0].is_aligned_for_dma();
         TRY(auto is_request_end_aligned, transfer_request.is_request_end_aligned());
         if (!is_request_aligned || !is_request_end_aligned) {

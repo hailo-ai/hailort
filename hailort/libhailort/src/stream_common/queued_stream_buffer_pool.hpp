@@ -28,8 +28,8 @@ public:
     hailo_status dma_map(VDevice &vdevice, hailo_dma_buffer_direction_t direction);
 
     virtual size_t max_queue_size() const override;
-    virtual Expected<TransferBuffer> dequeue() override;
-    virtual hailo_status enqueue(TransferBuffer &&buffer_info) override;
+    virtual Expected<StreamBuffer> dequeue() override;
+    virtual hailo_status enqueue(StreamBuffer &&buffer_info) override;
     virtual void reset_pointers() override;
 
 private:
