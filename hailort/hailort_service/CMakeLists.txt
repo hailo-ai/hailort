@@ -67,7 +67,7 @@ install(
 
 set(DAEMON_PID_DIR "/run/hailo")
 add_definitions(-DHAILO_DAEMON_PID_DIR="${DAEMON_PID_DIR}")
-add_definitions(-DHAILO_DAEMON_PID_FILE="${DAEMON_PID_DIR}/hailort_service.pid")
+add_definitions(-DHAILO_DAEMON_PID_FILE="${DAEMON_PID_DIR}/hailort8_service.pid")
 
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
     # Create empty directory for hailort log file
