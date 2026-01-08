@@ -80,7 +80,7 @@ else()
 endif()
 
 if (UNIX)
-    set(GSTREAMER_LIB_DEST "${CMAKE_INSTALL_LIBDIR}/${CMAKE_SYSTEM_PROCESSOR}-linux-gnu/gstreamer-1.0/")
+    set(GSTREAMER_LIB_DEST "${CMAKE_INSTALL_LIBDIR}/gstreamer-1.0/")
     set(PUBLIC_HEADER_DEST "${CMAKE_INSTALL_INCLUDEDIR}/gstreamer-1.0/gst/hailo")
 elseif (MSVC)
     if ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "AMD64" OR "${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "x64")
