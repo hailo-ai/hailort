@@ -50,6 +50,6 @@ class HailortCliUtil(CmdUtilsBaseUtil):
             raise HailortCliUtilError('hailo has been interrupted by the user')
 
     def run(self, argv):
-        hailortcli_cmd = 'hailortcli'
+        hailortcli_cmd = 'hailort8cli'
         self._logger.info('(hailo) Running command \'{}\' with \'hailortcli\''.format(self._command))
         return self._run_hailortcli(hailortcli_cmd, self._command, argv)
