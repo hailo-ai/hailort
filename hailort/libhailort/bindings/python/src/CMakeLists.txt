@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.5.0)
 project(pyhailort)
 
+set(CMAKE_VERBOSE_MAKEFILE ON)
+
 find_program(CCACHE_PROGRAM ccache)
 find_program(CLACHE_PROGRAM clcache)
 

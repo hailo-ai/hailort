@@ -15,11 +15,11 @@ add_executable(hailort_service
     ${HAILORT_SERVICE_OS_DIR}/hailort_service.cpp
 )
 target_compile_options(hailort_service PRIVATE ${HAILORT_COMPILE_OPTIONS})
-set_property(TARGET hailort_service PROPERTY CXX_STANDARD 14)
+set_property(TARGET hailort_service PROPERTY CXX_STANDARD 17)
 target_link_libraries(hailort_service
     libhailort
     hailort_common
-    grpc++_unsecure
+    PkgConfig::grpc
     hailort_rpc_grpc_proto
 )
 
@@ -67,7 +67,7 @@ install(
 
 set(DAEMON_PID_DIR "/run/hailo")
 add_definitions(-DHAILO_DAEMON_PID_DIR="${DAEMON_PID_DIR}")
-add_definitions(-DHAILO_DAEMON_PID_FILE="${DAEMON_PID_DIR}/hailort_service.pid")
+add_definitions(-DHAILO_DAEMON_PID_FILE="${DAEMON_PID_DIR}/hailort8_service.pid")
 
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
     # Create empty directory for hailort log file

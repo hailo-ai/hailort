@@ -61,7 +61,7 @@ add_executable(hailortcli
 )
 
 target_compile_options(hailortcli PRIVATE ${HAILORT_COMPILE_OPTIONS})
-set_property(TARGET hailortcli PROPERTY CXX_STANDARD 14)
+set_property(TARGET hailortcli PROPERTY CXX_STANDARD 17)
 
 # Link with a relative libhailort
 set_property(TARGET hailortcli PROPERTY INSTALL_RPATH "$ORIGIN")
@@ -72,8 +72,9 @@ target_link_libraries(hailortcli
     CLI11::CLI11
     nlohmann_json
     hailort_common
-    eigen
-    DotWriter
+    absl_log_internal_check_op
+    absl_log_internal_message
+    dotwriter
     scheduler_mon_proto
     profiler_proto)
 
@@ -93,4 +94,3 @@ install(TARGETS hailortcli
    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
    CONFIGURATIONS Release
 )
-cli11_install_completion_file(hailortcli)

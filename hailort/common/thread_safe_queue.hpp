@@ -25,7 +25,7 @@
 #define HAILO_UNDEF_UNIX_FLAG 
 #endif
 
-#include "readerwriterqueue.h"
+#include <readerwriterqueue/readerwriterqueue.h>
 
 #if defined(HAILO_UNDEF_UNIX_FLAG)
 #undef __unix__

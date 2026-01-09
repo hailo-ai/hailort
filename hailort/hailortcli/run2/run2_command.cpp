@@ -50,10 +50,6 @@ VStreamNameValidator::VStreamNameValidator(const CLI::Option *hef_path_option, c
         //TODO: support?
         return std::string();
     };
-    autocomplete_func_ = [hef_path_option, net_group_name_option](const std::string&) {
-        // TODO: remove existing names from prev user input
-        return get_values(hef_path_option->as<std::string>(), net_group_name_option->as<std::string>());
-    };
 }
 
 std::vector<std::string> VStreamNameValidator::get_values(const std::string &hef_path, const std::string &net_group_name)
@@ -96,10 +92,6 @@ StreamNameValidator::StreamNameValidator(const CLI::Option *hef_path_option, con
     func_ = [](std::string&) {
         //TODO: support?
         return std::string();
-    };
-    autocomplete_func_ = [hef_path_option, net_group_name_option](const std::string&) {
-        // TODO: remove existing names from prev user input
-        return get_values(hef_path_option->as<std::string>(), net_group_name_option->as<std::string>());
     };
 }
 
@@ -250,13 +242,6 @@ NetworkGroupNameValidator::NetworkGroupNameValidator(const CLI::Option *hef_path
     func_ = [](std::string&) {
         //TODO: support?
         return std::string();
-    };
-    autocomplete_func_ = [hef_path_option](const std::string&) -> std::vector<std::string>{
-        auto hef = Hef::create(hef_path_option->as<std::string>());
-        if (!hef.has_value()) {
-            return {};
-        }
-        return hef->get_network_groups_names();
     };
 }
 

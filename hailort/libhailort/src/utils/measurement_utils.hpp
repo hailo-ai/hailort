@@ -87,7 +87,7 @@
 #define _HAILO_MEASUREMENT_UTILS_HPP_
 
 #include "measurement_utils_internal.hpp"
-#include <spdlog/fmt/bundled/format.h>
+#include <fmt/format.h>
 
 namespace hailort {
 namespace utils {
