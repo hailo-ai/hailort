@@ -61,8 +61,12 @@ class build_ext(orig_build_ext):
         "LIBHAILORT_PATH",
         "PYTHON_EXECUTABLE",
         "PYTHON_INCLUDE_DIRS",
+        "Python_INCLUDE_DIR",
         "PYTHON_LIBRARY",
+        "Python_LIBRARY",
         "PYBIND11_FINDPYTHON",
+        "PYBIND11_PYTHON_VERSION",
+        "_PYBIND11_CROSSCOMPILING",
     ]
 
     def run(self):
