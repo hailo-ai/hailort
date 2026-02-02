@@ -26,7 +26,7 @@
 #include "common/os_utils.hpp"
 
 #include "device_common/control.hpp"
-#include "vdma/pcie/pcie_device.hpp"
+#include "vdma/legacy_pcie/legacy_pcie_device.hpp"
 #include "utils/sensor_config_utils.hpp"
 #include "utils/hailort_logger.hpp"
 #include "utils/shared_resource_manager.hpp"
@@ -176,7 +176,7 @@ hailo_status hailo_scan_pcie_devices(
     CHECK_ARG_NOT_NULL(pcie_device_infos);
     CHECK_ARG_NOT_NULL(number_of_devices);
 
-    auto scan_results = PcieDevice::scan();
+    auto scan_results = LegacyPcieDevice::scan();
     CHECK_EXPECTED_AS_STATUS(scan_results);
 
     CHECK(scan_results->size() <= pcie_device_infos_length, HAILO_INSUFFICIENT_BUFFER,
@@ -241,6 +241,9 @@ hailo_status hailo_device_get_type_by_device_id(const hailo_device_id_t *device_
         break;
     case Device::Type::INTEGRATED:
         *device_type = HAILO_DEVICE_TYPE_INTEGRATED;
+        break;
+    case Device::Type::USB:
+        *device_type = HAILO_DEVICE_TYPE_USB;
         break;
     default:
         LOGGER__ERROR("Internal failure, invalid device type returned");

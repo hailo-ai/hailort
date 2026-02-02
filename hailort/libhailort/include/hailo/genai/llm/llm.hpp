@@ -251,7 +251,7 @@ public:
      * @note The returned output is a UTF-8 encoded string.
      * @note After calling this function, no further reads should be attempted on this LLMGeneratorCompletion object.
      */
-     Expected<std::string> read_all(std::chrono::milliseconds timeout = HAILO_INFINITE_TIMEOUT);
+     Expected<std::string> read_all(std::chrono::milliseconds timeout = DEFAULT_READ_ALL_TIMEOUT);
 
     /**
      * Returns the current generation status.
@@ -283,6 +283,7 @@ public:
     hailo_status abort();
 
     static constexpr std::chrono::milliseconds DEFAULT_READ_TIMEOUT = std::chrono::seconds(10);
+    static constexpr std::chrono::milliseconds DEFAULT_READ_ALL_TIMEOUT = std::chrono::minutes(10);
 
     class Impl;
     LLMGeneratorCompletion(std::unique_ptr<Impl> pimpl);

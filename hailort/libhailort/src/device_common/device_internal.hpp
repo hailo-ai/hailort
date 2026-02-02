@@ -11,7 +11,7 @@
  * Device                       (External "interface")
  * |-- BaseDevice               (Base classes)
  *     |-- VdmaDevice
- *     |   |-- PcieDevice
+ *     |   |-- LegacyPcieDevice
  *     |   |-- IntegratedDevice
  * |-- DeviceHrpcClient     (RPC handle communicating with the server)
  **/

@@ -8,9 +8,15 @@ add_executable(speech2text_example speech2text_example.cpp)
 
 target_link_libraries(speech2text_example PRIVATE HailoRT::libhailort)
 
-if(WIN32)
+if (WIN32)
+    # Ensure Windows SDK knows the target architecture
+    if (CMAKE_SIZEOF_VOID_P EQUAL 8)
+        add_compile_definitions(_AMD64_=1)
+    else()
+        add_compile_definitions(_X86_=1)
+    endif()
+
     target_compile_options(speech2text_example PRIVATE
-        /DWIN32_LEAN_AND_MEAN
         /DNOMINMAX                  # NOMINMAX is required in order to avoid conflicts with std::min/std::max (otherwise Windows.h defines it's own)
         /wd4201 /wd4251
     )

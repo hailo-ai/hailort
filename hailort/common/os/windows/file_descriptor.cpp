@@ -11,6 +11,9 @@
 #include "common/logger_macros.hpp"
 #include "common/file_descriptor.hpp"
 
+#include <handleapi.h>
+#include <errhandlingapi.h>
+
 namespace hailort
 {
 

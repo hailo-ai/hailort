@@ -35,7 +35,6 @@ struct SupportedFeatures {
     bool aligned_ccws = false;
     bool split_allow_input_action = false;
     bool shared_config = false;
-    bool strict_versioning = false;
 };
 
 // TODO: HRT-17546 - Remove duplication in struct ConfigBufferInfo - we don't need both bursts_sizes and ccw_dma_transfers

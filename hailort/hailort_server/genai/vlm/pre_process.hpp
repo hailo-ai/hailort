@@ -29,13 +29,15 @@ static const uint32_t MERGE_SIZE_W = 2;
 
 class EmbeddingsVectorState {
 public:
-    EmbeddingsVectorState(const std::vector<BufferPtr> &embeddings_vector, uint32_t embeddings_per_frame) :
-        m_embeddings_vector(embeddings_vector), m_current_frame_index(0), m_current_embedding_index_in_frame(0),
-        m_embeddings_per_frame(embeddings_per_frame) {}
+    EmbeddingsVectorState(const std::vector<BufferPtr> &embeddings_vector, const std::vector<size_t> &embeddings_count_per_item) :
+        m_embeddings_vector(embeddings_vector), m_embeddings_count_per_item(embeddings_count_per_item),
+        m_current_frame_index(0), m_current_embedding_index_in_frame(0) {}
 
     Expected<std::pair<uint32_t, uint32_t>> get_next_embedding_index()
     {
-        if (m_current_embedding_index_in_frame >= m_embeddings_per_frame) {
+        CHECK(m_current_frame_index < m_embeddings_count_per_item.size(), HAILO_INVALID_OPERATION,
+            "Frame index {} is out of bounds, expected to be less than {}", m_current_frame_index, m_embeddings_count_per_item.size());
+        if (m_current_embedding_index_in_frame >= m_embeddings_count_per_item[m_current_frame_index]) {
             m_current_frame_index++;
             m_current_embedding_index_in_frame = 0;
         }
@@ -50,9 +52,9 @@ public:
 
 private:
     std::vector<BufferPtr> m_embeddings_vector;
+    std::vector<size_t> m_embeddings_count_per_item;
     uint32_t m_current_frame_index;
     uint32_t m_current_embedding_index_in_frame;
-    uint32_t m_embeddings_per_frame;
 };
 
 

@@ -25,12 +25,13 @@ public:
 
     virtual ~MeasurementLiveTrack() = default;
     virtual hailo_status start_impl() override;
-    virtual uint32_t push_text_impl(std::stringstream &ss) override;
+    virtual std::string get_text_impl() const override;
     virtual void push_json_impl(nlohmann::ordered_json &json) override;
 
     MeasurementLiveTrack(std::shared_ptr<PowerMeasurement> power_measurement, std::shared_ptr<PowerMeasurement> current_measurement,
         std::shared_ptr<TemperatureMeasurement> temp_measurement, const std::string &device_id);
 
+    void measure() override {}
     std::shared_ptr<PowerMeasurement> get_power_measurement() { return m_power_measurement; }
     std::shared_ptr<PowerMeasurement> get_current_measurement() { return m_current_measurement; }
     std::shared_ptr<TemperatureMeasurement> get_temp_measurement() { return m_temp_measurement; }

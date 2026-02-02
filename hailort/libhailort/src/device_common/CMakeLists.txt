@@ -8,6 +8,14 @@ set(SRC_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/control.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/control_soc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/control_protocol.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pcie_utils.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/usb/usb_utils_common.cpp
 )
+
+if(HAILO_BUILD_USB)
+    list(APPEND SRC_FILES ${CMAKE_CURRENT_SOURCE_DIR}/usb/usb_utils_libusb.cpp)
+else()
+    list(APPEND SRC_FILES ${CMAKE_CURRENT_SOURCE_DIR}/usb/usb_utils_nolibusb.cpp)
+endif()
 
 set(HAILORT_CPP_SOURCES ${HAILORT_CPP_SOURCES} ${SRC_FILES} PARENT_SCOPE)

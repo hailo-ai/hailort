@@ -44,8 +44,11 @@ inline std::string truncate_str(const std::string &original_str, uint32_t max_le
 
 MonCommand::MonCommand(CLI::App &parent_app) :
     Command(parent_app.add_subcommand("monitor", "Monitor of networks - Presents information about the running networks. " \
-     "To enable monitor, set in the application process the environment variable '" + std::string(SCHEDULER_MON_ENV_VAR) + "' to 1."))
-{}
+     "To enable monitor, set in the application process the environment variable '" + std::string(SCHEDULER_MON_ENV_VAR) + "' to 1.")),
+    m_verbose(false)
+{
+    m_app->add_flag("-v,--verbose", m_verbose, "Show detailed frame queue information");
+}
 
 hailo_status MonCommand::execute()
 {
@@ -216,9 +219,11 @@ hailo_status MonCommand::print_tables(const std::vector<ProtoMon> &mon_messages,
     buffer << std::string(terminal_line_width, ' ') << "\n";
     buffer << std::string(terminal_line_width, ' ') << "\n";
 
-    add_frames_header(buffer);
-    for (const auto &mon_message : mon_messages) {
-        CHECK_SUCCESS(print_frames_table(mon_message, buffer));
+    if (m_verbose) {
+        add_frames_header(buffer);
+        for (const auto &mon_message : mon_messages) {
+            CHECK_SUCCESS(print_frames_table(mon_message, buffer));
+        }
     }
 
     std::cout << buffer.str() << std::flush;
@@ -259,7 +264,7 @@ hailo_status MonCommand::run_monitor()
 
             mon_messages.reserve(scheduler_mon_files.size());
             for (const auto &mon_file : scheduler_mon_files) {
-                auto file = LockedFile::create(mon_file, "r");
+                auto file = LockedFile::create(SCHEDULER_MON_TMP_DIR + mon_file, "r");
                 if (HAILO_SUCCESS != file.status()) {
                     LOGGER__ERROR("Failed to open and lock file {}, with status: {}", mon_file, file.status());
                     continue;

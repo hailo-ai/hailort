@@ -126,7 +126,7 @@ private:
     void before_write_start()
     {
         if (m_overall_latency_meter) {
-            m_overall_latency_meter->add_start_sample(std::chrono::steady_clock::now().time_since_epoch());
+            m_overall_latency_meter->add_start_sample();
         }
     }
 
@@ -304,7 +304,7 @@ private:
     void on_read_done()
     {
         if (m_overall_latency_meter) {
-            m_overall_latency_meter->add_end_sample(get().name(), std::chrono::steady_clock::now().time_since_epoch());
+            m_overall_latency_meter->add_end_sample(get().name());
         }
 
         if (m_net_live_track) {

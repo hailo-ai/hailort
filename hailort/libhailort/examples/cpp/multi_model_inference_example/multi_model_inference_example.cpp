@@ -14,6 +14,9 @@
 
 #if defined(__unix__)
 #include <sys/mman.h>
+#elif defined(_MSC_VER)
+#include <memoryapi.h>
+#include <winnt.h>
 #endif
 
 #define HEF_FILE ("hefs/shortcut_net.hef")

@@ -13,6 +13,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#if defined(_MSC_VER)
+#include <synchapi.h>
+#endif
 
 #define FREE(var)                           \
     do {                                    \

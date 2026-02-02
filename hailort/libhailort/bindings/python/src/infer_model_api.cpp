@@ -169,7 +169,7 @@ std::vector<size_t> InferModelInferStreamWrapper::shape() const
     auto format = m_infer_stream.format();
     hailo_nms_shape_t nms_shape; // if the format is non-NMS, this struct won't be used
 
-    if (HailoRTCommon::is_nms(format.order))
+    if (HailoRTCommon::is_non_chip_nms(format.order))
     {
         auto expected = m_infer_stream.get_nms_shape();
         VALIDATE_EXPECTED(expected);

@@ -23,8 +23,7 @@ namespace hailort
 
 class AsyncInputStreamBase : public InputStreamBase {
 public:
-    AsyncInputStreamBase(const LayerInfo &edge_layer, EventPtr core_op_activated_event,
-        hailo_status &status);
+    AsyncInputStreamBase(const LayerInfo &edge_layer, EventPtr core_op_activated_event);
 
     virtual hailo_status set_buffer_mode(StreamBufferMode buffer_mode) override;
     virtual std::chrono::milliseconds get_timeout() const override;
@@ -106,7 +105,7 @@ private:
 
 class AsyncOutputStreamBase : public OutputStreamBase {
 public:
-    AsyncOutputStreamBase(const LayerInfo &edge_layer, EventPtr core_op_activated_event, hailo_status &status);
+    AsyncOutputStreamBase(const LayerInfo &edge_layer, EventPtr core_op_activated_event);
 
     virtual hailo_status set_buffer_mode(StreamBufferMode buffer_mode) override;
     virtual std::chrono::milliseconds get_timeout() const override;

@@ -19,7 +19,7 @@
 #include "vdevice/vdevice_core_op.hpp"
 #include "vdevice/vdevice_hrpc_client.hpp"
 
-#include "vdma/pcie/pcie_device.hpp"
+#include "vdma/legacy_pcie/legacy_pcie_device.hpp"
 #include "vdma/integrated/integrated_device.hpp"
 #include "utils/shared_resource_manager.hpp"
 #include "network_group/network_group_internal.hpp"
@@ -28,6 +28,7 @@
 #include "hef/hef_internal.hpp"
 
 #include "common/utils.hpp"
+#include "device_common/usb/usb_utils.hpp"
 
 namespace hailort
 {
@@ -305,6 +306,13 @@ Expected<HailoRTDriver::AcceleratorType> VDeviceBase::get_accelerator_type(hailo
             acc_type = device_info->accelerator_type;
         }
     } else {
+        if (device_infos.size() == 0) {
+            TRY(auto usb_device_infos, UsbUtils::scan());
+            if (usb_device_infos.size() > 0) {
+                return HailoRTDriver::AcceleratorType::SOC_ACCELERATOR;
+            }
+        }
+
         // No device_id is provided - check that all devices are of the same type
         for (const auto &device_info : device_infos) {
             CHECK(acc_type == HailoRTDriver::AcceleratorType::ACC_TYPE_MAX_VALUE || acc_type == device_info.accelerator_type, HAILO_INVALID_ARGUMENT,
@@ -320,10 +328,10 @@ hailo_status VDeviceBase::validate_params(const hailo_vdevice_params_t &params)
     CHECK(0 != params.device_count, HAILO_INVALID_ARGUMENT,
         "VDevice creation failed. Invalid device_count ({}).", params.device_count);
 
-    TRY(auto do_device_ids_contain_eth, do_device_ids_contain_eth(params));
-    CHECK(!(do_device_ids_contain_eth && (1 != params.device_count)), HAILO_INVALID_ARGUMENT,
-        "VDevice over ETH is supported for one device only. Passed device_count: {}", params.device_count);
-    CHECK(!(do_device_ids_contain_eth && params.multi_process_service), HAILO_INVALID_ARGUMENT,
+    TRY(auto do_device_ids_contain_remote, do_device_ids_contain_eth(params));
+    CHECK(!(do_device_ids_contain_remote && (1 != params.device_count)), HAILO_INVALID_ARGUMENT,
+        "VDevice over ETH/USB is supported for one device only. Passed device_count: {}", params.device_count);
+    CHECK(!(do_device_ids_contain_remote && params.multi_process_service), HAILO_INVALID_ARGUMENT,
         "Multi process service is only supported with locally connected devices");
 
     if (params.multi_process_service) {
@@ -490,6 +498,13 @@ Expected<std::shared_ptr<InferModel>> VDevice::create_infer_model(Hef hef, const
 {
     TRY(auto infer_model_base, InferModelBase::create(*this, hef, name));
     return std::shared_ptr<InferModel>(std::move(infer_model_base));
+}
+
+Expected<std::shared_ptr<Session>> VDevice::create_session(uint16_t connection_port) const
+{
+    (void)connection_port;
+    LOGGER__ERROR("Using VDevice::create_session is not supported."); // Only supported on VDeviceHrpcClient
+    return make_unexpected(HAILO_NOT_SUPPORTED);
 }
 
 Expected<hailo_stream_interface_t> VDeviceBase::get_default_streams_interface() const
@@ -683,12 +698,13 @@ Expected<bool> VDeviceBase::do_device_ids_contain_eth(const hailo_vdevice_params
     if (params.device_ids != nullptr) {
         for (uint32_t i = 0; i < params.device_count; i++) {
             TRY(auto dev_type, Device::get_device_type(params.device_ids[i].id));
-            if (Device::Type::ETH == dev_type) {
+            // ETH and USB devices need HRPC client
+            if ((Device::Type::ETH == dev_type) || (Device::Type::USB == dev_type)) {
                 return true;
             }
         }
     }
-    return false; // in case no device_ids were provided, we assume there's no ETH device
+    return false; // in case no device_ids were provided, we assume there's no ETH/USB device
 }
 
 } /* namespace hailort */

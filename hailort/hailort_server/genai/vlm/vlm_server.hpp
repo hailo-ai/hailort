@@ -79,14 +79,27 @@ private:
         const std::vector<EmbeddingViewWrapper> &input_embeddings, EmbeddingsVectorState &standalone_frame_embeddings_state,
         EmbeddingsVectorState &video_embeddings_state);
 
+    // Helper to compute embedding counts from buffer sizes
+    std::vector<size_t> get_embeddings_count_per_item(const std::vector<BufferPtr> &embeddings_buffers) const;
+
+    // Helpers for handle_vlm_generate_request - handles the two paths: raw embeddings vs raw frames to encode
+    hailo_status handle_raw_embeddings_generation(uint32_t number_of_standalone_frames,
+        const std::vector<uint32_t> &raw_video_embeddings_count_per_video);
+    hailo_status handle_raw_frames_encoding(uint32_t number_of_standalone_frames, uint32_t number_of_video_frames,
+        const std::vector<uint32_t> &raw_video_frames_count_per_video, size_t encoder_output_frame_size,
+        const InferModel::InferStream &encoder_output_config);
+
     std::unique_ptr<InferenceManager> m_inference_manager_frame_encoder;
 
     int m_image_pad_token_id;
     int m_video_pad_token_id;
     hailo_3d_image_shape_t m_encoder_input_shape;  // Needed for VLMPreProcess creation
 
+    bool m_support_raw_embeddings; // Indicates the model supports getting raw-embeddings for images (instead of getting them form the vision-encoder)
+
     std::vector<BufferPtr> m_current_standalone_frames_embeddings;
     std::vector<BufferPtr> m_current_videos_embeddings;
+    std::vector<size_t> m_embeddings_count_per_video; // Per-video embedding counts (one entry per video)
 };
 
 class VLMServerManager : public LLMServerManager

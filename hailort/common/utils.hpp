@@ -12,6 +12,7 @@
 #ifndef HAILO_UTILS_H_
 #define HAILO_UTILS_H_
 
+#include "utils.h"
 #include "hailo/hailort.h"
 #include "hailo/expected.hpp"
 #include "hailo/buffer.hpp"
@@ -500,6 +501,20 @@ Expected<hailo_format_type_t> get_hailo_format_type()
         return result;
     }
     return make_unexpected(HAILO_NOT_FOUND);
+}
+
+// defer is used to call a cleanup function when the scope is exited
+// to disarm the defer, release the unique_ptr (.release()). This prevents the cleanup function from being called
+// Example usage (usually after a resource has been opened/created):
+// auto defer_guard = defer([&]() {
+//     // cleanup code
+// });
+// Example disarming (before the scope is exited):
+// defer_guard.release();
+template<class F>
+auto defer(F f) noexcept(noexcept(F(std::move(f)))) {
+    auto x = [f = std::move(f)](void*){ f(); };
+    return std::unique_ptr<void, decltype(x)>((void*)1, std::move(x));
 }
 
 class CRC32 {

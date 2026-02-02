@@ -21,6 +21,93 @@ std::string get_curr_pid_as_str()
     return std::to_string(OsUtils::get_curr_pid());
 }
 
+#if defined(__GNUC__)
+#include <sys/file.h>
+
+const std::string UNIQUE_TMP_FILE_SUFFIX = "XXXXXX\0";
+
+Expected<TempFile> TempFile::create(const std::string &file_name, const std::string &file_directory)
+{
+    if (!file_directory.empty()) {
+        auto status = Filesystem::create_directory(file_directory);
+        CHECK_SUCCESS_AS_EXPECTED(status);
+    }
+
+    std::string file_path = file_directory + file_name + UNIQUE_TMP_FILE_SUFFIX;
+    std::vector<char> fname(file_path.begin(), file_path.end());
+    fname.push_back('\0');
+
+    std::vector<char> dirname(file_directory.begin(), file_directory.end());
+    dirname.push_back('\0');
+
+    int fd = mkstemp(fname.data());
+    CHECK_AS_EXPECTED((-1 != fd), HAILO_FILE_OPERATION_FAILURE, "Failed to create tmp file {}, with errno {}", file_path, errno);
+    close(fd);
+
+    return TempFile(fname.data(), dirname.data());
+
+}
+
+TempFile::TempFile(const char *file_path, const char *dir_path) :
+    m_file_path(file_path), m_dir_path(dir_path)
+{}
+
+TempFile::~TempFile()
+{
+    // TODO: Guarantee file deletion upon unexpected program termination. HRT-19808
+    std::remove(m_file_path.c_str());
+}
+
+std::string TempFile::path() const
+{
+    return m_file_path;
+}
+
+std::string TempFile::dir() const
+{
+    return m_dir_path;
+}
+
+Expected<LockedFile> LockedFile::create(const std::string &file_path, const std::string &mode)
+{
+    auto fp = fopen(file_path.c_str(), mode.c_str());
+    CHECK_AS_EXPECTED((nullptr != fp), HAILO_OPEN_FILE_FAILURE, "Failed opening file: {}, with errno: {}", file_path, errno);
+
+    int fd = fileno(fp);
+    int done = flock(fd, LOCK_EX | LOCK_NB);
+    if (-1 == done) {
+        LOGGER__ERROR("Failed to flock file: {}, with errno: {}", file_path, errno);
+        fclose(fp);
+        return make_unexpected(HAILO_FILE_OPERATION_FAILURE);
+    }
+
+    return LockedFile(fp, fd);
+}
+
+LockedFile::LockedFile(FILE *fp, int fd) : m_fp(fp), m_fd(fd)
+{}
+
+LockedFile::~LockedFile()
+{
+    if (m_fp != nullptr) {
+        // The lock is released when all descriptors are closed.
+        // Since we use LOCK_EX, this is the only fd open and the lock will be release after d'tor.
+        fclose(m_fp);
+    }
+}
+
+LockedFile::LockedFile(LockedFile &&other) :
+    m_fp(std::exchange(other.m_fp, nullptr)),
+    m_fd(other.m_fd)
+{}
+
+int LockedFile::get_fd() const
+{
+    return m_fd;
+}
+
+#endif /* __GNUC__ */
+
 MonitorHandler::MonitorHandler()
 {
     auto env_val = get_env_variable(SCHEDULER_MON_TIME_INTERVAL_IN_MILLISECONDS_ENV_VAR);
@@ -279,9 +366,10 @@ void MonitorHandler::write_utilization_to_file(const double utilization_percenta
         }
     }
 
-    auto locked_file = LockedFile::create(m_nnc_utilization_tmp_output->name(), "w");
+    auto const tmp_output_path = m_nnc_utilization_tmp_output->path();
+    auto locked_file = LockedFile::create(tmp_output_path, "w");
     if (locked_file.status() != HAILO_SUCCESS) {
-        LOGGER__ERROR("Failed to open and lock file {}, with status: {}", m_nnc_utilization_tmp_output->name(), locked_file.status());
+        LOGGER__ERROR("Failed to open and lock file {}, with status: {}", tmp_output_path, locked_file.status());
         return;
     }
 
@@ -313,7 +401,7 @@ void MonitorHandler::dump_state()
         }
     }
 
-    std::string tmp_path = m_mon_tmp_output->name() + ".tmp";
+    std::string tmp_path = m_mon_tmp_output->path() + ".tmp";
     auto tmp_file = LockedFile::create(tmp_path, "w");
     if (HAILO_SUCCESS != tmp_file.status()) {
         LOGGER__ERROR("Failed to open and lock tmp file {}, status: {}", tmp_path, tmp_file.status());
@@ -334,7 +422,7 @@ void MonitorHandler::dump_state()
         return;
     }
 
-    if (std::rename(tmp_path.c_str(), m_mon_tmp_output->name().c_str()) != 0) {
+    if (std::rename(tmp_path.c_str(), m_mon_tmp_output->path().c_str()) != 0) {
         LOGGER__ERROR("Failed to rename tmp file to monitor file: errno = {}", errno);
     }
 }

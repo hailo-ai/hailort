@@ -23,7 +23,6 @@ public:
     void add_channel(BoundaryChannelPtr channel);
 
     ChannelsBitmap bitmap() const;
-    bool should_measure_timestamp() const;
     Expected<BoundaryChannelPtr> get_by_id(vdma::ChannelId channel_id);
     Expected<BoundaryChannelPtr> get_by_name(const std::string &stream_name);
 

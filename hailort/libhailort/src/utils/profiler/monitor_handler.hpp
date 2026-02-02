@@ -16,7 +16,6 @@
 #include "hailo/expected.hpp"
 #include "hailo/event.hpp"
 
-#include "common/filesystem.hpp"
 #include "common/utils.hpp"
 #include "common/runtime_statistics_internal.hpp"
 
@@ -156,6 +155,44 @@ struct CoreOpInfo {
     std::string core_op_name;
     double utilization;
 };
+
+// TODO: HRT-7304 - Add support for windows
+#if defined(__GNUC__)
+class TempFile {
+public:
+    static Expected<TempFile> create(const std::string &file_name, const std::string &file_directory = "");
+    ~TempFile();
+
+    std::string path() const;
+    std::string dir() const;
+
+private:
+    TempFile(const char *file_path, const char *dir_path);
+
+    std::string m_file_path;
+    std::string m_dir_path;
+};
+
+class HAILORTAPI LockedFile {
+public:
+    // The mode param is the string containing the file access mode, compatible with `fopen` function.
+    static Expected<LockedFile> create(const std::string &file_path, const std::string &mode);
+    ~LockedFile();
+
+    LockedFile(const LockedFile &other) = delete;
+    LockedFile &operator=(const LockedFile &other) = delete;
+    LockedFile &operator=(LockedFile &&other) = delete;
+    LockedFile(LockedFile &&other);
+
+    int get_fd() const;
+
+private:
+    LockedFile(FILE *fp, int fd);
+
+    FILE *m_fp;
+    int m_fd;
+};
+#endif /* __GNUC__ */
 
 class MonitorHandler : public Handler
 {

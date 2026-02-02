@@ -13,18 +13,12 @@
 #include "serializer.hpp"
 #include "vdma/vdma_device.hpp"
 
-
 namespace hailort
 {
 
-Expected<std::shared_ptr<Client>> DeviceHrpcClient::get_connected_client(const std::string &device_id)
+Expected<std::shared_ptr<Client>> DeviceHrpcClient::create_connected_client(const std::string &device_id)
 {
-    auto client = make_shared_nothrow<Client>(device_id);
-    CHECK_NOT_NULL(client, HAILO_OUT_OF_HOST_MEMORY);
-
-    auto status = client->connect();
-    CHECK_SUCCESS(status, "Failed to connect to server");
-
+    TRY(auto client, Client::created_connected(device_id));
     client->set_notification_callback(
     [callback_dispatcher_manager = client->callback_dispatcher_manager()]
     (const MemoryView &serialized_reply) -> hailo_status {
@@ -40,8 +34,8 @@ Expected<std::shared_ptr<Client>> DeviceHrpcClient::get_connected_client(const s
 
 Expected<std::unique_ptr<Device>> DeviceHrpcClient::create(const std::string &device_id)
 {
-    TRY(auto client, get_connected_client(device_id));
-    return DeviceHrpcClient::create(device_id, client);
+    TRY(auto client, create_connected_client(device_id));
+    return DeviceHrpcClient::create(client);
 }
 
 Expected<rpc_object_handle_t> DeviceHrpcClient::create_remote_device(std::shared_ptr<Client> client)
@@ -53,17 +47,12 @@ Expected<rpc_object_handle_t> DeviceHrpcClient::create_remote_device(std::shared
     return CreateDeviceSerializer::deserialize_reply(MemoryView(result.body.data(), result.header.size));
 }
 
-Expected<std::unique_ptr<Device>> DeviceHrpcClient::create(const std::string &device_id,
-    std::shared_ptr<Client> client)
+Expected<std::unique_ptr<Device>> DeviceHrpcClient::create(std::shared_ptr<Client> client)
 {
-    auto device_handle = INVALID_HANDLE_ID;
-    std::shared_ptr<ClientCallbackDispatcher> callback_dispatcher = nullptr;
-    if (client) {
-        TRY(device_handle, create_remote_device(client), "Failed to create device");
-        TRY(callback_dispatcher, client->callback_dispatcher_manager()->new_dispatcher(RpcCallbackType::DEVICE_NOTIFICATION, false));
-    }
+    TRY(auto device_handle, create_remote_device(client), "Failed to create device");
+    TRY(auto callback_dispatcher, client->callback_dispatcher_manager()->new_dispatcher(RpcCallbackType::DEVICE_NOTIFICATION, false));
 
-    auto device = make_unique_nothrow<DeviceHrpcClient>(device_id, client, device_handle, callback_dispatcher);
+    auto device = make_unique_nothrow<DeviceHrpcClient>(client, device_handle, callback_dispatcher);
     CHECK_NOT_NULL(device, HAILO_OUT_OF_HOST_MEMORY);
 
     auto status = device->set_default_notification_callbacks();
@@ -127,7 +116,6 @@ Expected<hailo_extended_device_information_t> DeviceHrpcClient::get_extended_dev
 
 Expected<hailo_chip_temperature_info_t> DeviceHrpcClient::get_chip_temperature()
 {
-
     CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
 
     using Serializer = GetChipTemperatureSerializer;
@@ -370,7 +358,7 @@ hailo_status DeviceHrpcClient::before_fork()
 
 hailo_status DeviceHrpcClient::after_fork_in_parent()
 {
-    TRY(m_client, get_connected_client(m_device_id), "Failed to create client");
+    TRY(m_client, create_connected_client(m_device_id), "Failed to create client");
     TRY(m_callback_dispatcher, m_client->callback_dispatcher_manager()->new_dispatcher(RpcCallbackType::DEVICE_NOTIFICATION, false));
     // Keeping the same device handle
     return HAILO_SUCCESS;
@@ -378,7 +366,7 @@ hailo_status DeviceHrpcClient::after_fork_in_parent()
 
 hailo_status DeviceHrpcClient::after_fork_in_child()
 {
-    TRY(m_client, get_connected_client(m_device_id), "Failed to create client");
+    TRY(m_client, create_connected_client(m_device_id), "Failed to create client");
     TRY(m_callback_dispatcher, m_client->callback_dispatcher_manager()->new_dispatcher(RpcCallbackType::DEVICE_NOTIFICATION, false));
     TRY(m_handle, create_remote_device(m_client), "Failed to create device");
     return HAILO_SUCCESS;

@@ -7,7 +7,6 @@ else()
 endif()
 
 set(HAILORT_COMMON_CPP_SOURCES ${HAILORT_COMMON_CPP_SOURCES}
-    ${CMAKE_CURRENT_SOURCE_DIR}/filesystem.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/socket.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/process.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/os_utils.cpp

@@ -15,6 +15,9 @@
 
 #include <utility>
 #include <limits>
+#include <winbase.h>
+#include <handleapi.h>
+#include <errhandlingapi.h>
 
 
 namespace hailort

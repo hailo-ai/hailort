@@ -44,7 +44,7 @@ size_t InferModelBase::InferStream::Impl::get_frame_size() const
 
 Expected<hailo_nms_shape_t> InferModelBase::InferStream::Impl::get_nms_shape() const
 {
-    CHECK_AS_EXPECTED(HailoRTCommon::is_nms(m_vstream_info.format.order), HAILO_INVALID_OPERATION,
+    CHECK_AS_EXPECTED(HailoRTCommon::is_non_chip_nms(m_vstream_info.format.order), HAILO_INVALID_OPERATION,
         "Output {} is not NMS", name());
     auto res = m_vstream_info.nms_shape;
     return res;
@@ -68,7 +68,7 @@ void InferModelBase::InferStream::Impl::set_format_order(hailo_format_order_t or
 
 bool InferModelBase::InferStream::Impl::is_nms() const
 {
-    return HailoRTCommon::is_nms(m_vstream_info.format.order);
+    return HailoRTCommon::is_non_chip_nms(m_vstream_info.format.order);
 }
 
 void InferModelBase::InferStream::Impl::set_nms_score_threshold(float32_t threshold)

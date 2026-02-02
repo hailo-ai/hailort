@@ -340,12 +340,12 @@ hailo_status InferVStreams::set_nms_score_threshold(float32_t threshold)
     // Check that we have NMS outputs in the model
     auto has_nms_output = std::any_of(m_outputs.begin(), m_outputs.end(), [](const auto &vs)
     {
-        return HailoRTCommon::is_nms(vs.get_info());
+        return HailoRTCommon::is_non_chip_nms(vs.get_info());
     });
     CHECK(has_nms_output, HAILO_INVALID_OPERATION, "'set_nms_score_threshold()' is called, but there is no NMS output in this model.");
 
     for (auto &ouput_vstream : m_outputs) {
-        if (HailoRTCommon::is_nms(ouput_vstream.get_info())) {
+        if (HailoRTCommon::is_non_chip_nms(ouput_vstream.get_info())) {
             CHECK_SUCCESS(ouput_vstream.set_nms_score_threshold(threshold));
         }
     }
@@ -358,12 +358,12 @@ hailo_status InferVStreams::set_nms_iou_threshold(float32_t threshold)
     // Check that we have NMS outputs in the model
     auto has_nms_output = std::any_of(m_outputs.begin(), m_outputs.end(), [](const auto &vs)
     {
-        return HailoRTCommon::is_nms(vs.get_info());
+        return HailoRTCommon::is_non_chip_nms(vs.get_info());
     });
     CHECK(has_nms_output, HAILO_INVALID_OPERATION, "'set_nms_iou_threshold()' is called, but there is no NMS output in this model.");
 
     for (auto &ouput_vstream : m_outputs) {
-        if (HailoRTCommon::is_nms(ouput_vstream.get_info())) {
+        if (HailoRTCommon::is_non_chip_nms(ouput_vstream.get_info())) {
             CHECK_SUCCESS(ouput_vstream.set_nms_iou_threshold(threshold));
         }
     }
@@ -376,12 +376,12 @@ hailo_status InferVStreams::set_nms_max_proposals_per_class(uint32_t max_proposa
     // Check that we have NMS outputs in the model
     auto has_nms_by_class_output = std::any_of(m_outputs.begin(), m_outputs.end(), [](const auto &vs)
     {
-        return ((HailoRTCommon::is_nms(vs.get_info())) && (HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE != vs.get_info().format.order));
+        return ((HailoRTCommon::is_non_chip_nms(vs.get_info())) && (HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE != vs.get_info().format.order));
     });
     CHECK(has_nms_by_class_output, HAILO_INVALID_OPERATION, "'set_nms_max_proposals_per_class()' is called, but there is no NMS ordered by class output in this model.");
 
     for (auto &ouput_vstream : m_outputs) {
-        if (HailoRTCommon::is_nms(ouput_vstream.get_info())) {
+        if (HailoRTCommon::is_non_chip_nms(ouput_vstream.get_info())) {
             CHECK_SUCCESS(ouput_vstream.set_nms_max_proposals_per_class(max_proposals_per_class));
         }
     }

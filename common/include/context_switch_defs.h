@@ -280,7 +280,7 @@ typedef struct {
     uint8_t d2h_packed_vdma_channel_id;
     uint8_t network_index;
     uint32_t descriptors_per_frame;
-    uint16_t programmed_descriptors_count;
+    uint16_t desc_list_size;
 } CONTEXT_SWITCH_DEFS__add_ddr_pair_info_action_data_t;
 
 /* wait for interrupt structs */

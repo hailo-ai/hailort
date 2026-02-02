@@ -50,9 +50,6 @@ static_assert((0 == ((ONGOING_TRANSFERS_SIZE - 1) & ONGOING_TRANSFERS_SIZE)), "O
 
 #define HAILO_MAX_BATCH_SIZE ((ONGOING_TRANSFERS_SIZE / MIN_ACTIVE_TRANSFERS_SCALE) - 1)
 
-// When measuring latency, each channel is capable of ONGOING_TRANSFERS_SIZE active transfers, each transfer raises max of 2 timestamps
-#define MAX_IRQ_TIMESTAMPS_SIZE (ONGOING_TRANSFERS_SIZE * 2)
-
 #define PCIE_EXPECTED_MD5_LENGTH (16)
 
 constexpr size_t MAX_VDMA_ENGINES_COUNT             = 3;
@@ -71,20 +68,9 @@ constexpr uint8_t MIN_D2H_CHANNEL_INDEX_H12L             = MAX_H2D_CHANNEL_INDEX
 constexpr uint8_t MAX_D2H_CHANNEL_INDEX_H12L             = 39;
 constexpr uint8_t MIN_ENHANCED_D2H_CHANNEL_INDEX_H12L    = MIN_D2H_CHANNEL_INDEX_H12L;
 
-constexpr size_t MAX_TRANSFER_BUFFERS_IN_REQUEST = 8;
+constexpr size_t MAX_BUFFERS_IN_REQUEST = 8;
 
 class TransferBuffer;
-
-// NOTE: don't change members from this struct without updating all code using it (platform specific)
-struct ChannelInterruptTimestamp {
-    std::chrono::nanoseconds timestamp;
-    uint16_t desc_num_processed;
-};
-
-struct ChannelInterruptTimestampList {
-    ChannelInterruptTimestamp timestamp_list[MAX_IRQ_TIMESTAMPS_SIZE];
-    size_t count;
-};
 
 struct ChannelIrqData {
     vdma::ChannelId channel_id;
@@ -124,25 +110,6 @@ struct CmaBufferInfo {
     size_t size;
     void *user_address;
 };
-
-enum class InterruptsDomain
-{
-    NONE    = 0,
-    DEVICE  = 1 << 0,
-    HOST    = 1 << 1,
-    BOTH    = DEVICE | HOST
-};
-
-inline InterruptsDomain operator|(InterruptsDomain a, InterruptsDomain b)
-{
-    return static_cast<InterruptsDomain>(static_cast<int>(a) | static_cast<int>(b));
-}
-
-inline InterruptsDomain& operator|=(InterruptsDomain &a, InterruptsDomain b)
-{
-    a = a | b;
-    return a;
-}
 
 class HailoRTDriver final
 {
@@ -236,10 +203,9 @@ public:
     static Expected<std::vector<DeviceInfo>> scan_devices();
     static Expected<std::vector<DeviceInfo>> scan_devices(AcceleratorType accelerator_type);
 
-    hailo_status vdma_enable_channels(const ChannelsBitmap &channels_bitmap, bool enable_timestamps_measure);
+    hailo_status vdma_enable_channels(const ChannelsBitmap &channels_bitmap);
     hailo_status vdma_disable_channels(const ChannelsBitmap &channel_id);
     Expected<IrqData> vdma_interrupts_wait(const ChannelsBitmap &channels_bitmap);
-    Expected<ChannelInterruptTimestampList> vdma_interrupts_read_timestamps(vdma::ChannelId channel_id);
 
     Expected<std::vector<uint8_t>> read_notification();
     hailo_status disable_notifications();
@@ -298,9 +264,8 @@ public:
     /**
      * Program the given descriptors list to point to the given buffer.
      */
-    hailo_status descriptors_list_program(uintptr_t desc_handle, VdmaBufferHandle buffer_handle,
-        size_t buffer_offset, size_t transfer_size, uint32_t transfers_count, uint8_t channel_index,
-        uint32_t starting_desc, InterruptsDomain last_desc_interrupts);
+    hailo_status descriptors_list_program(uintptr_t desc_handle, VdmaBufferHandle buffer_handle, size_t buffer_offset,
+        size_t transfer_size, uint32_t transfers_count, uint8_t channel_index, uint32_t starting_desc);
 
     /**
      * Prepares a transfer for launch.
@@ -311,16 +276,14 @@ public:
     hailo_status cancel_prepared_transfers(uintptr_t desc_handle);
 
     hailo_status hailo_vdma_prepare_transfer(vdma::ChannelId channel_id, uintptr_t desc_handle,
-        const std::vector<TransferBuffer> &transfer_buffers, InterruptsDomain first_interrupts_domain,
-        InterruptsDomain last_desc_interrupts);
+        const std::vector<TransferBuffer> &transfer_buffers);
 
     /**
      * Launches some transfer on the given channel.
-     * The maximum number of transfer buffers is MAX_TRANSFER_BUFFERS_IN_REQUEST.
+     * The maximum number of transfer buffers is MAX_BUFFERS_IN_REQUEST.
      */
     hailo_status launch_transfer(vdma::ChannelId channel_id, uintptr_t desc_handle,
-        const std::vector<TransferBuffer> &transfer_buffer, bool is_cyclic,
-        InterruptsDomain first_desc_interrupts, InterruptsDomain last_desc_interrupts);
+        const std::vector<TransferBuffer> &transfer_buffer, bool is_cyclic);
 
     /**
      * Allocate continuous vdma buffer.

@@ -120,6 +120,8 @@ Expected<float32_t> IntegratedDevice::power_measurement(
     hailo_dvm_options_t dvm,
     hailo_power_measurement_types_t measurement_type)
 {
+    CHECK(has_power_sensor(), HAILO_INVALID_OPERATION,
+        "HailoRT does not support power measurements for this architecture. Use the 'sensors' CLI command instead");
     return SocPowerMeasurement::measure(dvm, measurement_type);
 }
 
@@ -127,6 +129,8 @@ hailo_status IntegratedDevice::start_power_measurement(
     hailo_averaging_factor_t averaging_factor,
     hailo_sampling_period_t sampling_period)
 {
+    CHECK(has_power_sensor(), HAILO_INVALID_OPERATION,
+        "HailoRT does not support power measurements for this architecture. Use the 'sensors' CLI command instead");
     CHECK(nullptr != m_power_measurement_data, HAILO_INVALID_OPERATION, "Must call set_power_measurement before start_power_measurement");
     auto status = m_power_measurement_data->config(averaging_factor, sampling_period);
     CHECK_SUCCESS(status, "Failed to configure power measurement");
@@ -139,7 +143,8 @@ hailo_status IntegratedDevice::set_power_measurement(
     hailo_power_measurement_types_t measurement_type)
 {
     (void)buffer_index;
-
+    CHECK(has_power_sensor(), HAILO_INVALID_OPERATION,
+        "HailoRT does not support power measurements for this architecture. Use the 'sensors' CLI command instead");
     CHECK((HAILO_DVM_OPTIONS_VDD_CORE == dvm) || (HAILO_DVM_OPTIONS_AUTO == dvm), HAILO_INVALID_ARGUMENT,
         "Only HAILO_DVM_OPTIONS_VDD_CORE or HAILO_DVM_OPTIONS_AUTO are supported");
     m_power_measurement_data = std::make_shared<SocPowerMeasurement>(measurement_type);
@@ -150,7 +155,8 @@ Expected<hailo_power_measurement_data_t> IntegratedDevice::get_power_measurement
     hailo_measurement_buffer_index_t buffer_index, bool should_clear)
 {
     (void)buffer_index;
-
+    CHECK(has_power_sensor(), HAILO_INVALID_OPERATION,
+        "HailoRT does not support power measurements for this architecture. Use the 'sensors' CLI command instead");
     Expected<hailo_power_measurement_data_t> data(m_power_measurement_data->get_data());
     if (should_clear) {
         m_power_measurement_data->clear_data();
@@ -160,6 +166,8 @@ Expected<hailo_power_measurement_data_t> IntegratedDevice::get_power_measurement
 
 hailo_status IntegratedDevice::stop_power_measurement()
 {
+    CHECK(has_power_sensor(), HAILO_INVALID_OPERATION,
+        "HailoRT does not support power measurements for this architecture. Use the 'sensors' CLI command instead");
     CHECK_NOT_NULL(m_power_measurement_data, HAILO_INVALID_OPERATION);
     return m_power_measurement_data->stop();
 }
@@ -255,6 +263,11 @@ Expected<hailo_extended_device_information_t> IntegratedDevice::get_extended_dev
 
 Expected<bool> IntegratedDevice::has_power_sensor()
 {
+    if ((HAILO_ARCH_HAILO15H == m_device_architecture) || (HAILO_ARCH_HAILO15M == m_device_architecture) ||
+        (HAILO_ARCH_HAILO15L == m_device_architecture)) {
+        return false;
+    }
+
     bool has_power_sensor = false;
     #ifdef __linux__
     glob_t glob_result;

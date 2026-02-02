@@ -110,7 +110,7 @@ Expected<std::tuple<int64_t, int64_t>> QueryStatsUtils::calculate_ram_sizes()
         if (label == "Mem:") {
             if (stream >> total >> used >> freeMem >> shared >> buffCache >> available) {
                 total_ram = static_cast<int64_t>(total);
-                used_ram = total_ram - static_cast<int64_t>(freeMem);
+                used_ram = total_ram - static_cast<int64_t>(available);
             }
             break;
         }

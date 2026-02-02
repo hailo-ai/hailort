@@ -24,6 +24,17 @@ inline static std::chrono::milliseconds get_request_timeout(const std::chrono::m
     return default_timeout;
 }
 
+Expected<std::shared_ptr<Client>> Client::created_connected(const std::string &device_id)
+{
+    auto client = make_shared_nothrow<Client>(device_id);
+    CHECK_NOT_NULL(client, HAILO_OUT_OF_HOST_MEMORY);
+
+    auto status = client->connect();
+    CHECK_SUCCESS(status, "Failed to connect to server");
+
+    return client;
+}
+
 Client::~Client()
 {
     m_is_running = false;
@@ -35,13 +46,11 @@ Client::~Client()
     }
 }
 
-// TODO: Connect should be a static method that returns a client
-hailo_status Client::connect(bool is_localhost)
+hailo_status Client::connect()
 {
     m_callback_dispatcher_manager = make_shared_nothrow<ClientCallbackDispatcherManager>();
     CHECK_NOT_NULL(m_callback_dispatcher_manager, HAILO_OUT_OF_HOST_MEMORY);
 
-    m_device_id = is_localhost ? SERVER_ADDR_USE_UNIX_SOCKET : m_device_id;
     TRY(m_conn_context, ConnectionContext::create_client_shared(m_device_id));
     TRY(auto conn, Session::connect(m_conn_context, HAILORT_SERVER_PORT));
 

@@ -10,6 +10,7 @@
 #include "common/socket.hpp"
 
 #include <array>
+#include <ws2ipdef.h>  // sockaddr_in6
 
 namespace hailort
 {

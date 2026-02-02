@@ -806,7 +806,7 @@ Expected<Buffer> DdrPairInfoAction::serialize_params(const ContextResources &) c
     params.d2h_packed_vdma_channel_id = pack_vdma_channel_id(m_d2h_channel_id);
     params.network_index = m_network_index;
     params.descriptors_per_frame = m_descriptors_per_frame;
-    params.programmed_descriptors_count = m_descs_count;
+    params.desc_list_size = m_descs_count;
     return Buffer::create(reinterpret_cast<uint8_t*>(&params), sizeof(params));
 }
 

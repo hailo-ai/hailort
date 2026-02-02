@@ -1396,7 +1396,7 @@ class HailoFormatFlags(_pyhailort.FormatFlags):
 
 SUPPORTED_PROTOCOL_VERSION = 2
 SUPPORTED_FW_MAJOR = 5
-SUPPORTED_FW_MINOR = 2
+SUPPORTED_FW_MINOR = 3
 SUPPORTED_FW_REVISION = 0
 
 MEGA_MULTIPLIER = 1000.0 * 1000.0
@@ -4063,14 +4063,14 @@ class LLMGeneratorCompletion:
         with ExceptionWrapper():
             return self._generator_completion.read(timeout_ms)
 
-    def read_all(self, timeout_ms=10000):
+    def read_all(self, timeout_ms):
         """
         Read all remaining tokens and return complete response.
 
         This method blocks until generation is complete or timeout occurs.
 
         Args:
-            timeout_ms (int, optional): Timeout in milliseconds. Defaults to 10000.
+            timeout_ms (int, optional): Timeout in milliseconds.
 
         Returns:
             str: Complete generated response as a single string.
@@ -5238,7 +5238,7 @@ class Speech2Text:
             gen_params.set_repetition_penalty(repetition_penalty)
         return gen_params
 
-    def generate_all_text(self, audio_data, task=Speech2TextTask.TRANSCRIBE, language=None, repetition_penalty=1.0, timeout_ms=10000):
+    def generate_all_text(self, audio_data, task=Speech2TextTask.TRANSCRIBE, language=None, repetition_penalty=1.0, timeout_ms=600000):
         """
         Generate complete transcription as a single string.
 
@@ -5247,7 +5247,7 @@ class Speech2Text:
             task (Speech2TextTask, optional): Task to perform (transcribe or translate). Defaults to TRANSCRIBE.
             language (str, optional): Language to use for translation, in the format of ISO-639-1 two-letter code, for example: "en", "fr", etc. Defaults to None, which means that the model will automatically detect the language.
             repetition_penalty (float, optional): Repetition penalty to use for the generation process. Defaults to 1.0, which means that the model will not apply any repetition penalty.
-            timeout_ms (int, optional): Timeout in milliseconds. Defaults to 10000.
+            timeout_ms (int, optional): Timeout in milliseconds. Defaults to 600000.
 
         Returns:
             str: Complete transcription as a single string.
@@ -5262,7 +5262,7 @@ class Speech2Text:
             generation_params = Speech2Text._fill_generator_params(generation_params, task.value, language, repetition_penalty)
             return self._speech2text.generate_all_text(audio_data, generation_params, timeout_ms)
 
-    def generate_all_segments(self, audio_data, task=Speech2TextTask.TRANSCRIBE, language=None, repetition_penalty=1.0, timeout_ms=10000):
+    def generate_all_segments(self, audio_data, task=Speech2TextTask.TRANSCRIBE, language=None, repetition_penalty=1.0, timeout_ms=600000):
         """
         Generate transcription with timestamped segments.
 
@@ -5271,7 +5271,7 @@ class Speech2Text:
             task (Speech2TextTask, optional): Task to perform (transcribe or translate). Defaults to TRANSCRIBE.
             language (str, optional): Language to use for translation, in the format of ISO-639-1 two-letter code, for example: "en", "fr", etc. Defaults to None, which means that the model will automatically detect the language.
             repetition_penalty (float, optional): Repetition penalty to use for the generation process. Defaults to 1.0, which means that the model will not apply any repetition penalty.
-            timeout_ms (int, optional): Timeout in milliseconds. Defaults to 10000.
+            timeout_ms (int, optional): Timeout in milliseconds. Defaults to 600000.
 
         Returns:
             list[SegmentInfo]: List of SegmentInfo objects containing start/end timestamps and transcribed text.

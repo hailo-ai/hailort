@@ -46,25 +46,22 @@ Expected<PcieSession> PcieSession::create(std::shared_ptr<HailoRTDriver> driver,
     PcieSessionType session_type)
 {
     TRY(auto interrupts_dispatcher, vdma::InterruptsDispatcher::create(*driver));
-    TRY(auto transfer_launcher, vdma::TransferLauncher::create());
 
     auto create_channel = [&](vdma::ChannelId id, vdma::BoundaryChannel::Direction dir, vdma::DescriptorList &&desc_list) {
         // TODO: HRT-15701 : remove 4
-        return vdma::BoundaryChannel::create(*driver, id, dir, std::move(desc_list), *transfer_launcher,
-            4 * MAX_ONGOING_TRANSFERS, true);
+        return vdma::BoundaryChannel::create(*driver, id, dir, std::move(desc_list), 4 * MAX_ONGOING_TRANSFERS, true);
     };
 
     TRY(auto input_channel, create_channel(input_channel_id, vdma::BoundaryChannel::Direction::H2D, std::move(input_desc_list)));
     TRY(auto output_channel, create_channel(output_channel_id, vdma::BoundaryChannel::Direction::D2H, std::move(output_desc_list)));
 
     CHECK_SUCCESS(interrupts_dispatcher->start(vdma::ChannelsGroup{input_channel, output_channel}));
-    CHECK_SUCCESS(transfer_launcher->start());
 
     CHECK_SUCCESS(input_channel->activate());
     CHECK_SUCCESS(output_channel->activate());
 
-    return PcieSession(std::move(driver), std::move(interrupts_dispatcher), std::move(transfer_launcher),
-        std::move(input_channel), std::move(output_channel), session_type);
+    return PcieSession(std::move(driver), std::move(interrupts_dispatcher), std::move(input_channel),
+        std::move(output_channel), session_type);
 }
 
 bool PcieSession::is_write_ready(size_t transfer_size) const
@@ -177,12 +174,6 @@ hailo_status PcieSession::close()
     // Finally, cancel any pending transfer (must happen after the vDMA channel was aborted).
     m_input->cancel_pending_transfers();
     m_output->cancel_pending_transfers();
-
-    stop_status = m_transfer_launcher->stop();
-    if (HAILO_SUCCESS != stop_status) {
-        LOGGER__ERROR("Failed to stop transfer launcher with status {}", stop_status);
-        status = stop_status;
-    }
 
     return status;
 }

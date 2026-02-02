@@ -187,8 +187,8 @@ Expected<std::unique_ptr<LLM::Impl>> LLM::Impl::create_unique(std::shared_ptr<VD
         TRY(hef_hash, Hef::hash(llm_params.hef()));
     }
 
+    TRY(auto session_wrapper, GenAICommon::create_session_wrapper(vdevice, DEFAULT_LLM_CONNECTION_PORT));
     auto vdevice_params = vdevice->get_params();
-    TRY(auto session_wrapper, GenAICommon::create_session_wrapper(vdevice_params, DEFAULT_LLM_CONNECTION_PORT));
 
     // Translate llm_params.hef() to an absolute path if it is not already
     std::string hef_path = llm_params.hef();
@@ -758,7 +758,7 @@ void LLMGeneratorCompletion::Impl::token_reader_thread(const std::string &aggreg
         }
 
         // Send request and get response
-        auto response_exp = send_read_request(input, timeout_guard.get_remaining_timeout());
+        auto response_exp = send_read_request(input);
         if (!response_exp) {
             LOGGER__ERROR("Failed to send read request: {}", response_exp.status());
             break;
@@ -835,7 +835,7 @@ hailo_status LLMGeneratorCompletion::Impl::prepare_client_side_embeddings(LLMGen
 
     // Convert tokens to embeddings
     input.embeddings.clear();
-    auto embeddings = m_token_embedder->tokens_to_embeddings(tokens_to_embed);
+    TRY(auto embeddings, m_token_embedder->tokens_to_embeddings(tokens_to_embed));
     for (auto &embedding : embeddings) {
         TRY(auto buffer, Buffer::create_shared(embedding.data(), embedding.size(), BufferStorageParams::create_dma()));
         input.embeddings.emplace_back(buffer, static_cast<EmbeddingViewWrapper::EmbeddingType>(embedding.type()));
@@ -846,9 +846,9 @@ hailo_status LLMGeneratorCompletion::Impl::prepare_client_side_embeddings(LLMGen
 }
 
 Expected<std::pair<LLMGeneratorReadSerializer::TextGenerationOutput, LLMGeneratorCompletion::Status>>
-LLMGeneratorCompletion::Impl::send_read_request(const LLMGeneratorReadSerializer::TextGenerationInput &input, std::chrono::milliseconds timeout)
+LLMGeneratorCompletion::Impl::send_read_request(const LLMGeneratorReadSerializer::TextGenerationInput &input)
 {
-    TRY(auto read_request, LLMGeneratorReadSerializer::serialize_request(timeout, input));
+    TRY(auto read_request, LLMGeneratorReadSerializer::serialize_request(input));
     TRY(auto read_reply, m_session->execute(MemoryView(read_request)));
     TRY(auto response_pair, LLMGeneratorReadSerializer::deserialize_reply(MemoryView(*read_reply)));
     

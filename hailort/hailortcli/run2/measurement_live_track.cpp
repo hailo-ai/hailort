@@ -15,7 +15,6 @@
 #include "measurement_live_track.hpp"
 
 #include <spdlog/fmt/fmt.h>
-#include <sstream>
 
 using namespace hailort;
 
@@ -67,64 +66,53 @@ hailo_status MeasurementLiveTrack::start_impl()
     return HAILO_SUCCESS;
 }
 
-uint32_t MeasurementLiveTrack::push_text_impl(std::stringstream &ss)
+std::string MeasurementLiveTrack::get_text_impl() const
 {
-    auto rows_count = 0;
-
+    std::string s;
     if (m_power_measurement || m_current_measurement || m_temp_measurement) {
-        ss << fmt::format("\nMeasurements for device {}\n", m_device_id);
-        rows_count += 2;
+        s += fmt::format("\nMeasurements for device {}\n", m_device_id);
     }
 
     if (m_power_measurement) {
         auto measurement_info = m_power_measurement->get_data();
         if (auto min = measurement_info.min()) {
-            ss << fmt::format("\tMinimum power consumption: {:.2f} {}\n", *min, m_power_measurement->measurement_unit());
-            rows_count++;
+            s += fmt::format("\tMinimum power consumption: {:.2f} {}\n", *min, m_power_measurement->measurement_unit());
         }
         if (auto mean = measurement_info.mean()) {
-            ss << fmt::format("\tAverage power consumption: {:.2f} {}\n", *mean, m_power_measurement->measurement_unit());
-            rows_count++;
+            s += fmt::format("\tAverage power consumption: {:.2f} {}\n", *mean, m_power_measurement->measurement_unit());
         }
         if (auto max = measurement_info.max()) {
-            ss << fmt::format("\tMaximum power consumption: {:.2f} {}\n", *max, m_power_measurement->measurement_unit());
-            rows_count++;
+            s += fmt::format("\tMaximum power consumption: {:.2f} {}\n", *max, m_power_measurement->measurement_unit());
         }
     }
 
     if (m_current_measurement) {
         auto measurement_info = m_current_measurement->get_data();
         if (auto min = measurement_info.min()) {
-            ss << fmt::format("\tMinimum current consumption: {:.2f} {}\n", *min, m_current_measurement->measurement_unit());
-            rows_count++;
+            s += fmt::format("\tMinimum current consumption: {:.2f} {}\n", *min, m_current_measurement->measurement_unit());
         }
         if (auto mean = measurement_info.mean()) {
-            ss << fmt::format("\tAverage current consumption: {:.2f} {}\n", *mean, m_current_measurement->measurement_unit());
-            rows_count++;
+            s += fmt::format("\tAverage current consumption: {:.2f} {}\n", *mean, m_current_measurement->measurement_unit());
         }
         if (auto max = measurement_info.max()) {
-            ss << fmt::format("\tMaximum current consumption: {:.2f} {}\n", *max, m_current_measurement->measurement_unit());
-            rows_count++;
+            s += fmt::format("\tMaximum current consumption: {:.2f} {}\n", *max, m_current_measurement->measurement_unit());
         }
     }
 
     if (m_temp_measurement) {
         auto measurement_info = m_temp_measurement->get_data();
         if (auto min = measurement_info.min()) {
-            ss << fmt::format("\tMinimum chip temperature: {:.2f} {}\n", *min, m_temp_measurement->measurement_unit());
-            rows_count++;
+            s += fmt::format("\tMinimum chip temperature: {:.2f} {}\n", *min, m_temp_measurement->measurement_unit());
         }
         if (auto mean = measurement_info.mean()) {
-            ss << fmt::format("\tAverage chip temperature: {:.2f} {}\n", *mean, m_temp_measurement->measurement_unit());
-            rows_count++;
+            s += fmt::format("\tAverage chip temperature: {:.2f} {}\n", *mean, m_temp_measurement->measurement_unit());
         }
         if (auto max = measurement_info.max()) {
-            ss << fmt::format("\tMaximum chip temperature: {:.2f} {}\n", *max, m_temp_measurement->measurement_unit());
-            rows_count++;
+            s += fmt::format("\tMaximum chip temperature: {:.2f} {}\n", *max, m_temp_measurement->measurement_unit());
         }
     }
 
-    return rows_count;
+    return s;
 }
 
 void MeasurementLiveTrack::push_json_measurment_val(nlohmann::ordered_json &device_json, std::shared_ptr<BaseMeasurement> measurment, const std::string &measurment_name)
@@ -135,10 +123,10 @@ void MeasurementLiveTrack::push_json_measurment_val(nlohmann::ordered_json &devi
     auto max = measurment_info.max();
     auto mean = measurment_info.mean();
     if (min && max && mean){
-        device_json[measurment_name] = { 
-            {"min", std::to_string(min.value()) + " " + measurement_unit}, 
-            {"max", std::to_string(max.value()) + " " + measurement_unit}, 
-            {"average", std::to_string(mean.value()) + " " + measurement_unit} 
+        device_json[measurment_name] = {
+            {"min", std::to_string(min.value()) + " " + measurement_unit},
+            {"max", std::to_string(max.value()) + " " + measurement_unit},
+            {"average", std::to_string(mean.value()) + " " + measurement_unit}
         };
     }
 }

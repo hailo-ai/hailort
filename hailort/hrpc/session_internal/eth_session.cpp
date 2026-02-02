@@ -3,11 +3,11 @@
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
- * @file hailo_session_internal.cpp
+ * @file eth_session.cpp
  * @brief Linux Sockets Hailo Session
  **/
 
-#include "hrpc/raw_connection_internal/socket/hailo_session_internal.hpp"
+#include "hrpc/session_internal/eth_session.hpp"
 #include "common/logger_macros.hpp"
 #include "common/utils.hpp"
 #include "common/internal_env_vars.hpp"
@@ -22,108 +22,9 @@
 namespace hailort
 {
 
-// Same as in pcie_session.cpp
-static constexpr uint64_t MAX_ONGOING_TRANSFERS = 128;
-
-Expected<std::shared_ptr<AsyncActionsThread>> AsyncActionsThread::create(size_t queue_size)
+Expected<std::shared_ptr<ConnectionContext>> OsConnectionContext::create_client_shared(const std::string &ip, bool is_device_integrated)
 {
-    TRY(auto shutdown_event, Event::create_shared(Event::State::not_signalled));
-    TRY(auto write_queue, SpscQueue<AsyncAction>::create(queue_size, shutdown_event));
-
-    auto ptr = make_shared_nothrow<AsyncActionsThread>(std::move(write_queue), shutdown_event);
-    CHECK_NOT_NULL(ptr, HAILO_OUT_OF_HOST_MEMORY);
-
-    return ptr;
-}
-
-AsyncActionsThread::AsyncActionsThread(SpscQueue<AsyncAction> &&queue, EventPtr shutdown_event) :
-    m_queue(std::move(queue)), m_shutdown_event(shutdown_event), m_current_queue_size(0)
-{
-    m_thread = std::thread([this] () { thread_loop(); });
-}
-
-hailo_status AsyncActionsThread::abort()
-{
-    auto status = m_shutdown_event->signal();
-    if (HAILO_SUCCESS != status) {
-        LOGGER__CRITICAL("Failed to signal shutdown event, status = {}", status);
-    }
-
-    if (m_thread.joinable()) {
-        m_thread.join();
-    }
-
-    const bool IGNORE_SHUTDOWN_EVENT = true;
-    while (true) {
-        auto action = m_queue.dequeue(std::chrono::milliseconds(0), IGNORE_SHUTDOWN_EVENT);
-        if (HAILO_TIMEOUT == action.status()) {
-            break;
-        }
-        if (!action) {
-            status = action.status();
-            LOGGER__ERROR("Failed to dequeue action, status = {}", status);
-            continue;
-        }
-
-        {
-            std::unique_lock<std::mutex> lock(m_mutex);
-            m_current_queue_size--;
-        }
-        m_cv.notify_one();
-
-        action->on_finish_callback(action->action(true));
-    }
-    return status;
-}
-
-AsyncActionsThread::~AsyncActionsThread()
-{
-    abort();
-}
-
-hailo_status AsyncActionsThread::thread_loop()
-{
-    while (true) {
-        TRY_WITH_ACCEPTABLE_STATUS(HAILO_SHUTDOWN_EVENT_SIGNALED, auto action,
-            m_queue.dequeue(std::chrono::milliseconds(HAILO_INFINITE)));
-        {
-            std::unique_lock<std::mutex> lock(m_mutex);
-            m_current_queue_size--;
-        }
-        m_cv.notify_one();
-        action.on_finish_callback(action.action(false));
-    }
-    return HAILO_SUCCESS;
-}
-
-hailo_status AsyncActionsThread::wait_for_enqueue_ready(std::chrono::milliseconds timeout)
-{
-    std::unique_lock<std::mutex> lock(m_mutex);
-    CHECK(m_cv.wait_for(lock, timeout, [this] () {
-        return m_current_queue_size < m_queue.max_capacity();
-    }), HAILO_TIMEOUT, "Timeout waiting for enqueue ready");
-    return HAILO_SUCCESS;
-}
-
-hailo_status AsyncActionsThread::enqueue_nonblocking(AsyncAction action)
-{
-    auto status = m_queue.enqueue(action, std::chrono::milliseconds(0));
-    CHECK(status != HAILO_TIMEOUT, HAILO_QUEUE_IS_FULL, "Queue is full, queue size = {}",
-        m_queue.size_approx());// Should call wait_for_enqueue_ready() before enqueue_nonblocking()
-    CHECK_SUCCESS(status);
-
-    {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        m_current_queue_size++;
-    }
-    m_cv.notify_one();
-
-    return HAILO_SUCCESS;
-}
-
-Expected<std::shared_ptr<ConnectionContext>> OsConnectionContext::create_client_shared(const std::string &ip)
-{
-    auto ptr = make_shared_nothrow<OsConnectionContext>(false, ip);
+    auto ptr = make_shared_nothrow<OsConnectionContext>(false, ip, is_device_integrated);
     CHECK_NOT_NULL(ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     return std::dynamic_pointer_cast<ConnectionContext>(ptr);
@@ -257,7 +158,7 @@ Expected<std::shared_ptr<OsSession>> OsSession::create_localhost_client(std::sha
 
     TRY(auto write_actions_thread, AsyncActionsThread::create(MAX_ONGOING_TRANSFERS));
     TRY(auto read_actions_thread, AsyncActionsThread::create(MAX_ONGOING_TRANSFERS));
-    
+
     auto ptr = make_shared_nothrow<OsSession>(std::move(socket), context, write_actions_thread, read_actions_thread, port);
     CHECK_NOT_NULL_AS_EXPECTED(ptr, HAILO_OUT_OF_HOST_MEMORY);
     return ptr;
@@ -341,7 +242,7 @@ hailo_status OsSession::write(const uint8_t *buffer, size_t size, std::chrono::m
     auto status = wait_for_write_async_ready(size, timeout);
     CHECK_SUCCESS(status);
 
-    status = write_async(buffer, size, [&] (hailo_status status) {
+    status = Session::write_async(buffer, size, [&] (hailo_status status) {
         {
             std::unique_lock<std::mutex> lock(m_write_mutex);
             assert(status != HAILO_UNINITIALIZED);
@@ -369,7 +270,7 @@ hailo_status OsSession::read(uint8_t *buffer, size_t size, std::chrono::millisec
     auto status = wait_for_read_async_ready(size, timeout);
     CHECK_SUCCESS(status);
 
-    status = read_async(buffer, size, [&] (hailo_status status) {
+    status = Session::read_async(buffer, size, [&] (hailo_status status) {
         {
             std::unique_lock<std::mutex> lock(m_read_mutex);
             assert(status != HAILO_UNINITIALIZED);

@@ -43,26 +43,20 @@ Expected<std::string> get_path_from_lora_name(const std::string &lora_name)
     }
 }
 
-Expected<std::string> get_prefill_model_name_suffix(const std::string &lora_name, size_t network_group_count)
+Expected<std::string> get_prefill_model_name_suffix(const std::string &lora_name)
 {
-    // TODO (HRT-18043): remove this hack. NG names should be deterministic and not depend on the number of NGs.
-    if (network_group_count <= 2) {
-        return std::string("prefill");
-    }
+    // TODO (HRT-18043): Instead of using suffixes, NG names for base model (lora_name is not given) should be well defined in 'hailo-config.json'
     if (lora_name.empty()) {
-        return std::string("base_model__prefill");
+        return std::string("__prefill");
     }
     return lora_name + std::string("__prefill");
 }
 
-Expected<std::string> get_tbt_model_name_suffix(const std::string &lora_name, size_t network_group_count)
+Expected<std::string> get_tbt_model_name_suffix(const std::string &lora_name)
 {
-    // TODO (HRT-18043): remove this hack. NG names should be deterministic and not depend on the number of NGs.
-    if (network_group_count == 2) {
-        return std::string("tbt");
-    }
+    // TODO (HRT-18043): Instead of using suffixes, NG names for base model (lora_name is not given) should be well defined in 'hailo-config.json'
     if (lora_name.empty()) {
-        return std::string("base_model__tbt");
+        return std::string("__tbt");
     }
     return lora_name + std::string("__tbt");
 }
@@ -203,9 +197,8 @@ std::future<hailo_status> LLMServer::create_inference_managers_future(std::share
         inference_models_created_event, shutdown_event]() -> hailo_status {
 
         LOGGER__GENAI_STATS_START("[create] create prefill model");
-        auto network_group_names = hef.get_network_groups_names();
-        TRY(auto prefill_model_suffix, get_prefill_model_name_suffix(lora_name, network_group_names.size()));
-        TRY(m_inference_manager_prefill, LLMInferenceManager::create(vdevice, hef, prefill_model_suffix));
+        TRY(auto prefill_model_name_suffix, get_prefill_model_name_suffix(lora_name));
+        TRY(m_inference_manager_prefill, LLMInferenceManager::create(vdevice, hef, prefill_model_name_suffix));
         CHECK_SUCCESS(WaitOrShutdown(external_resources_created_event, shutdown_event).wait(WAIT_FOR_OPERATION_TIMEOUT));
         auto model_prefill = m_inference_manager_prefill->get_model();
         for (auto input : model_prefill->inputs()) {
@@ -220,8 +213,8 @@ std::future<hailo_status> LLMServer::create_inference_managers_future(std::share
 
         LOGGER__GENAI_STATS_START("[create] create tbt model");
         m_inference_manager_tbt = nullptr;
-        TRY(auto tbt_model_suffix, get_tbt_model_name_suffix(lora_name, network_group_names.size()));
-        auto inference_manager_tbt = LLMInferenceManager::create(vdevice, hef, tbt_model_suffix);
+        TRY(auto tbt_model_name_suffix, get_tbt_model_name_suffix(lora_name));
+        auto inference_manager_tbt = LLMInferenceManager::create(vdevice, hef, tbt_model_name_suffix);
         if (inference_manager_tbt) {
             m_inference_manager_tbt = inference_manager_tbt.release();
             auto model_tbt = m_inference_manager_tbt->get_model();
@@ -555,9 +548,8 @@ Expected<Buffer> LLMServer::handle_generate_request(const MemoryView &request)
 
 Expected<Buffer> LLMServer::handle_read_request(const MemoryView &request)
 {
-    TRY_AS_HRPC_STATUS(auto pair, LLMGeneratorReadSerializer::deserialize_request(request),
+    TRY_AS_HRPC_STATUS(auto input, LLMGeneratorReadSerializer::deserialize_request(request),
         LLMGeneratorReadSerializer);
-    auto &[timeout, input] = pair;
 
     std::unique_lock<std::mutex> lock(m_generation_mutex);
     LLMGeneratorCompletion::Status gen_status = LLMGeneratorCompletion::Status::GENERATING;
@@ -590,12 +582,14 @@ Expected<Buffer> LLMServer::handle_read_request(const MemoryView &request)
 
             // TODO: (HRT-18669) think how to manage memory better to prevent allocations
             assert(m_token_embedder);
-            embeddings_views = m_token_embedder->tokens_to_embeddings(combined_tokens);
+            TRY_AS_HRPC_STATUS(embeddings_views, m_token_embedder->tokens_to_embeddings(combined_tokens),
+                LLMGeneratorReadSerializer);
         } else if (!input.tokens.empty() && input.embeddings.empty()) {
             // Subsequent iterations OR client-side tokenizer without embeddings
             // Just use tokens as-is (single token for TBT, or combined tokens from client)
             assert(m_token_embedder);
-            embeddings_views = m_token_embedder->tokens_to_embeddings(input.tokens);
+            TRY_AS_HRPC_STATUS(embeddings_views, m_token_embedder->tokens_to_embeddings(input.tokens),
+                LLMGeneratorReadSerializer);
         } else {
             // Client-side tokenizer with embeddings
             // Embeddings already contain prefix+input combined (first iter) or single token (subsequent)

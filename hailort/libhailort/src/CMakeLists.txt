@@ -66,7 +66,15 @@ set(DRIVER_OS_DIR ${DRIVER_OS_DIR} CACHE INTERNAL "Absolute Full path of driver 
 set(HAILO_DRIVER_SRC_FILES ${HAILO_DRIVER_SRC_FILES} CACHE INTERNAL "Absolute Full path of driver src files")
 set(HAILORT_CPP_SOURCES ${HAILORT_CPP_SOURCES} CACHE INTERNAL "Absolute paths of hailort's cpp source files")
 set(COMMON_C_SOURCES ${COMMON_C_SOURCES} CACHE INTERNAL "Absolute paths of common source files")
-set(HAILORT_SRCS_ABS ${HAILORT_CPP_SOURCES} ${COMMON_C_SOURCES} ${HRPC_CPP_SOURCES} ${HRPC_PROTOCOL_CPP_SOURCES} ${GENAI_SCHEME_CPP_SOURCES} CACHE INTERNAL "All absolute paths of hailort's source files")
+set(HAILORT_SRCS_ABS
+    ${HAILORT_CPP_SOURCES}
+    ${COMMON_C_SOURCES}
+    ${HRPC_CPP_SOURCES}
+    ${HRPC_PROTOCOL_CPP_SOURCES}
+    ${HRPC_CLIENT_CPP_SOURCES}
+    ${GENAI_SCHEME_CPP_SOURCES}
+    CACHE INTERNAL "All absolute paths of hailort's source files"
+)
 
 SET_SOURCE_FILES_PROPERTIES(${C_SOURCES} PROPERTIES LANGUAGE CXX)
 add_library(libhailort SHARED ${HAILORT_SRCS_ABS})
@@ -98,6 +106,16 @@ target_link_libraries(libhailort PRIVATE Eigen3::Eigen)
 target_link_libraries(libhailort PRIVATE rpc_proto)
 target_link_libraries(libhailort PRIVATE genai_scheme_proto)
 target_link_libraries(libhailort PRIVATE minja_wrapper)
+if(HAILO_BUILD_USB)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
+
+    target_link_libraries(libhailort PRIVATE ${LIBUSB_LIBRARIES})
+    target_include_directories(libhailort PRIVATE ${LIBUSB_INCLUDE_DIRS})
+    target_link_options(libhailort PRIVATE ${LIBUSB_LDFLAGS_OTHER})
+
+    target_compile_definitions(libhailort PRIVATE HAILO_BUILD_USB)
+endif()
 
 # Link tokenizers when client tokenizer is enabled
 if(HAILO_BUILD_CLIENT_TOKENIZER)

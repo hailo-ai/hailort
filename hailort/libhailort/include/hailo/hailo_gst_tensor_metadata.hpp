@@ -12,6 +12,7 @@
 
 #include "hailo/platform.h"
 #include <limits.h>
+#include <cstdint>
 
 
 #define HAILO_MAX_ENUM (INT_MAX)

@@ -7,7 +7,7 @@
 #define _HAILO_IOCTL_COMMON_H_
 
 #define HAILO_DRV_VER_MAJOR 5
-#define HAILO_DRV_VER_MINOR 2
+#define HAILO_DRV_VER_MINOR 3
 #define HAILO_DRV_VER_REVISION 0
 
 #define _STRINGIFY_EXPANDED( x ) #x
@@ -39,9 +39,6 @@
 
 #define HAILO_VDMA_MAX_ONGOING_TRANSFERS (128)
 #define HAILO_VDMA_MAX_ONGOING_TRANSFERS_MASK (HAILO_VDMA_MAX_ONGOING_TRANSFERS - 1)
-
-#define CHANNEL_IRQ_TIMESTAMPS_SIZE (HAILO_VDMA_MAX_ONGOING_TRANSFERS * 2)
-#define CHANNEL_IRQ_TIMESTAMPS_SIZE_MASK (CHANNEL_IRQ_TIMESTAMPS_SIZE - 1)
 
 #define INVALID_DRIVER_HANDLE_VALUE     ((uintptr_t)-1)
 
@@ -175,11 +172,6 @@ static ULONG FORCEINLINE _IOC_(ULONG nr, ULONG type, ULONG size, bool read, bool
 
 #pragma pack(push, 1)
 
-struct hailo_channel_interrupt_timestamp {
-    uint64_t timestamp_ns;
-    uint16_t desc_num_processed;
-};
-
 typedef struct {
     uint16_t is_buffer_in_use;
     uint16_t buffer_len;
@@ -205,9 +197,9 @@ enum hailo_dma_buffer_type {
     HAILO_DMA_BUFFER_MAX_ENUM = INT_MAX,
 };
 
+// TODO HRT-19791: Remove this and replace with a boolean.
 enum hailo_vdma_interrupts_domain {
     HAILO_VDMA_INTERRUPTS_DOMAIN_NONE   = 0,
-    HAILO_VDMA_INTERRUPTS_DOMAIN_DEVICE = (1 << 0),
     HAILO_VDMA_INTERRUPTS_DOMAIN_HOST   = (1 << 1),
 
     /** Max enum value to maintain ABI Integrity */
@@ -266,7 +258,6 @@ struct hailo_desc_list_program_params {
     uintptr_t desc_handle;      // in
     uint8_t channel_index;      // in
     uint32_t starting_desc;     // in
-    enum hailo_vdma_interrupts_domain last_interrupts_domain;  // in
     bool is_debug;              // in
 };
 
@@ -278,7 +269,6 @@ struct hailo_vdma_cancel_prepared_transfer_params {
 /* structure used in ioctl HAILO_VDMA_ENABLE_CHANNELS */
 struct hailo_vdma_enable_channels_params {
     uint64_t channels_bitmap_per_engine[MAX_VDMA_ENGINES];  // in
-    bool enable_timestamps_measure;                         // in
 };
 
 /* structure used in ioctl HAILO_VDMA_DISABLE_CHANNELS */
@@ -303,14 +293,6 @@ struct hailo_vdma_interrupts_wait_params {
     uint8_t channels_count;                                         // out
     struct hailo_vdma_interrupts_channel_data
         irq_data[MAX_VDMA_CHANNELS_PER_ENGINE * MAX_VDMA_ENGINES];  // out
-};
-
-/* structure used in ioctl HAILO_VDMA_INTERRUPTS_READ_TIMESTAMPS */
-struct hailo_vdma_interrupts_read_timestamp_params {
-    uint8_t engine_index;                                                               // in
-    uint8_t channel_index;                                                              // in
-    uint32_t timestamps_count;                                                          // out
-    struct hailo_channel_interrupt_timestamp timestamps[CHANNEL_IRQ_TIMESTAMPS_SIZE];   // out
 };
 
 /* structure used in ioctl HAILO_FW_CONTROL */
@@ -456,9 +438,6 @@ struct hailo_vdma_prepare_transfer_params {
     struct hailo_vdma_transfer_buffer
         buffers[HAILO_MAX_BUFFERS_PER_SINGLE_TRANSFER];                 // in
 
-    enum hailo_vdma_interrupts_domain first_interrupts_domain;          // in
-    enum hailo_vdma_interrupts_domain last_interrupts_domain;           // in
-
     bool is_debug;                                                      // in, if set program hw to send
                                                                         // more info (e.g desc complete status)
 };
@@ -513,7 +492,6 @@ struct tCompatibleHailoIoctlData
     union {
         struct hailo_vdma_enable_channels_params VdmaEnableChannels;
         struct hailo_vdma_disable_channels_params VdmaDisableChannels;
-        struct hailo_vdma_interrupts_read_timestamp_params VdmaInterruptsReadTimestamps;
         struct hailo_vdma_interrupts_wait_params VdmaInterruptsWait;
         struct hailo_vdma_buffer_sync_params VdmaBufferSync;
         struct hailo_fw_control FirmwareControl;
@@ -556,7 +534,6 @@ enum hailo_vdma_ioctl_code {
     HAILO_VDMA_ENABLE_CHANNELS_CODE,
     HAILO_VDMA_DISABLE_CHANNELS_CODE,
     HAILO_VDMA_INTERRUPTS_WAIT_CODE,
-    HAILO_VDMA_INTERRUPTS_READ_TIMESTAMPS_CODE,
     HAILO_VDMA_BUFFER_MAP_CODE,
     HAILO_VDMA_BUFFER_UNMAP_CODE,
     HAILO_VDMA_BUFFER_SYNC_CODE,
@@ -577,7 +554,6 @@ enum hailo_vdma_ioctl_code {
 #define HAILO_VDMA_ENABLE_CHANNELS            _IOR_(HAILO_VDMA_IOCTL_MAGIC,  HAILO_VDMA_ENABLE_CHANNELS_CODE,              struct hailo_vdma_enable_channels_params)
 #define HAILO_VDMA_DISABLE_CHANNELS           _IOR_(HAILO_VDMA_IOCTL_MAGIC,  HAILO_VDMA_DISABLE_CHANNELS_CODE,             struct hailo_vdma_disable_channels_params)
 #define HAILO_VDMA_INTERRUPTS_WAIT            _IOWR_(HAILO_VDMA_IOCTL_MAGIC, HAILO_VDMA_INTERRUPTS_WAIT_CODE,              struct hailo_vdma_interrupts_wait_params)
-#define HAILO_VDMA_INTERRUPTS_READ_TIMESTAMPS _IOWR_(HAILO_VDMA_IOCTL_MAGIC, HAILO_VDMA_INTERRUPTS_READ_TIMESTAMPS_CODE,   struct hailo_vdma_interrupts_read_timestamp_params)
 
 #define HAILO_VDMA_BUFFER_MAP                 _IOWR_(HAILO_VDMA_IOCTL_MAGIC, HAILO_VDMA_BUFFER_MAP_CODE,                   struct hailo_vdma_buffer_params)
 #define HAILO_VDMA_BUFFER_UNMAP               _IOR_(HAILO_VDMA_IOCTL_MAGIC,  HAILO_VDMA_BUFFER_UNMAP_CODE,                 struct hailo_vdma_buffer_params)

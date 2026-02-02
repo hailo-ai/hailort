@@ -307,7 +307,6 @@ Expected<HailoRTDriver::DeviceInfo> query_device_info(const std::string &device_
 
 COMPATIBLE_PARAM_CAST(hailo_vdma_enable_channels_params, VdmaEnableChannels)
 COMPATIBLE_PARAM_CAST(hailo_vdma_disable_channels_params, VdmaDisableChannels)
-COMPATIBLE_PARAM_CAST(hailo_vdma_interrupts_read_timestamp_params, VdmaInterruptsReadTimestamps)
 COMPATIBLE_PARAM_CAST(hailo_vdma_interrupts_wait_params, VdmaInterruptsWait)
 COMPATIBLE_PARAM_CAST(hailo_vdma_buffer_sync_params, VdmaBufferSync)
 COMPATIBLE_PARAM_CAST(hailo_fw_control, FirmwareControl)

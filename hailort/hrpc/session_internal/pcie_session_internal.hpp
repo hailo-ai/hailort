@@ -3,12 +3,12 @@
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
- * @file hailo_session_internal.hpp
+ * @file pcie_session_internal.hpp
  * @brief Hailo Session Header for pcie based comunication
  **/
 
-#ifndef _PCIE_RAW_CONNECTION_INTERNAL_HPP_
-#define _PCIE_RAW_CONNECTION_INTERNAL_HPP_
+#ifndef _PCIE_SESSION_INTERNAL_HPP_
+#define _PCIE_SESSION_INTERNAL_HPP_
 
 #include "hailo/expected.hpp"
 #include "vdma/pcie_session.hpp"
@@ -33,6 +33,7 @@ public:
     virtual ~PcieConnectionContext() = default;
 
     virtual std::shared_ptr<HailoRTDriver> get_driver() override { return m_driver; }
+    virtual Device::Type device_type() override { return Device::Type::PCIE; }
 
 private:
     std::shared_ptr<HailoRTDriver> m_driver;
@@ -53,11 +54,9 @@ public:
     virtual hailo_status close() override;
 
     virtual hailo_status wait_for_write_async_ready(size_t transfer_size, std::chrono::milliseconds timeout) override;
-    using Session::write_async;
     virtual hailo_status write_async(TransferRequest &&request) override;
 
     virtual hailo_status wait_for_read_async_ready(size_t transfer_size, std::chrono::milliseconds timeout) override;
-    using Session::read_async;
     virtual hailo_status read_async(TransferRequest &&request) override;
     virtual Expected<int> read_fd() override;
 
@@ -96,17 +95,15 @@ public:
 
     virtual Expected<std::shared_ptr<Session>> accept() override;
 
-    explicit RawPcieListener(std::shared_ptr<PcieConnectionContext> context, uint16_t port) : SessionListener(port), m_context(context), m_port(port) {}
+    explicit RawPcieListener(std::shared_ptr<PcieConnectionContext> context, uint16_t port) : SessionListener(port), m_context(context) {}
 
     hailo_status set_session(PcieSession &&session);
 
 private:
-
     std::shared_ptr<PcieConnectionContext> m_context;
     std::shared_ptr<PcieSession> m_session;
-    uint16_t m_port;
 };
 
 } // namespace hailort
 
-#endif // _PCIE_RAW_CONNECTION_INTERNAL_HPP_
+#endif // _PCIE_SESSION_INTERNAL_HPP_

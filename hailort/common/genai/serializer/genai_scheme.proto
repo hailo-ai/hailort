@@ -152,8 +152,7 @@ message TextGenerationOutput {
 }
 
 message LLM_Generator_Read_Request {
-    uint32 timeout_ms = 1;
-    TextGenerationInput generation_input = 2;
+    TextGenerationInput generation_input = 1;
 }
 
 message LLM_Generator_Read_Reply {
@@ -303,6 +302,7 @@ message VLM_Create_Reply {
 message VLM_Generator_Generate_Request {
     uint32 number_of_frames = 1; // Standalone frames
     repeated uint32 video_frames_count_per_video = 3; // Holds a frame-count for each given video
+    bool raw_embeddings = 4; // If true, frames are raw embeddings instead of encoder inputs
 }
 
 message VLM_Generator_Generate_Reply {

@@ -8,9 +8,8 @@
  **/
 
 #include "os/microsec_timer.hpp"
-#include <Windows.h>
-#include <thread>
-#include <chrono>
+#include <profileapi.h>   // QueryPerformanceFrequency, QueryPerformanceCounter
+#include <winnt.h>        // LARGE_INTEGER
 
 namespace hailort
 {

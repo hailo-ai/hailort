@@ -61,6 +61,13 @@ hailo_status VLMServer::parse_config_json(const MemoryView &config_json)
         m_video_pad_token_id = hailo_config_json["video_pad"].get<int>();
     }
 
+    m_support_raw_embeddings = false;
+    // In the past the quarot-unfolding was in the image encoder.
+    // To get raw-embeddings instead of encoding frames, we need the unfolding to be in the LLM
+    if (hailo_config_json.contains("unfold_quarot_on_LLM")) {
+        m_support_raw_embeddings = hailo_config_json["unfold_quarot_on_LLM"].get<bool>();
+    }
+
     return LLMServer::parse_config_json(hailo_config_json);
 }
 
@@ -106,12 +113,11 @@ std::future<hailo_status> VLMServer::create_token_embedder_future(const Hef &hef
         CHECK_SUCCESS(WaitOrShutdown(embeddings_arrived_event, shutdown_event).wait(LONG_TIMEOUT)); // Waiting for data over the session
 
         LOGGER__GENAI_STATS_START("[create] create token embedder");
-        const auto embeddings_per_frame = dynamic_cast<VLMPreProcess*>(m_pre_process.get())->embeddings_per_frame();
         TRY(auto embeddings_view, hef.get_external_resources(INPUT_EMB_BINARY));
 
         TRY(m_token_embedder, TokenEmbedder<uint16_t>::create(embeddings_view,
             embeddings_view.size() / (sizeof(uint16_t) * m_embeddings_features), m_embeddings_features,
-            m_image_pad_token_id, m_video_pad_token_id, embeddings_per_frame));
+            m_image_pad_token_id, m_video_pad_token_id));
         LOGGER__GENAI_STATS_END("[create] create token embedder");
 
         return HAILO_SUCCESS;
@@ -301,7 +307,7 @@ Expected<Buffer> VLMServer::handle_vlm_generate_request(const MemoryView &reques
 {
     TRY_AS_HRPC_STATUS(auto request_info, VLMGeneratorGenerateSerializer::deserialize_request(request),
         VLMGeneratorGenerateSerializer);
-    auto &[number_of_standalone_frames, raw_video_frames_count_per_video] = request_info;
+    auto &[number_of_standalone_frames, raw_video_frames_count_per_video, is_raw_embeddings] = request_info;
 
     // Compute total number of video frames from the per-video counts
     uint32_t number_of_video_frames = std::accumulate(raw_video_frames_count_per_video.begin(), raw_video_frames_count_per_video.end(), 0u);
@@ -314,21 +320,80 @@ Expected<Buffer> VLMServer::handle_vlm_generate_request(const MemoryView &reques
 
     prepare_for_new_generation();
 
-    TRY(auto encoder_output_config, m_inference_manager_frame_encoder->get_model()->output());
-    auto encoder_output_frame_size = encoder_output_config.get_frame_size();
+    // Handle frame data - if is_raw_embeddings, client sent embeddings directly; otherwise, encode raw frames via frame encoder
+    if (is_raw_embeddings) {
+        CHECK_SUCCESS_AS_HRPC_STATUS(handle_raw_embeddings_generation(number_of_standalone_frames,
+            raw_video_frames_count_per_video),
+            VLMGeneratorGenerateSerializer);
+    } else {
+        TRY_AS_HRPC_STATUS(auto encoder_output_config, m_inference_manager_frame_encoder->get_model()->output(),
+            VLMGeneratorGenerateSerializer);
+        auto encoder_output_frame_size = encoder_output_config.get_frame_size();
+        // TODO (HRT-19393): Optimize the buffers allocations (pool? lazy allocation?)
+        CHECK_SUCCESS_AS_HRPC_STATUS(handle_raw_frames_encoding(number_of_standalone_frames, number_of_video_frames,
+            raw_video_frames_count_per_video, encoder_output_frame_size, encoder_output_config),
+            VLMGeneratorGenerateSerializer);
+    }
+
+    // Set the embedding counts on the token embedder for tokenization
+    // Note: For standalone frames, compute from buffer sizes (one buffer per frame)
+    // For videos, use m_embeddings_count_per_video which is correctly computed per video
+    if (m_token_embedder) {
+        m_token_embedder->set_special_tokens_embeddings_count(
+            get_embeddings_count_per_item(m_current_standalone_frames_embeddings),
+            m_embeddings_count_per_video);
+    }
+    TRY_AS_HRPC_STATUS(auto generator_generate_reply, VLMGeneratorGenerateSerializer::serialize_reply(HAILO_SUCCESS),
+        VLMGeneratorGenerateSerializer);
+    return generator_generate_reply;
+}
+
+hailo_status VLMServer::handle_raw_embeddings_generation(uint32_t number_of_standalone_frames,
+    const std::vector<uint32_t> &raw_video_embeddings_count_per_video)
+{
+    CHECK(m_support_raw_embeddings, HAILO_INVALID_OPERATION, "Model does not support raw embeddings");
+
+    // Read embeddings directly from session for standalone frames (one buffer per image)
+    for (uint32_t i = 0; i < number_of_standalone_frames; i++) {
+        TRY(auto frame_embeddings, m_session.read());
+        m_current_standalone_frames_embeddings.push_back(frame_embeddings);
+    }
+
+    // Read embeddings directly from session for videos
+    // Client sends embedding buffers flattened, with raw_video_embeddings_count_per_video[i] buffers for video i
+    // We need to read all buffers and compute per-video embedding counts
+    for (size_t video_idx = 0; video_idx < raw_video_embeddings_count_per_video.size(); video_idx++) {
+        size_t video_embedding_count = 0;
+        for (uint32_t item_idx = 0; item_idx < raw_video_embeddings_count_per_video[video_idx]; item_idx++) {
+            TRY(auto video_embeddings, m_session.read());
+            m_current_videos_embeddings.push_back(video_embeddings);
+            // Accumulate embedding count for this video from buffer sizes
+            video_embedding_count += video_embeddings->size() / (m_embeddings_features * sizeof(uint16_t));
+        }
+        m_embeddings_count_per_video.push_back(video_embedding_count);
+    }
+
+    return HAILO_SUCCESS;
+}
+
+hailo_status VLMServer::handle_raw_frames_encoding(uint32_t number_of_standalone_frames, uint32_t number_of_video_frames,
+    const std::vector<uint32_t> &raw_video_frames_count_per_video, size_t encoder_output_frame_size,
+    const InferModel::InferStream &encoder_output_config)
+{
+    auto total_number_of_frames = number_of_standalone_frames + number_of_video_frames;
     std::vector<BufferPtr> frame_encoder_input_buffers;
     frame_encoder_input_buffers.reserve(total_number_of_frames);
-    // TODO (HRT-19393): Optimize the buffers allocations (pool? lazy allocation?)
 
-    // Handle standalone frames
+    // Read raw standalone frames from session and allocate output buffers for encoding
     for (uint32_t i = 0; i < number_of_standalone_frames; i++) {
-        TRY_AS_HRPC_STATUS(auto encoder_input_frame, m_session.read(), VLMGeneratorGenerateSerializer);
+        // TODO (HRT-19393): Optimize the buffers allocations (pool? lazy allocation?)
+        TRY(auto encoder_input_frame, m_session.read());
         frame_encoder_input_buffers.push_back(encoder_input_frame);
-        TRY_AS_HRPC_STATUS(auto encoder_output_frame, Buffer::create_shared(encoder_output_frame_size, BufferStorageParams::create_dma()), VLMGeneratorGenerateSerializer);
+        TRY(auto encoder_output_frame, Buffer::create_shared(encoder_output_frame_size, BufferStorageParams::create_dma()));
         m_current_standalone_frames_embeddings.push_back(encoder_output_frame);
     }
 
-    // Process frames to get frame embeddings - TODO: HRT-17264 - Move to async generation
+    // Process standalone frames to get frame embeddings - TODO: HRT-17264 - Move to async generation
     for (uint32_t i = 0; i < number_of_standalone_frames; i++) {
         LOGGER__GENAI_STATS_START("[generate-prefill] encode frame");
         std::map<std::string, MemoryView> inputs;
@@ -336,36 +401,35 @@ Expected<Buffer> VLMServer::handle_vlm_generate_request(const MemoryView &reques
             inputs[input_config.name()] = MemoryView(frame_encoder_input_buffers[i]);
         }
         std::map<std::string, MemoryView> outputs {{encoder_output_config.name(), MemoryView(m_current_standalone_frames_embeddings[i])}};
-        CHECK_SUCCESS_AS_HRPC_STATUS(m_inference_manager_frame_encoder->generate(inputs, outputs), VLMGeneratorGenerateSerializer);
+        CHECK_SUCCESS(m_inference_manager_frame_encoder->generate(inputs, outputs));
         LOGGER__GENAI_STATS_END("[generate-prefill] encode frame");
     }
 
-    // Handle video frames
     // Raise errors in case the encoder has only 1 input and video frames are passed
     if (0 != number_of_video_frames) {
-        CHECK_AS_HRPC_STATUS(m_inference_manager_frame_encoder->get_model()->inputs().size() == 2, HAILO_INVALID_OPERATION, VLMGeneratorGenerateSerializer);
+        CHECK(m_inference_manager_frame_encoder->get_model()->inputs().size() == 2, HAILO_INVALID_OPERATION);
     }
 
+    // Read raw video frames from session
     for (uint32_t i = 0; i < number_of_video_frames; i++) {
-        TRY_AS_HRPC_STATUS(auto encoder_input_frame, m_session.read(), VLMGeneratorGenerateSerializer);
+        TRY(auto encoder_input_frame, m_session.read());
         frame_encoder_input_buffers.push_back(encoder_input_frame);
     }
+
     uint32_t number_of_video_frames_to_process = 0;
     // Build vector of processed frame counts per video (encoder outputs half the input frames, rounded up)
-    std::vector<size_t> processed_video_frames_count_per_video;
-    processed_video_frames_count_per_video.reserve(raw_video_frames_count_per_video.size());
+    // Also store the embedding count per video for the token embedder
+    const auto embeddings_per_frame = dynamic_cast<VLMPreProcess*>(m_pre_process.get())->embeddings_per_frame();
     for (auto raw_count : raw_video_frames_count_per_video) {
         uint32_t processed_count = (raw_count + 1) / 2;
         number_of_video_frames_to_process += processed_count;
-        processed_video_frames_count_per_video.push_back(processed_count);
-    }
-    if (m_token_embedder) {
-        m_token_embedder->set_video_frames_count(processed_video_frames_count_per_video);
+        // Each processed frame produces embeddings_per_frame embeddings
+        m_embeddings_count_per_video.push_back(static_cast<size_t>(processed_count) * embeddings_per_frame);
     }
 
     m_current_videos_embeddings.reserve(number_of_video_frames_to_process);
     for (uint32_t i = 0; i < number_of_video_frames_to_process; i++) {
-        TRY_AS_HRPC_STATUS(auto encoder_output_frame, Buffer::create_shared(encoder_output_frame_size, BufferStorageParams::create_dma()), VLMGeneratorGenerateSerializer);
+        TRY(auto encoder_output_frame, Buffer::create_shared(encoder_output_frame_size, BufferStorageParams::create_dma()));
         m_current_videos_embeddings.push_back(encoder_output_frame);
 
         auto input_index_first = number_of_standalone_frames + (2 * i);
@@ -382,18 +446,16 @@ Expected<Buffer> VLMServer::handle_vlm_generate_request(const MemoryView &reques
             } else {
                 LOGGER__ERROR("Invalid input config name: '{}' for video processing - expecting suffixes '{}' or '{}'",
                     input_config.name(), ENCODER_FIRST_INPUT_NAME_SUFF, ENCODER_SECOND_INPUT_NAME_SUFF);
-                CHECK_AS_HRPC_STATUS(false, HAILO_INVALID_ARGUMENT, VLMGeneratorGenerateSerializer);
+                return HAILO_INVALID_ARGUMENT;
             }
         }
         std::map<std::string, MemoryView> outputs {{encoder_output_config.name(), MemoryView(m_current_videos_embeddings[i])}};
         auto status = m_inference_manager_frame_encoder->generate(inputs, outputs);
         LOGGER__GENAI_STATS_END("[generate-prefill] encode frames");
-        CHECK_AS_HRPC_STATUS(status == HAILO_SUCCESS, status, VLMGeneratorGenerateSerializer);
+        CHECK_SUCCESS(status);
     }
 
-    TRY_AS_HRPC_STATUS(auto generator_generate_reply, VLMGeneratorGenerateSerializer::serialize_reply(HAILO_SUCCESS),
-        VLMGeneratorGenerateSerializer);
-    return generator_generate_reply;
+    return HAILO_SUCCESS;
 }
 
 hailo_status VLMServer::process_prefill_inputs_chunk(std::map<std::string, MemoryView> &prefill_inputs,
@@ -425,8 +487,8 @@ Expected<int> VLMServer::get_next_token_prefill(std::map<std::string, MemoryView
     size_t num_full_chunks = input_embeddings.size() / m_pre_process_params.prefill_input_tokens_count;
     size_t remainder_size = input_embeddings.size() % m_pre_process_params.prefill_input_tokens_count;
 
-    EmbeddingsVectorState standalone_frame_embeddings_state(standalone_frame_embeddings, dynamic_cast<VLMPreProcess*>(m_pre_process.get())->embeddings_per_frame());
-    EmbeddingsVectorState video_embeddings_state(video_embeddings, dynamic_cast<VLMPreProcess*>(m_pre_process.get())->embeddings_per_frame());
+    EmbeddingsVectorState standalone_frame_embeddings_state(standalone_frame_embeddings, get_embeddings_count_per_item(standalone_frame_embeddings));
+    EmbeddingsVectorState video_embeddings_state(video_embeddings, get_embeddings_count_per_item(video_embeddings));
 
     // Process the remainder first, if any
     if (remainder_size > 0) {
@@ -451,6 +513,15 @@ Expected<int> VLMServer::get_next_token_prefill(std::map<std::string, MemoryView
     return next_token;
 }
 
+std::vector<size_t> VLMServer::get_embeddings_count_per_item(const std::vector<BufferPtr> &embeddings_buffers) const
+{
+    std::vector<size_t> counts;
+    counts.reserve(embeddings_buffers.size());
+    for (const auto &buffer : embeddings_buffers) {
+        counts.push_back(buffer->size() / (m_embeddings_features * sizeof(uint16_t)));
+    }
+    return counts;
+}
 
 Expected<std::pair<int, LLMGeneratorCompletion::Status>> VLMServer::handle_prefill_phase(const std::vector<int> &tokens,
     const std::vector<EmbeddingViewWrapper> &embeddings)
@@ -460,34 +531,38 @@ Expected<std::pair<int, LLMGeneratorCompletion::Status>> VLMServer::handle_prefi
 
     // Use provided embeddings if available (client-side tokenizer), otherwise tokenize on server
     // find the number of image pad tokens and video-pad tokens in the embeddings-vector,
-    // and check that they match the number of frames and video embeddings generated by the encoder
+    // and check that they match the number of frames and video embeddings
     (void)tokens;
 
-    const auto embeddings_per_frame = dynamic_cast<VLMPreProcess*>(m_pre_process.get())->embeddings_per_frame();
-    const auto number_of_standalone_frames_embeddings = std::count_if(embeddings.begin(), embeddings.end(), [](auto embedding) {
+    const auto number_of_image_embeddings = std::count_if(embeddings.begin(), embeddings.end(), [](auto embedding) {
         return embedding.type() == EmbeddingViewWrapper::EmbeddingType::IMAGE;
     });
 
-    assert(0 == (number_of_standalone_frames_embeddings % embeddings_per_frame));
-    CHECK(static_cast<size_t>(number_of_standalone_frames_embeddings / embeddings_per_frame) == m_current_standalone_frames_embeddings.size(),
+    // Compute expected total image embeddings from buffer sizes
+    const auto image_counts = get_embeddings_count_per_item(m_current_standalone_frames_embeddings);
+    const auto expected_image_embeddings = std::accumulate(image_counts.begin(), image_counts.end(), size_t{0});
+    CHECK(static_cast<size_t>(number_of_image_embeddings) == expected_image_embeddings,
         HAILO_INVALID_OPERATION,
-        "Number of image-pad embeddings from prompt ({}) does not match the number of frames embeddings generated by the encoder ({})",
-            (number_of_standalone_frames_embeddings / embeddings_per_frame), m_current_standalone_frames_embeddings.size());
+        "Number of image-pad embeddings from prompt ({}) does not match the expected total image embeddings ({})",
+            number_of_image_embeddings, expected_image_embeddings);
 
     const auto number_of_video_embeddings = std::count_if(embeddings.begin(), embeddings.end(), [](auto embedding) {
         return embedding.type() == EmbeddingViewWrapper::EmbeddingType::VIDEO;
     });
 
-    assert(0 == (number_of_video_embeddings % embeddings_per_frame));
-    CHECK(static_cast<size_t>(number_of_video_embeddings / embeddings_per_frame) == m_current_videos_embeddings.size(), HAILO_INVALID_OPERATION,
-        "Number of video-pad embeddings from prompt ({}) does not match the number of video embeddings generated by the encoder ({})",
-            (number_of_video_embeddings / embeddings_per_frame), m_current_videos_embeddings.size());
+    // Compute expected total video embeddings from buffer sizes
+    const auto video_counts = get_embeddings_count_per_item(m_current_videos_embeddings);
+    const auto expected_video_embeddings = std::accumulate(video_counts.begin(), video_counts.end(), size_t{0});
+    CHECK(static_cast<size_t>(number_of_video_embeddings) == expected_video_embeddings, HAILO_INVALID_OPERATION,
+        "Number of video-pad embeddings from prompt ({}) does not match the expected total video embeddings ({})",
+            number_of_video_embeddings, expected_video_embeddings);
 
     TRY(auto next_token, get_next_token_prefill(m_prefill_inputs, m_prefill_outputs,
         embeddings, m_current_standalone_frames_embeddings, m_current_videos_embeddings, m_current_generation_params));
 
     m_current_standalone_frames_embeddings.clear();
     m_current_videos_embeddings.clear();
+    m_embeddings_count_per_video.clear();
     m_generated_token_count++;
 
     auto generation_status = get_current_generation_status(next_token);

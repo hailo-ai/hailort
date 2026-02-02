@@ -43,7 +43,8 @@ public:
     enum class Type {
         PCIE = 0,
         ETH,
-        INTEGRATED
+        INTEGRATED,
+        USB
     };
 
     /** The device supported capabilities */

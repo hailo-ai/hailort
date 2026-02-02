@@ -12,7 +12,9 @@
 #include "common/utils.hpp"
 #include "hailo/hailort.h"
 
-#include <windows.h>
+#include <memoryapi.h>
+#include <winbase.h>
+#include <errhandlingapi.h>
 
 namespace hailort
 {

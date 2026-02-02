@@ -720,27 +720,27 @@ hailo_status HailoSyncNetImpl::configure_network_group()
     // Check that if one of the NMS params are changed, we have NMS outputs in the model
     auto has_nms_output = std::any_of(vstreams->second.begin(), vstreams->second.end(), [](const auto &vs)
     {
-        return HailoRTCommon::is_nms(vs.get_info());
+        return HailoRTCommon::is_non_chip_nms(vs.get_info());
     });
 
     for (auto &out_vs : vstreams->second) {
         if (m_props.m_nms_score_threshold.was_changed()) {
             GST_CHECK(has_nms_output, HAILO_INVALID_OPERATION, m_element, RESOURCE, "NMS score threshold is set, but there is no NMS output in this model.");
-            if (HailoRTCommon::is_nms(out_vs.get_info())) {
+            if (HailoRTCommon::is_non_chip_nms(out_vs.get_info())) {
                 status = out_vs.set_nms_score_threshold(m_props.m_nms_score_threshold.get());
                 GST_CHECK_SUCCESS(status, m_element, RESOURCE, "Setting NMS score threshold failed, status = %d", status);
             }
         }
         if (m_props.m_nms_iou_threshold.was_changed()) {
             GST_CHECK(has_nms_output, HAILO_INVALID_OPERATION, m_element, RESOURCE, "NMS IoU threshold is set, but there is no NMS output in this model.");
-            if (HailoRTCommon::is_nms(out_vs.get_info())) {
+            if (HailoRTCommon::is_non_chip_nms(out_vs.get_info())) {
                 status = out_vs.set_nms_iou_threshold(m_props.m_nms_iou_threshold.get());
                 GST_CHECK_SUCCESS(status, m_element, RESOURCE, "Setting NMS IoU threshold failed, status = %d", status);
             }
         }
         if (m_props.m_nms_max_proposals_per_class.was_changed()) {
             GST_CHECK(has_nms_output, HAILO_INVALID_OPERATION, m_element, RESOURCE, "NMS max proposals per class is set, but there is no NMS output in this model.");
-            if (HailoRTCommon::is_nms(out_vs.get_info())) {
+            if (HailoRTCommon::is_non_chip_nms(out_vs.get_info())) {
                 status = out_vs.set_nms_max_proposals_per_class(m_props.m_nms_max_proposals_per_class.get());
                 GST_CHECK_SUCCESS(status, m_element, RESOURCE, "Setting NMS max proposals per class failed, status = %d", status);
             }

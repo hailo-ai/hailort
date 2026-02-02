@@ -374,6 +374,12 @@ typedef struct {
     uint32_t func;
 } hailo_pcie_device_info_t;
 
+/** USB device information */
+typedef struct {
+    uint8_t bus;
+    uint8_t device_address;
+} hailo_usb_device_info_t;
+
 /** Hailo device ID string - BDF for PCIe devices, IP address for Ethernet devices. **/
 typedef struct {
     char id[HAILO_MAX_DEVICE_ID_LENGTH];
@@ -384,6 +390,7 @@ typedef enum {
     HAILO_DEVICE_TYPE_PCIE,
     HAILO_DEVICE_TYPE_ETH,
     HAILO_DEVICE_TYPE_INTEGRATED,
+    HAILO_DEVICE_TYPE_USB,
 
     /** Max enum value to maintain ABI Integrity */
     HAILO_DEVICE_TYPE_MAX_ENUM = HAILO_MAX_ENUM

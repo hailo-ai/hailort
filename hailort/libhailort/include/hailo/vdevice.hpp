@@ -15,6 +15,7 @@
 #include "hailo/hef.hpp"
 #include "hailo/network_group.hpp"
 #include "hailo/device.hpp"
+#include "hailo/hailo_session.hpp"
 
 
 /** hailort namespace */
@@ -260,6 +261,8 @@ public:
     const hailo_vdevice_params_t& get_params() const {
         return m_params;
     }
+
+    virtual Expected<std::shared_ptr<Session>> create_session(uint16_t connection_port) const;
 
     virtual hailo_status before_fork();
     virtual hailo_status after_fork_in_parent();

@@ -230,7 +230,7 @@ static Expected<LatencyMeterPtr> create_hw_latency_meter(const std::vector<std::
         return make_unexpected(HAILO_INVALID_OPERATION);
     }
 
-    auto res = make_shared_nothrow<LatencyMeter>(d2h_channel_names, MAX_IRQ_TIMESTAMPS_SIZE);
+    auto res = make_shared_nothrow<LatencyMeter>(d2h_channel_names, ONGOING_TRANSFERS_SIZE);
     CHECK_NOT_NULL_AS_EXPECTED(res, HAILO_OUT_OF_HOST_MEMORY);
 
     return res;
@@ -479,9 +479,8 @@ hailo_status ResourcesManager::create_boundary_vdma_channel(const LayerInfo &lay
 
     auto latency_meter = (contains(m_latency_meters, layer_info.network_name)) ? m_latency_meters.at(layer_info.network_name) : nullptr;
 
-    TRY(auto vdma_transfer_launcher, m_vdma_device.get_vdma_transfer_launcher());
     TRY(auto channel, vdma::BoundaryChannel::create(m_driver, channel_id, channel_direction, std::move(desc_list),
-        vdma_transfer_launcher.get(), queue_size, false, layer_info.name, latency_meter));
+        queue_size, false, layer_info.name, latency_meter));
 
     m_boundary_channels.add_channel(std::move(channel));
     return HAILO_SUCCESS;
@@ -740,25 +739,6 @@ hailo_status ResourcesManager::stop_vdma_interrupts_dispatcher()
 
     TRY(auto interrupts_dispatcher, m_vdma_device.get_vdma_interrupts_dispatcher());
     return interrupts_dispatcher.get().stop();
-}
-
-hailo_status ResourcesManager::start_vdma_transfer_launcher()
-{
-    CHECK(get_is_activated(), HAILO_INTERNAL_FAILURE, "Cannot call start_vdma_transfer_launcher when core-op already deactivated");
-    TRY(auto vdma_transfer_launcher, m_vdma_device.get_vdma_transfer_launcher());
-    vdma_transfer_launcher.get().start();
-    return HAILO_SUCCESS;
-}
-
-hailo_status ResourcesManager::stop_vdma_transfer_launcher()
-{
-    if (!get_is_activated()) {
-        return HAILO_SUCCESS;
-    }
-
-    TRY(auto vdma_transfer_launcher, m_vdma_device.get_vdma_transfer_launcher());
-    vdma_transfer_launcher.get().stop();
-    return HAILO_SUCCESS;
 }
 
 Expected<CONTROL_PROTOCOL__host_buffer_info_t> ResourcesManager::get_boundary_buffer_info(vdma::BoundaryChannel &channel,

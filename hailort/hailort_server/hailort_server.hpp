@@ -59,7 +59,7 @@ class Server;
 class ConfiguredInferModelRunAsyncHandler;
 class HailoRTServer : public Server {
 public:
-    static Expected<std::unique_ptr<HailoRTServer>> create_unique(const std::string& ip = "");
+    static Expected<std::unique_ptr<HailoRTServer>> create_unique(const std::string& device_id);
     explicit HailoRTServer(std::shared_ptr<ConnectionContext> connection_context, std::shared_ptr<std::mutex> write_mutex,
         bool is_unix_socket) : Server(connection_context, write_mutex, [this] (uint32_t client_id) {
             m_vdevice_manager->mark_vdevice_for_close(client_id);
@@ -120,7 +120,7 @@ private:
     std::unordered_map<uint32_t, uint32_t> m_infer_model_to_info_id;
     ThreadSafeMap<uint32_t, std::shared_ptr<ServerNetworkGroupBufferPool>> m_buffer_pool_per_cim;
     ThreadSafeMap<uint32_t, ObjectPoolPtr<RunAsyncInfo>> m_run_async_info_per_cim;
-    bool m_is_unix_socket;
+    const bool m_is_unix_socket;
     std::shared_ptr<VDeviceManager> m_vdevice_manager;
 };
 

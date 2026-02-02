@@ -3,6 +3,9 @@
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 #include <vector>
+#include <winnls.h>
+#include <errhandlingapi.h>
+#include <winnt.h>
 
 #include "common/os/windows/string_conversion.hpp"
 #include "common/utils.hpp"

@@ -13,6 +13,12 @@
 #include <exception>
 using namespace std;
 
+#if defined(_WIN32)
+#include <winsock2.h>
+#else
+#include <netinet/in.h>
+#endif
+
 #include "hailo/hailort.h"
 #include "hailo/hailort_defaults.hpp"
 
@@ -922,7 +928,7 @@ PYBIND11_MODULE(_pyhailort, m) {
             }
         })
         .def_property_readonly("nms_shape", [](const hailo_vstream_info_t &self) {
-            if (!HailoRTCommon::is_nms(self)) {
+            if (!HailoRTCommon::is_non_chip_nms(self)) {
                 throw HailoRTCustomException("nms_shape is availale only on nms order vstreams");
             }
             return self.nms_shape;
@@ -937,7 +943,7 @@ PYBIND11_MODULE(_pyhailort, m) {
         })
         .def(py::pickle(
             [](const hailo_vstream_info_t &vstream_info) { // __getstate__
-                if (HailoRTCommon::is_nms(vstream_info)) {
+                if (HailoRTCommon::is_non_chip_nms(vstream_info)) {
                     return py::make_tuple(
                         vstream_info.name,
                         vstream_info.network_name,
@@ -962,7 +968,7 @@ PYBIND11_MODULE(_pyhailort, m) {
                 strcpy(vstream_info.network_name, t[1].cast<std::string>().c_str());
                 vstream_info.direction = t[2].cast<hailo_stream_direction_t>();
                 vstream_info.format = t[3].cast<hailo_format_t>();
-                if (HailoRTCommon::is_nms(vstream_info)) {
+                if (HailoRTCommon::is_non_chip_nms(vstream_info)) {
                     vstream_info.nms_shape = t[4].cast<hailo_nms_shape_t>();
                 }
                 else {

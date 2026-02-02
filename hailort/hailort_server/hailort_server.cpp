@@ -175,14 +175,14 @@ hailo_status HailoRTServer::cleanup_client_resources(ClientConnectionPtr client_
     return HAILO_SUCCESS;
 }
 
-Expected<std::unique_ptr<HailoRTServer>> HailoRTServer::create_unique(const std::string &ip)
+Expected<std::unique_ptr<HailoRTServer>> HailoRTServer::create_unique(const std::string &device_id)
 {
-    TRY(auto connection_context, ConnectionContext::create_server_shared(ip));
+    TRY(auto connection_context, ConnectionContext::create_server_shared(device_id));
 
     auto write_mutex = make_shared_nothrow<std::mutex>();
     CHECK_NOT_NULL(write_mutex, HAILO_OUT_OF_HOST_MEMORY);
 
-    bool is_unix_socket = (ip == SERVER_ADDR_USE_UNIX_SOCKET);
+    bool is_unix_socket = (device_id == SERVER_ADDR_USE_UNIX_SOCKET);
     auto res = make_unique_nothrow<HailoRTServer>(connection_context, write_mutex, is_unix_socket);
     CHECK_NOT_NULL(res, HAILO_OUT_OF_HOST_MEMORY);
     return res;
@@ -229,7 +229,7 @@ hailo_status VDeviceCreateInferModelHandler::parse_request(const MemoryView &req
     assert(hef_size <= SIZE_MAX);
     TRY(m_hef_buffer, Buffer::create_shared(static_cast<size_t>(hef_size), BufferStorageParams::create_dma()));
 
-    auto status = client_connection->read_buffer(m_hef_buffer->as_view());
+    auto status = client_connection->read_buffer(m_hef_buffer->as_view(), LONG_RPC_ACTION_TIMEOUT);
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
@@ -1170,6 +1170,13 @@ hailo_status DeviceEchoBufferHandler::do_action(ResponseWriter response_writer)
         return response_writer.write(HAILO_SUCCESS, {});
     }
     return response_writer.write(HAILO_SUCCESS, {}, {m_buffer});
+}
+
+hailo_status handle_system_reset(const MemoryView, ClientConnectionPtr, ResponseWriter)
+{
+    int ret = system("reboot");
+    CHECK(0 == ret, HAILO_INTERNAL_FAILURE);
+    return HAILO_SUCCESS;
 }
 
 Expected<Dispatcher> HailoRTServer::create_dispatcher()

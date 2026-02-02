@@ -114,16 +114,6 @@ hailo_format_type_t HailoRTDefaults::get_default_nms_format_type(hailo_format_or
     }
 }
 
-struct sockaddr_in HailoRTDefaults::get_sockaddr()
-{
-    struct sockaddr_in address{};
-    address.sin_family = AF_INET;
-    address.sin_port = 0;
-    address.sin_addr.s_addr = INADDR_ANY;
-    // sin_zero is already zeroed
-    return address;
-}
-
 hailo_format_t HailoRTDefaults::get_user_buffer_format()
 {
     return get_user_buffer_format(true, HAILO_FORMAT_TYPE_AUTO);

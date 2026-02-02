@@ -242,7 +242,7 @@ if __name__ == "__main__":
             Extension("_pyhailort", sources=[]),
         ],
         install_requires=[
-            "numpy<2" if sys.version_info < (3, 13) else "numpy",
+            "numpy",
         ],
         name="hailort",
         package_data={
@@ -257,6 +257,6 @@ if __name__ == "__main__":
             "linux_aarch64",
         ],
         url="https://hailo.ai/",
-        version="5.2.0",
+        version="5.3.0",
         zip_safe=False,
     )

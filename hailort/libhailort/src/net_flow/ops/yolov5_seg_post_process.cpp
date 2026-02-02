@@ -401,6 +401,13 @@ hailo_status Yolov5SegPostProcess::fill_nms_with_byte_mask_format(MemoryView &bu
     uint16_t detections_count = 0;
     // The beginning of the output buffer will contain the detections_count first, here we save space for it.
     uint32_t buffer_offset = sizeof(detections_count);
+
+    uint32_t max_proposals_total = nms_config.max_proposals_total;
+    // TODO: HRT-15885 remove support for max_proposals_per_class in YOLOv5Seg
+    if (HailoRTCommon::is_nms_by_class(m_metadata->outputs_metadata().begin()->second.format.order)) {
+        max_proposals_total = nms_config.max_proposals_per_class * nms_config.number_of_classes;
+    }
+
     // Note: Assuming the m_detections is sorted by score (it's done in remove_overlapping_boxes())
     for (auto &detection : m_detections) {
         if (REMOVED_CLASS_SCORE == detection.m_bbox.score) {
@@ -408,17 +415,12 @@ hailo_status Yolov5SegPostProcess::fill_nms_with_byte_mask_format(MemoryView &bu
             continue;
         }
 
-        detections_count++;
-        uint32_t max_proposals_total = nms_config.max_proposals_total;
-        // TODO: HRT-15885 remove support for max_proposals_per_class in YOLOv5Seg
-        if (HailoRTCommon::is_nms_by_class(m_metadata->outputs_metadata().begin()->second.format.order)) {
-            max_proposals_total = nms_config.max_proposals_per_class * nms_config.number_of_classes;
-        }
-        if (detections_count > max_proposals_total) {
-            LOGGER__INFO("{} detections were ignored, due to `max_bboxes_total` defined as {}.",
-                detections_count - max_proposals_total, max_proposals_total);
+        if (detections_count >= max_proposals_total) {
+            LOGGER__INFO("Reached `max_bboxes_total` limit ({}), some detections were ignored.",
+                max_proposals_total);
             break;
         }
+        detections_count++;
 
         auto copied_bytes_amount = copy_detection_to_result_buffer(buffer, detection, buffer_offset);
         if (HAILO_INSUFFICIENT_BUFFER == copied_bytes_amount.status()) {

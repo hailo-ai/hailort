@@ -3,17 +3,18 @@
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
- * @file hailo_session_internal.cpp
+ * @file pcie_session_internal.cpp
  * @brief PCIE Hailo Session
  **/
 
-#include "hrpc/raw_connection_internal/pcie/hailo_session_internal.hpp"
+#include "hrpc/session_internal/pcie_session_internal.hpp"
 #include "common/logger_macros.hpp"
 #include "common/utils.hpp"
 #include "common/internal_env_vars.hpp"
 #include "hailo/hailort.h"
 #include "vdma/driver/hailort_driver.hpp"
 #include "utils/buffer_storage.hpp"
+#include "device_common/pcie_utils.hpp"
 
 #define TRANSFER_TIMEOUT (std::chrono::seconds(10))
 
@@ -23,7 +24,7 @@ namespace hailort
 Expected<std::shared_ptr<ConnectionContext>> PcieConnectionContext::create_client_shared(const std::string &device_id)
 {
     if (device_id.size() > 0) {
-        TRY(auto driver, HailoRTDriver::create_pcie(device_id));
+        TRY(auto driver, HailoRTDriver::create_pcie(PcieUtils::remove_pci_prefix(device_id)));
         auto ptr = make_shared_nothrow<PcieConnectionContext>(std::move(driver), false);
         CHECK_NOT_NULL(ptr, HAILO_OUT_OF_HOST_MEMORY);
         return std::dynamic_pointer_cast<ConnectionContext>(ptr);
@@ -80,7 +81,8 @@ RawPcieSession::~RawPcieSession()
 
 Expected<std::shared_ptr<RawPcieSession>> RawPcieSession::connect(std::shared_ptr<PcieConnectionContext> context, uint16_t port)
 {
-    auto ptr = std::make_shared<RawPcieSession>(context);
+    auto ptr = make_shared_nothrow<RawPcieSession>(context);
+    CHECK_NOT_NULL(ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     auto status = ptr->connect(port);
     CHECK_SUCCESS(status);
@@ -98,7 +100,7 @@ hailo_status RawPcieSession::write(const uint8_t *buffer, size_t size, std::chro
 {
     hailo_status transfer_status = HAILO_UNINITIALIZED;
 
-    auto status = write_async(buffer, size, [&] (hailo_status status) {
+    auto status = Session::write_async(buffer, size, [&] (hailo_status status) {
         {
             std::unique_lock<std::mutex> lock(m_write_mutex);
             assert(status != HAILO_UNINITIALIZED);
@@ -122,7 +124,7 @@ hailo_status RawPcieSession::read(uint8_t *buffer, size_t size, std::chrono::mil
 {
     hailo_status transfer_status = HAILO_UNINITIALIZED;
 
-    auto status = read_async(buffer, size, [&] (hailo_status status) {
+    auto status = Session::read_async(buffer, size, [&] (hailo_status status) {
         {
             std::unique_lock<std::mutex> lock(m_read_mutex);
             assert(status != HAILO_UNINITIALIZED);

@@ -116,9 +116,6 @@ namespace hailort
 /* Sets log level for the syslog sink - relevant for H10 usage. valid values: debug, info, warning, error, critical */
 #define HAILORT_SYSLOG_LOGGER_LEVEL_ENV_VAR ("HAILORT_SYSLOG_LOGGER_LEVEL")
 
-/* Disables strict versioning check for HEFs */
-#define HAILO_IGNORE_STRICT_VERSION_ENV_VAR ("HAILO_IGNORE_STRICT_VERSION")
-
 } /* namespace hailort */
 
 #endif /* HAILO_INTERNAL_ENV_VARS_HPP_ */

@@ -38,18 +38,6 @@ ChannelsBitmap ChannelsGroup::bitmap() const
     return bitmap;
 }
 
-bool ChannelsGroup::should_measure_timestamp() const
-{
-    for (const auto &engine : m_channels) {
-        for (const auto &channel : engine) {
-            if (channel && channel->should_measure_timestamp()) {
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
 Expected<BoundaryChannelPtr> ChannelsGroup::get_by_id(vdma::ChannelId channel_id)
 {
     auto channel = m_channels[channel_id.engine_index][channel_id.channel_index];
@@ -102,12 +90,7 @@ hailo_status ChannelsGroup::process_channel_interrupt(const ChannelIrqData &chan
 {
     TRY(auto channel, get_by_id(channel_irq_data.channel_id), "Channel {} not found", channel_irq_data.channel_id);
     auto callback_status = get_callback_status(channel_irq_data.channel_id, channel_irq_data);
-    if (HAILO_SUCCESS == callback_status) {
-        return channel->trigger_channel_completion(channel_irq_data.transfers_completed);
-    } else {
-        channel->trigger_channel_error(callback_status);
-        return HAILO_SUCCESS;
-    }
+    return channel->complete_transfers(callback_status, channel_irq_data.transfers_completed);
 }
 
 } /* namespace vdma */

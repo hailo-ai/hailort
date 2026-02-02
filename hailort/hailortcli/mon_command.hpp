@@ -39,6 +39,8 @@ private:
     void add_networks_info_table(const ProtoMon &mon_message, std::ostream &buffer);
     hailo_status print_frames_table(const ProtoMon &mon_message, std::ostream &buffer);
     hailo_status run_in_alternative_terminal();
+
+    bool m_verbose;
 };
 
 } /* namespace hailort */

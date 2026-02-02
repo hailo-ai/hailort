@@ -35,8 +35,7 @@ public:
     InterruptsDispatcher(InterruptsDispatcher &&) = delete;
     InterruptsDispatcher &operator=(InterruptsDispatcher &&) = delete;
 
-    hailo_status start(const ChannelsBitmap &channels_bitmap, bool enable_timestamp_measure,
-        const ProcessIrqCallback &process_irq);
+    hailo_status start(const ChannelsBitmap &channels_bitmap, const ProcessIrqCallback &process_irq);
     hailo_status start(const ChannelsGroup &channels_group);
     hailo_status stop();
 

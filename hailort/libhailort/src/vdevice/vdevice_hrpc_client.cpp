@@ -8,11 +8,13 @@
  **/
 
 #include "vdevice_hrpc_client.hpp"
+#include "common/logger_macros.hpp"
 #include "hailo/hailort.h"
 #include "hrpc_protocol/serializer.hpp"
 #include "net_flow/pipeline/infer_model_hrpc_client.hpp"
 #include "utils/buffer_storage.hpp"
 #include "vdma/driver/hailort_driver.hpp"
+#include "device_common/usb/usb_utils.hpp"
 
 namespace hailort
 {
@@ -30,6 +32,15 @@ Expected<std::vector<std::string>> VDeviceHrpcClient::get_device_ids(const hailo
         for (const auto &device_info : device_infos) {
             device_ids.push_back(device_info.device_id);
         }
+
+        if (device_ids.size() == 0) {
+            TRY(auto usb_device_infos, UsbUtils::scan());
+            if (usb_device_infos.size() > 0) {
+                TRY(auto device_id, UsbUtils::usb_device_info_to_string(usb_device_infos.at(0)));
+                device_ids.push_back(device_id);
+            }
+        }
+
         return device_ids;
     } else {
         device_ids.reserve(params.device_count);
@@ -44,15 +55,9 @@ Expected<std::tuple<std::shared_ptr<Client>, rpc_object_handle_t>>
 VDeviceHrpcClient::create_available_vdevice(const std::vector<std::string> &device_ids, const hailo_vdevice_params_t &params)
 {
     const bool is_user_specific_devices = (params.device_ids != nullptr);
-    const auto is_localhost = params.multi_process_service;
-
     for (const auto &device_id : device_ids) {
-        auto client = make_shared_nothrow<Client>(device_id);
-        CHECK_NOT_NULL(client, HAILO_OUT_OF_HOST_MEMORY);
-
-        auto status = client->connect(is_localhost);
-        CHECK_SUCCESS(status, "Failed to connect to server");
-
+        const bool is_h15_device = params.multi_process_service;
+        TRY(auto client, Client::created_connected(is_h15_device ? SERVER_ADDR_USE_UNIX_SOCKET : device_id));
         TRY(auto request_buffer, client->allocate_request_buffer(), "Failed to allocate request buffer");
         TRY(auto request_size, CreateVDeviceSerializer::serialize_request(params, IS_PP_DISABLED(), MemoryView(*request_buffer)));
         auto expected_result = client->execute_request(static_cast<uint32_t>(HailoRpcActionID::VDEVICE__CREATE),
@@ -97,12 +102,11 @@ Expected<std::unique_ptr<VDevice>> VDeviceHrpcClient::create(const hailo_vdevice
         return HAILO_SUCCESS;
     });
 
-    auto device_id = client->device_id();
-    TRY(auto device, DeviceHrpcClient::create(device_id, client));
 
     auto vdevice_handle = std::get<1>(tuple);
+    TRY(auto device, DeviceHrpcClient::create(client));
     auto vdevice_client = make_unique_nothrow<VDeviceHrpcClient>(params, std::move(client), vdevice_handle,
-        client->callback_dispatcher_manager(), std::move(device), device_id);
+        client->callback_dispatcher_manager(), std::move(device), client->device_id());
     CHECK_NOT_NULL(vdevice_client, HAILO_OUT_OF_HOST_MEMORY);
 
     return std::unique_ptr<VDevice>(std::move(vdevice_client));
@@ -215,6 +219,13 @@ hailo_status VDeviceHrpcClient::dma_map_dmabuf(int dmabuf_fd, size_t size, hailo
 hailo_status VDeviceHrpcClient::dma_unmap_dmabuf(int dmabuf_fd, size_t size, hailo_dma_buffer_direction_t data_direction)
 {
     return m_device->dma_unmap_dmabuf(dmabuf_fd, size, data_direction);
+}
+
+Expected<std::shared_ptr<Session>> VDeviceHrpcClient::create_session(uint16_t connection_port) const
+{
+    auto device_id = m_client->device_id();
+    TRY(auto session, Session::connect(connection_port, device_id));
+    return session;
 }
 
 } /* namespace hailort */

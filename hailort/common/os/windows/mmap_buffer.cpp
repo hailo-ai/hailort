@@ -9,10 +9,8 @@
 
 #include "common/mmap_buffer.hpp"
 
-#include <windows.h>
-#include <stdio.h>
-#include <conio.h>
-#include <tchar.h>
+#include <memoryapi.h>
+#include <errhandlingapi.h>
 
 namespace hailort
 {

@@ -29,13 +29,13 @@ set(SRC_FILES
 
     ${CMAKE_CURRENT_SOURCE_DIR}/dma_mapped_buffer.cpp
 
-    ${CMAKE_CURRENT_SOURCE_DIR}/pcie/pcie_device.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/legacy_pcie/legacy_pcie_device.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/integrated/integrated_device.cpp
 
     ${CMAKE_CURRENT_SOURCE_DIR}/channel/boundary_channel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/channel/channels_group.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/channel/interrupts_dispatcher.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/channel/transfer_launcher.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/channel/transfer_splitter.cpp
 
     ${CMAKE_CURRENT_SOURCE_DIR}/memory/descriptor_list.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/memory/vdma_edge_layer.cpp

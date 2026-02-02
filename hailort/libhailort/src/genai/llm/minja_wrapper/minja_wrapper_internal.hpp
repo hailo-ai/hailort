@@ -13,7 +13,17 @@
 
 #include "minja_wrapper.hpp"
 
+// Disable warnings from the minja library:
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4244 4101)
+#endif
+
 #include <minja/chat-template.hpp>
+
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 namespace hailort
 {

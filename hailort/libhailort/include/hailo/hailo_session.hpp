@@ -42,10 +42,10 @@ public:
      * The returned SessionListener object should be used to accept new clients.
      *
      * @param[in] port                  The port to listen on.
-     * @param[in] ip                    The IP address to listen on.
+     * @param[in] device_id             The device id to listen on. Can be "pcie", "usb" or an IP address.
      * @return Upon success, returns Expected of a shared pointer of listener, representing the listener object.
     */
-    static Expected<std::shared_ptr<SessionListener>> create_shared(uint16_t port, const std::string &ip = "");
+    static Expected<std::shared_ptr<SessionListener>> create_shared(uint16_t port, const std::string &device_id = "");
 
     /**
      * This function should be called by the server side (device) in order to accept a new connection.
@@ -58,7 +58,7 @@ public:
 
 protected:
     explicit SessionListener(uint16_t port) : m_port(port) {}
-    uint16_t m_port;
+    const uint16_t m_port;
 
 private:
     static Expected<std::shared_ptr<SessionListener>> create_shared(std::shared_ptr<ConnectionContext> context, uint16_t port);

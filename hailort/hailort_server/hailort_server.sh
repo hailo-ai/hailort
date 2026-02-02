@@ -22,6 +22,7 @@ fi
 
 case "$1" in
   start)
+    SERVER_ADDRESS_ARG="pcie"
     echo "Starting hailort_server"
     if ip link show "$INTERFACE" > /dev/null 2>&1; then
         echo "Detected $INTERFACE - assigning IP $STATIC_IP"
@@ -29,9 +30,11 @@ case "$1" in
         ip addr flush dev "$INTERFACE"
         ip addr add "$STATIC_IP/24" dev "$INTERFACE"
         SERVER_ADDRESS_ARG="$STATIC_IP"
-    elif [ -z "$HAILO_SERVER_ADDRESS" ]; then
-        SERVER_ADDRESS_ARG=""
-    else
+    elif [ "$HAILO_SERVER_ADDRESS" == "usb" ]; then
+        SERVER_ADDRESS_ARG="$HAILO_SERVER_ADDRESS"
+        echo "disable" > /sys/kernel/hailo_gadget/hailo_gadget
+        /usr/bin/hailort_usb_setup.sh setup
+    elif [ -n "$HAILO_SERVER_ADDRESS" ]; then
         SERVER_ADDRESS_ARG="$HAILO_SERVER_ADDRESS"
     fi
     ENV="HAILO_MONITOR=1 HAILO_MONITOR_TIME_INTERVAL=100 HAILO_PRINT_TO_SYSLOG=1 HAILO_DDR_ACTION_LIST=1"

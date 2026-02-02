@@ -14,6 +14,7 @@
 #include "hailo/expected.hpp"
 #include <string>
 #include <memory>
+#include <winnt.h>
 
 namespace hailort
 {

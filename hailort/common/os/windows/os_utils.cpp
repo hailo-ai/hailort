@@ -11,7 +11,13 @@
 #include "common/utils.hpp"
 #include "hailo/hailort.h"
 
-#include <windows.h>
+#include <processthreadsapi.h>   // Process & thread API
+#include <handleapi.h>           // CloseHandle
+#include <errhandlingapi.h>      // GetLastError
+#include <sysinfoapi.h>          // GetSystemInfo, SYSTEM_INFO
+#include <consoleapi.h>          // GetConsoleMode, SetConsoleMode
+#include <wincon.h>              // ENABLE_VIRTUAL_TERMINAL_PROCESSING, STD_OUTPUT_HANDLE
+#include <winbase.h>             // PROCESS_QUERY_INFORMATION, STILL_ACTIVE
 #include "spdlog/sinks/win_eventlog_sink.h"
 
 #define CACHE_LEVEL_INDEX (1)

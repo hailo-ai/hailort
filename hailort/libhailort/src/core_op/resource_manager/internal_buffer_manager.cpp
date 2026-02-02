@@ -121,6 +121,8 @@ hailo_status InternalBufferManager::plan_and_execute(std::map<EdgeLayerKey, Edge
     // TODO HRT-19648: Remove this env-var.
     if (is_env_variable_on(HAILO_HW_INFER_ALLOW_DDR_PORTALS_OVER_SRAM_ENV_VAR)) {
 
+        LOGGER__INFO("Using SRAM for DDR-Portal buffers.");
+
         // NOTE: We create a plan that makes ALL ddr-portal buffers over SRAM, without size considerations.
         // Later, when we exectute the plan, we take as many buffers as we can fit in 2MB SRAM and the rest
         // are ignored.
@@ -132,6 +134,7 @@ hailo_status InternalBufferManager::plan_and_execute(std::map<EdgeLayerKey, Edge
             // Out of FW-memory is ok; ignore and move on.
             CHECK_SUCCESS(status);
         }
+        LOGGER__INFO("{} DDR-Portal buffers allocated in SRAM.", buffers_executed.size());
 
         for (const auto &edge_layer_key : edge_layers_executed) {
             edge_layers.erase(edge_layer_key);

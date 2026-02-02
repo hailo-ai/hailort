@@ -184,8 +184,8 @@ struct LLMGeneratorReadSerializer
 
     LLMGeneratorReadSerializer() = delete;
 
-    static Expected<Buffer> serialize_request(const std::chrono::milliseconds &timeout, const TextGenerationInput &request);
-    static Expected<std::pair<std::chrono::milliseconds, TextGenerationInput>> deserialize_request(const MemoryView &serialized_request);
+    static Expected<Buffer> serialize_request(const TextGenerationInput &request);
+    static Expected<TextGenerationInput> deserialize_request(const MemoryView &serialized_request);
 
     static Expected<Buffer> serialize_reply(hailo_status status, const TextGenerationOutput &output = {},
         LLMGeneratorCompletion::Status generation_status = LLMGeneratorCompletion::Status::GENERATING, bool is_context_full = false);
@@ -375,8 +375,9 @@ struct VLMGeneratorGenerateSerializer
 {
     VLMGeneratorGenerateSerializer() = delete;
 
-    static Expected<Buffer> serialize_request(uint32_t number_of_standalone_frames, const std::vector<uint32_t> &video_frames_count_per_video);
-    static Expected<std::tuple<uint32_t, std::vector<uint32_t>>> deserialize_request(const MemoryView &serialized_request);
+    static Expected<Buffer> serialize_request(uint32_t number_of_standalone_frames,
+        const std::vector<uint32_t> &video_frames_count_per_video, bool raw_embeddings);
+    static Expected<std::tuple<uint32_t, std::vector<uint32_t>, bool>> deserialize_request(const MemoryView &serialized_request);
 
     static Expected<Buffer> serialize_reply(hailo_status status);
     static hailo_status deserialize_reply(const MemoryView &serialized_reply);

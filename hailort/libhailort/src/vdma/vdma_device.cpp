@@ -12,7 +12,7 @@
 #include "vdma/vdma_device.hpp"
 #include "vdma/memory/descriptor_list.hpp"
 #include "vdma/vdma_config_manager.hpp"
-#include "vdma/pcie/pcie_device.hpp"
+#include "vdma/legacy_pcie/legacy_pcie_device.hpp"
 #include "vdma/integrated/integrated_device.hpp"
 #include "device_common/control.hpp"
 #include "device_common/device_internal.hpp"
@@ -137,9 +137,6 @@ Expected<ConfiguredNetworkGroupVector> VdmaDevice::add_hef(Hef &hef, const Netwo
         assert(nullptr == m_vdma_interrupts_dispatcher);
         TRY(m_vdma_interrupts_dispatcher, vdma::InterruptsDispatcher::create(get_driver()));
 
-        assert(nullptr == m_vdma_transfer_launcher);
-        TRY(m_vdma_transfer_launcher, vdma::TransferLauncher::create());
-
         m_is_configured = true;
     }
 
@@ -235,12 +232,6 @@ ExpectedRef<vdma::InterruptsDispatcher> VdmaDevice::get_vdma_interrupts_dispatch
 {
     CHECK_AS_EXPECTED(m_vdma_interrupts_dispatcher, HAILO_INTERNAL_FAILURE, "vDMA interrupt dispatcher wasn't created");
     return std::ref(*m_vdma_interrupts_dispatcher);
-}
-
-ExpectedRef<vdma::TransferLauncher> VdmaDevice::get_vdma_transfer_launcher()
-{
-    CHECK_AS_EXPECTED(m_vdma_transfer_launcher, HAILO_INTERNAL_FAILURE, "vDMA transfer launcher wasn't created");
-    return std::ref(*m_vdma_transfer_launcher);
 }
 
 VdmaDevice::~VdmaDevice()

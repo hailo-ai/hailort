@@ -126,6 +126,43 @@ public:
     Expected<LLMGeneratorCompletion> generate(const std::vector<std::string> &messages_json_strings, const std::vector<MemoryView> &input_frames,
         const std::vector<std::vector<MemoryView>> &input_videos = {});
 
+    /**
+     * Initiates generation from the input prompt using pre-computed embeddings instead of raw frames.
+     * Use this when embeddings have been computed externally (e.g., by a separate image encoder).
+     * Returns an LLMGeneratorCompletion, which allows fetching generated tokens incrementally.
+     *
+     * @param[in] prompt            The prompt to be processed by the VLM model. The prompt is written as-is without any template formatting.
+     * @param[in] image_embeddings  The embeddings for standalone images, one buffer per image. Each buffer contains the vision encoder output for that image, Can be empty.
+     * @param[in] video_embeddings  The embeddings for videos, can be empty. Each inner vector represents one video's frame embeddings.
+     *
+     * @return Upon success, returns Expected of LLMGeneratorCompletion. Otherwise, returns Unexpected of ::hailo_status error.
+     * @note The model must support raw embeddings input for this method to work.
+     * @note Calling this function while the model is already generating may lead to undefined behavior.
+     * @note Only one `LLMGeneratorCompletion` instance should exist at a time. Creating multiple instances concurrently may lead to undefined behavior.
+     *       A subsequent LLMGeneratorCompletion must only be created once the previous one has been fully destructed.
+     */
+    Expected<LLMGeneratorCompletion> generate_from_embeddings(const std::string &prompt, const std::vector<MemoryView> &image_embeddings,
+        const std::vector<std::vector<MemoryView>> &video_embeddings = {});
+
+    /**
+     * Initiates generation from structured messages in JSON format using pre-computed embeddings instead of raw frames.
+     * Use this when embeddings have been computed externally (e.g., by a separate image encoder).
+     * Returns an LLMGeneratorCompletion, which allows fetching generated tokens incrementally.
+     *
+     * @param[in] messages_json_strings A vector of JSON strings representing structured messages.
+     * @param[in] image_embeddings      The embeddings for standalone images, one buffer per image. Each buffer contains the vision encoder output for that image, Can be empty.
+     * @param[in] video_embeddings      The embeddings for videos, can be empty. Each inner vector represents one video's frame embeddings.
+     *
+     * @return Upon success, returns Expected of LLMGeneratorCompletion. Otherwise, returns Unexpected of ::hailo_status error.
+     * @note The model must support raw embeddings input for this method to work.
+     * @note The number of image_embeddings must equal the total number of image entries across all messages; the same requirement applies to video_embeddings.
+     * @note Calling this function while the model is already generating may lead to undefined behavior.
+     * @note Only one `LLMGeneratorCompletion` instance should exist at a time. Creating multiple instances concurrently may lead to undefined behavior.
+     *       A subsequent LLMGeneratorCompletion must only be created once the previous one has been fully destructed.
+     */
+    Expected<LLMGeneratorCompletion> generate_from_embeddings(const std::vector<std::string> &messages_json_strings,
+        const std::vector<MemoryView> &image_embeddings, const std::vector<std::vector<MemoryView>> &video_embeddings = {});
+
     class Impl;
     VLMGenerator(std::shared_ptr<Impl> pimpl);
 private:
@@ -222,6 +259,39 @@ public:
      */
     Expected<LLMGeneratorCompletion> generate(const LLMGeneratorParams &params, const std::vector<std::string> &messages_json_strings,
         const std::vector<MemoryView> &input_frames, const std::vector<std::vector<MemoryView>> &input_videos = {});
+
+    /**
+     * Generates text using structured JSON messages and pre-computed embeddings with default generation parameters.
+     * Use this when embeddings have been computed externally (e.g., by a separate image encoder).
+     *
+     * @param[in] messages_json_strings A vector of JSON strings representing structured messages.
+     * @param[in] image_embeddings      The embeddings for standalone images, one buffer per image.
+     * @param[in] video_embeddings      The embeddings for videos, can be empty. Each inner vector represents one video's frame embeddings.
+     *
+     * @return Upon success, returns Expected of LLMGeneratorCompletion. Otherwise, returns Unexpected of ::hailo_status error.
+     * @note The model must support raw embeddings input for this method to work.
+     * @note This method uses the model's default generation parameters.
+     * @note This method is equivalent to: create_generator() -> generate_from_embeddings(messages_json_strings, image_embeddings, video_embeddings).
+     */
+    Expected<LLMGeneratorCompletion> generate_from_embeddings(const std::vector<std::string> &messages_json_strings,
+        const std::vector<MemoryView> &image_embeddings, const std::vector<std::vector<MemoryView>> &video_embeddings = {});
+
+    /**
+     * Generates text using structured JSON messages and pre-computed embeddings without explicitly creating a generator.
+     * Use this when embeddings have been computed externally (e.g., by a separate image encoder).
+     *
+     * @param[in] params                The LLMGeneratorParams used to configure generation.
+     * @param[in] messages_json_strings A vector of JSON strings representing structured messages.
+     * @param[in] image_embeddings      The embeddings for standalone images, one buffer per image.
+     * @param[in] video_embeddings      The embeddings for videos, can be empty. Each inner vector represents one video's frame embeddings.
+     *
+     * @return Upon success, returns Expected of LLMGeneratorCompletion. Otherwise, returns Unexpected of ::hailo_status error.
+     * @note The model must support raw embeddings input for this method to work.
+     * @note This method is equivalent to: create_generator(params) -> generate_from_embeddings(messages_json_strings, image_embeddings, video_embeddings).
+     */
+    Expected<LLMGeneratorCompletion> generate_from_embeddings(const LLMGeneratorParams &params,
+        const std::vector<std::string> &messages_json_strings, const std::vector<MemoryView> &image_embeddings,
+        const std::vector<std::vector<MemoryView>> &video_embeddings = {});
 
     /**
      * Tokenizes a given string into a vector of integers representing the tokens.

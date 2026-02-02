@@ -12,6 +12,11 @@
 #include "common/logger_macros.hpp"
 #include "common/utils.hpp"
 
+#include <synchapi.h>
+#include <handleapi.h>
+#include <errhandlingapi.h>
+#include <winerror.h>
+
 namespace hailort
 {
 

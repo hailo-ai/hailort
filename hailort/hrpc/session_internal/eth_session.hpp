@@ -3,66 +3,40 @@
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
- * @file hailo_session_internal.hpp
+ * @file eth_session.hpp
  * @brief Hailo Session Header for sockets based comunication
  **/
 
-#ifndef _POSIX_RAW_CONNECTION_INTERNAL_HPP_
-#define _POSIX_RAW_CONNECTION_INTERNAL_HPP_
+#ifndef _ETH_SESSION_HPP_
+#define _ETH_SESSION_HPP_
 
 #include "hailo/expected.hpp"
 #include "hailo/hailo_session.hpp"
-#include "common/thread_safe_queue.hpp"
 #include "common/socket.hpp"
 #include "hrpc/connection_context.hpp"
+#include "hrpc/session_internal/async_actions_thread.hpp"
 
 #include <memory>
 
 namespace hailort
 {
 
-struct AsyncAction
-{
-    std::function<hailo_status(bool)> action;
-    std::function<void(hailo_status)> on_finish_callback;
-};
-
-class AsyncActionsThread
-{
-public:
-    static Expected<std::shared_ptr<AsyncActionsThread>> create(size_t queue_size);
-    AsyncActionsThread(SpscQueue<AsyncAction> &&queue, EventPtr shutdown_event);
-    virtual ~AsyncActionsThread();
-
-    hailo_status wait_for_enqueue_ready(std::chrono::milliseconds timeout);
-    hailo_status enqueue_nonblocking(AsyncAction action);
-    hailo_status abort();
-
-private:
-    hailo_status thread_loop();
-
-    std::mutex m_mutex;
-    std::condition_variable m_cv;
-    SpscQueue<AsyncAction> m_queue;
-    EventPtr m_shutdown_event;
-    std::thread m_thread;
-    std::atomic<uint32_t> m_current_queue_size;
-};
-
 class OsConnectionContext : public ConnectionContext
 {
 public:
-    static Expected<std::shared_ptr<ConnectionContext>> create_client_shared(const std::string &ip);
+    static Expected<std::shared_ptr<ConnectionContext>> create_client_shared(const std::string &ip, bool is_device_integrated);
     static Expected<std::shared_ptr<ConnectionContext>> create_server_shared(const std::string &ip);
 
-    OsConnectionContext(bool is_accepting, const std::string &ip) : ConnectionContext(is_accepting), m_ip(ip) {}
-
+    OsConnectionContext(bool is_accepting, const std::string &ip, bool m_is_device_integrated = true)
+        : ConnectionContext(is_accepting), m_ip(ip), m_is_device_integrated(m_is_device_integrated) {}
     virtual ~OsConnectionContext() = default;
 
     std::string get_ip() const { return m_ip; }
+    virtual Device::Type device_type() override { return m_is_device_integrated ? Device::Type::INTEGRATED : Device::Type::ETH; }
 
 private:
     std::string m_ip;
+    bool m_is_device_integrated;
 };
 
 class OsListener : public SessionListener
@@ -85,7 +59,7 @@ private:
     static Expected<std::shared_ptr<OsListener>> create_by_addr_server(std::shared_ptr<OsConnectionContext> context,
         const std::string &ip, uint16_t port);
     static Expected<std::shared_ptr<OsListener>> create_localhost_server(std::shared_ptr<OsConnectionContext> context, uint16_t port);
-    
+
     Socket m_socket;
     std::shared_ptr<OsConnectionContext> m_context;
     std::shared_ptr<AsyncActionsThread> m_write_actions_thread;
@@ -107,11 +81,9 @@ public:
     virtual hailo_status close() override;
 
     virtual hailo_status wait_for_write_async_ready(size_t transfer_size, std::chrono::milliseconds timeout) override;
-    using Session::write_async;
     virtual hailo_status write_async(TransferRequest &&request) override;
 
     virtual hailo_status wait_for_read_async_ready(size_t transfer_size, std::chrono::milliseconds timeout) override;
-    using Session::read_async;
     virtual hailo_status read_async(TransferRequest &&request) override;
     virtual Expected<int> read_fd() override;
 
@@ -149,4 +121,4 @@ private:
 
 } // namespace hailort
 
-#endif // _POSIX_RAW_CONNECTION_INTERNAL_HPP_
+#endif // _ETH_SESSION_HPP_

@@ -22,12 +22,10 @@ namespace hailort
 class DeviceHrpcClient : public Device {
 public:
     static Expected<std::unique_ptr<Device>> create(const std::string &device_id);
-    static Expected<std::unique_ptr<Device>> create(const std::string &device_id,
-        std::shared_ptr<Client> client);
+    static Expected<std::unique_ptr<Device>> create(std::shared_ptr<Client> client);
 
-    DeviceHrpcClient(const std::string &device_id, std::shared_ptr<Client> client, uint32_t handle,
-        std::shared_ptr<ClientCallbackDispatcher> callback_dispatcher) :
-        Device(Device::Type::PCIE), m_device_id(device_id), m_client(client), m_handle(handle), m_callback_dispatcher(callback_dispatcher) {}
+    DeviceHrpcClient(std::shared_ptr<Client> client, uint32_t handle, std::shared_ptr<ClientCallbackDispatcher> callback_dispatcher) :
+        Device(client->device_type()), m_device_id(client->device_id()), m_client(client), m_handle(handle), m_callback_dispatcher(callback_dispatcher) {}
     virtual ~DeviceHrpcClient();
 
     virtual Expected<ConfiguredNetworkGroupVector> configure(Hef &/*hef*/,
@@ -91,7 +89,7 @@ public:
     virtual Expected<size_t> fetch_logs(MemoryView buffer, hailo_log_type_t log_type) override;
 
 private:
-    static Expected<std::shared_ptr<Client>> get_connected_client(const std::string &device_id);
+    static Expected<std::shared_ptr<Client>> create_connected_client(const std::string &device_id);
     static Expected<rpc_object_handle_t> create_remote_device(std::shared_ptr<Client> client);
 
     std::string m_device_id;
