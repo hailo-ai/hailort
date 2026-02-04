@@ -196,16 +196,16 @@ hailo_status LLMServer::parse_config_json(const nlohmann::json &hailo_config_jso
 }
 
 std::future<hailo_status> LLMServer::create_inference_managers_future(std::shared_ptr<VDevice> vdevice, const Hef &hef,
-    const std::string &lora_name, std::shared_ptr<Event> external_resources_created_event,
+    std::shared_ptr<Buffer> hef_buffer, const std::string &lora_name, std::shared_ptr<Event> external_resources_created_event,
     std::shared_ptr<Event> inference_models_created_event, std::shared_ptr<Event> shutdown_event)
 {
-    return std::async(std::launch::async, [this, vdevice, hef, lora_name, external_resources_created_event,
+    return std::async(std::launch::async, [this, vdevice, hef, hef_buffer, lora_name, external_resources_created_event,
         inference_models_created_event, shutdown_event]() -> hailo_status {
 
         LOGGER__GENAI_STATS_START("[create] create prefill model");
         auto network_group_names = hef.get_network_groups_names();
         TRY(auto prefill_model_suffix, get_prefill_model_name_suffix(lora_name, network_group_names.size()));
-        TRY(m_inference_manager_prefill, LLMInferenceManager::create(vdevice, hef, prefill_model_suffix));
+        TRY(m_inference_manager_prefill, LLMInferenceManager::create(vdevice, hef, hef_buffer, prefill_model_suffix));
         CHECK_SUCCESS(WaitOrShutdown(external_resources_created_event, shutdown_event).wait(WAIT_FOR_OPERATION_TIMEOUT));
         auto model_prefill = m_inference_manager_prefill->get_model();
         for (auto input : model_prefill->inputs()) {
@@ -221,7 +221,7 @@ std::future<hailo_status> LLMServer::create_inference_managers_future(std::share
         LOGGER__GENAI_STATS_START("[create] create tbt model");
         m_inference_manager_tbt = nullptr;
         TRY(auto tbt_model_suffix, get_tbt_model_name_suffix(lora_name, network_group_names.size()));
-        auto inference_manager_tbt = LLMInferenceManager::create(vdevice, hef, tbt_model_suffix);
+        auto inference_manager_tbt = LLMInferenceManager::create(vdevice, hef, hef_buffer, tbt_model_suffix);
         if (inference_manager_tbt) {
             m_inference_manager_tbt = inference_manager_tbt.release();
             auto model_tbt = m_inference_manager_tbt->get_model();
@@ -340,10 +340,10 @@ std::future<hailo_status> LLMServer::create_pre_process_future(const Hef &hef,
     });
 }
 
-std::future<hailo_status> LLMServer::create_token_embedder_future(const Hef &hef,
+std::future<hailo_status> LLMServer::create_token_embedder_future(const Hef &hef, std::shared_ptr<Buffer> hef_buffer,
     std::shared_ptr<Event> embeddings_arrived_event, std::shared_ptr<Event> pre_process_created_event, std::shared_ptr<Event> shutdown_event)
 {
-    return std::async(std::launch::async, [this, hef, embeddings_arrived_event, pre_process_created_event, shutdown_event]() -> hailo_status {
+    return std::async(std::launch::async, [this, hef, hef_buffer, embeddings_arrived_event, pre_process_created_event, shutdown_event]() -> hailo_status {
         CHECK_SUCCESS(WaitOrShutdown(pre_process_created_event, shutdown_event).wait(WAIT_FOR_OPERATION_TIMEOUT));
         CHECK_SUCCESS(WaitOrShutdown(embeddings_arrived_event, shutdown_event).wait(LONG_TIMEOUT)); // Waiting for data over the session
 
@@ -351,6 +351,8 @@ std::future<hailo_status> LLMServer::create_token_embedder_future(const Hef &hef
         TRY(auto embeddings_view, hef.get_external_resources(INPUT_EMB_BINARY));
         TRY(m_token_embedder, TokenEmbedder<uint16_t>::create(embeddings_view,
             embeddings_view.size() / (sizeof(uint16_t) * m_embeddings_features), m_embeddings_features));
+        // Keep the HEF buffer alive — the TokenEmbedder's Eigen::Map points into it
+        m_token_embedder->set_resource_guard(hef_buffer);
         LOGGER__GENAI_STATS_END("[create] create token embedder");
 
         return HAILO_SUCCESS;
@@ -379,7 +381,7 @@ Expected<std::future<hailo_status>> LLMServer::create_resources_async(std::share
         auto external_resources_future = parse_external_resources_future(hef, hailo_config_json_arrived_event,
             theta_arrived_event, external_resources_created_event, shutdown_event);
 
-        auto inference_managers_future = create_inference_managers_future(vdevice, hef, lora_name,
+        auto inference_managers_future = create_inference_managers_future(vdevice, hef, hef_buffer, lora_name,
             external_resources_created_event, inference_models_created_event, shutdown_event);
 
         auto pre_process_future = create_pre_process_future(hef, inference_models_created_event, external_resources_future,
@@ -387,7 +389,7 @@ Expected<std::future<hailo_status>> LLMServer::create_resources_async(std::share
 
         if (!tokenizer_on_host) {
             auto tokenizer_future = create_tokenizer_future(hef, tokenizer_arrived_event, shutdown_event);
-            auto token_embedder_future = create_token_embedder_future(hef,
+            auto token_embedder_future = create_token_embedder_future(hef, hef_buffer,
                 embeddings_arrived_event, pre_process_created_event, shutdown_event);
             CHECK_SUCCESS(wait_for_future_status_or_shutdown(tokenizer_future, shutdown_event));
             CHECK_SUCCESS(wait_for_future_status_or_shutdown(token_embedder_future, shutdown_event));

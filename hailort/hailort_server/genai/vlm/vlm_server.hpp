@@ -54,7 +54,7 @@ protected:
         std::shared_ptr<Event> pre_process_created_event, std::shared_ptr<Event> shutdown_event) override;
 
     // Override to create VLM-specific token embedder with image_pad_token and embeddings_per_frame
-    std::future<hailo_status> create_token_embedder_future(const Hef &hef,
+    std::future<hailo_status> create_token_embedder_future(const Hef &hef, std::shared_ptr<Buffer> hef_buffer,
         std::shared_ptr<Event> embeddings_arrived_event, std::shared_ptr<Event> pre_process_created_event, std::shared_ptr<Event> shutdown_event) override;
 
     std::future<hailo_status> create_frame_encoder_future(std::shared_ptr<VDevice> vdevice, const Hef &hef,

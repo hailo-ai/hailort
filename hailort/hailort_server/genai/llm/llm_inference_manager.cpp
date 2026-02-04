@@ -20,7 +20,7 @@ namespace genai
 static const std::string OUTPUT_NAME = "output";
 
 Expected<std::unique_ptr<InferenceManager>> LLMInferenceManager::create(std::shared_ptr<hailort::VDevice> vdevice,
-    Hef hef, const std::string &model_name_suffix)
+    Hef hef, std::shared_ptr<Buffer> hef_buffer, const std::string &model_name_suffix)
 {
     std::string model_name = "";
     for (const auto &network_group_name : hef.get_network_groups_names()) {
@@ -29,7 +29,9 @@ Expected<std::unique_ptr<InferenceManager>> LLMInferenceManager::create(std::sha
         }
     }
     CHECK(!model_name.empty(), HAILO_INTERNAL_FAILURE, "Model doesnt have NG with name-suffix '{}'", model_name_suffix);
-    TRY(auto model, vdevice->create_infer_model(hef, model_name));
+    // Use MemoryView overload to ensure VDeviceHrpcClient creates InferModelHrpcClient
+    // (the Hef overload falls through to the base class on SOC_ACCELERATOR devices)
+    TRY(auto model, vdevice->create_infer_model(MemoryView(*hef_buffer), model_name));
 
     model->set_enable_kv_cache(true);
 
