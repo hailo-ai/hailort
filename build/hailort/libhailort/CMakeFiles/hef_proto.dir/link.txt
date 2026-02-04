@@ -1,2 +1,0 @@
-/usr/bin/ar qc libhef_proto.a CMakeFiles/hef_proto.dir/hef.pb.cc.o
-/usr/bin/ranlib libhef_proto.a

@@ -1,1 +1,0 @@
-/usr/bin/cc -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/c_vstreams_example.dir/link.d CMakeFiles/c_vstreams_example.dir/vstreams_example.c.o -o c_vstreams_example  -Wl,-rpath,/home/jordan/hailort/build/hailort/libhailort/src ../../../src/libhailort.so.5.2.0

@@ -1,1 +1,0 @@
-/usr/bin/c++ -O3 -Wall -fPIC  -fmacro-prefix-map=/home/jordan/hailort/='' -O3 -DNDEBUG -rdynamic -Wl,--dependency-file=CMakeFiles/spm_encode.dir/link.d CMakeFiles/spm_encode.dir/spm_encode_main.cc.o -o spm_encode  libsentencepiece.a -latomic

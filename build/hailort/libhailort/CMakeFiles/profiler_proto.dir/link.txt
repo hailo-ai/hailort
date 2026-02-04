@@ -1,2 +1,0 @@
-/usr/bin/ar qc libprofiler_proto.a CMakeFiles/profiler_proto.dir/tracer_profiler.pb.cc.o
-/usr/bin/ranlib libprofiler_proto.a

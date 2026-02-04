@@ -1,2 +1,0 @@
-/usr/bin/ar qc libgenai_scheme_proto.a CMakeFiles/genai_scheme_proto.dir/genai_scheme.pb.cc.o
-/usr/bin/ranlib libgenai_scheme_proto.a

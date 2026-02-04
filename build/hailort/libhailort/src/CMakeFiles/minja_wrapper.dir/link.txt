@@ -1,2 +1,0 @@
-/usr/bin/ar qc libminja_wrapper.a CMakeFiles/minja_wrapper.dir/genai/llm/minja_wrapper/minja_wrapper.cpp.o
-/usr/bin/ranlib libminja_wrapper.a

@@ -1,2 +1,0 @@
-/usr/bin/ar qc libdotwriter.a CMakeFiles/DotWriter.dir/lib/AttributeSet.cpp.o CMakeFiles/DotWriter.dir/lib/Cluster.cpp.o CMakeFiles/DotWriter.dir/lib/Edge.cpp.o CMakeFiles/DotWriter.dir/lib/Enums.cpp.o CMakeFiles/DotWriter.dir/lib/Graph.cpp.o CMakeFiles/DotWriter.dir/lib/IdManager.cpp.o CMakeFiles/DotWriter.dir/lib/Node.cpp.o CMakeFiles/DotWriter.dir/lib/RootGraph.cpp.o CMakeFiles/DotWriter.dir/lib/Subgraph.cpp.o CMakeFiles/DotWriter.dir/lib/Util.cpp.o
-/usr/bin/ranlib libdotwriter.a

@@ -1,1 +1,0 @@
-/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/vlm_example.dir/link.d CMakeFiles/vlm_example.dir/vlm_example.cpp.o -o vlm_example  -Wl,-rpath,/home/jordan/hailort/build/hailort/libhailort/src ../../../src/libhailort.so.5.2.0

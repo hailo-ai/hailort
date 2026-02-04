@@ -1,1 +1,0 @@
-/usr/bin/c++ -O3 -Wall -fPIC  -fmacro-prefix-map=/home/jordan/hailort/='' -O3 -DNDEBUG -rdynamic -Wl,--dependency-file=CMakeFiles/spm_export_vocab.dir/link.d CMakeFiles/spm_export_vocab.dir/spm_export_vocab_main.cc.o -o spm_export_vocab  libsentencepiece.a -latomic
