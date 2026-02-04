@@ -1,0 +1,1 @@
+/usr/bin/cc -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/c_power_measurement_example.dir/link.d CMakeFiles/c_power_measurement_example.dir/power_measurement_example.c.o -o c_power_measurement_example  -Wl,-rpath,/home/jordan/hailort/build/hailort/libhailort/src ../../../src/libhailort.so.5.2.0

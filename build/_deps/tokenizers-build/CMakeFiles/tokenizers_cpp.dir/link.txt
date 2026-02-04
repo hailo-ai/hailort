@@ -1,0 +1,2 @@
+/usr/bin/ar qc libtokenizers_cpp.a CMakeFiles/tokenizers_cpp.dir/src/sentencepiece_tokenizer.cc.o CMakeFiles/tokenizers_cpp.dir/src/huggingface_tokenizer.cc.o CMakeFiles/tokenizers_cpp.dir/src/rwkv_world_tokenizer.cc.o
+/usr/bin/ranlib libtokenizers_cpp.a

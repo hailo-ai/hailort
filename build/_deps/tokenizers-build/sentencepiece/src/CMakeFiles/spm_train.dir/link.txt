@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -Wall -fPIC  -fmacro-prefix-map=/home/jordan/hailort/='' -O3 -DNDEBUG -rdynamic -Wl,--dependency-file=CMakeFiles/spm_train.dir/link.d CMakeFiles/spm_train.dir/spm_train_main.cc.o -o spm_train  libsentencepiece.a libsentencepiece_train.a libsentencepiece.a -latomic

@@ -1,0 +1,26 @@
+#/usr/bin/env bash
+
+_cli11_complete()
+{
+    # Get cmdline while ignoring the last word
+    cmdline=${COMP_LINE}
+    if [[ "${cmdline:${cmdlinex}-1}" != " " ]]; then
+        cmdline=${COMP_WORDS[@]:0:${COMP_CWORD}}
+    fi
+
+    # Get complete candidates
+    words=$(${cmdline} --_autocomplete "${COMP_WORDS[${COMP_CWORD}]}")
+
+    # Remove candidates that begins with `-` if `-` is not passed as the first character
+    # TODO: move this logic inside CLI11? including the compgen?
+    if [[ ! ${COMP_WORDS[${COMP_CWORD}]} = -* ]]; then
+        words=(${words})
+        for index in "${!words[@]}" ; do [[ ${words[$index]} =~ ^- ]] && unset -v 'words[$index]' ; done
+        words="${words[@]}"
+    fi
+
+    # Get matches
+    COMPREPLY=($(compgen -W "${words}" -- "${COMP_WORDS[${COMP_CWORD}]}"))
+}
+
+complete -F _cli11_complete -o bashdefault -o default hailortcli

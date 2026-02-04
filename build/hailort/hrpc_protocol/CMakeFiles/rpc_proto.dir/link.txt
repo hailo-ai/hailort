@@ -1,0 +1,2 @@
+/usr/bin/ar qc librpc_proto.a CMakeFiles/rpc_proto.dir/rpc.pb.cc.o
+/usr/bin/ranlib librpc_proto.a

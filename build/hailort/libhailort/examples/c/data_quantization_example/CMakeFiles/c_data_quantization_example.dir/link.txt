@@ -1,0 +1,1 @@
+/usr/bin/cc -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/c_data_quantization_example.dir/link.d CMakeFiles/c_data_quantization_example.dir/data_quantization_example.c.o -o c_data_quantization_example  -Wl,-rpath,/home/jordan/hailort/build/hailort/libhailort/src ../../../src/libhailort.so.5.2.0

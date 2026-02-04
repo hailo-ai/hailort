@@ -1,0 +1,41 @@
+file(REMOVE_RECURSE
+  "CMakeFiles/hailort_common.dir/barrier.cpp.o"
+  "CMakeFiles/hailort_common.dir/barrier.cpp.o.d"
+  "CMakeFiles/hailort_common.dir/buffer_pool.cpp.o"
+  "CMakeFiles/hailort_common.dir/buffer_pool.cpp.o.d"
+  "CMakeFiles/hailort_common.dir/device_measurements.cpp.o"
+  "CMakeFiles/hailort_common.dir/device_measurements.cpp.o.d"
+  "CMakeFiles/hailort_common.dir/event_internal.cpp.o"
+  "CMakeFiles/hailort_common.dir/event_internal.cpp.o.d"
+  "CMakeFiles/hailort_common.dir/file_utils.cpp.o"
+  "CMakeFiles/hailort_common.dir/file_utils.cpp.o.d"
+  "CMakeFiles/hailort_common.dir/fork_support.cpp.o"
+  "CMakeFiles/hailort_common.dir/fork_support.cpp.o.d"
+  "CMakeFiles/hailort_common.dir/genai/session_wrapper/session_wrapper.cpp.o"
+  "CMakeFiles/hailort_common.dir/genai/session_wrapper/session_wrapper.cpp.o.d"
+  "CMakeFiles/hailort_common.dir/os/posix/file_descriptor.cpp.o"
+  "CMakeFiles/hailort_common.dir/os/posix/file_descriptor.cpp.o.d"
+  "CMakeFiles/hailort_common.dir/os/posix/filesystem.cpp.o"
+  "CMakeFiles/hailort_common.dir/os/posix/filesystem.cpp.o.d"
+  "CMakeFiles/hailort_common.dir/os/posix/linux/event_os_specific.cpp.o"
+  "CMakeFiles/hailort_common.dir/os/posix/linux/event_os_specific.cpp.o.d"
+  "CMakeFiles/hailort_common.dir/os/posix/mmap_buffer.cpp.o"
+  "CMakeFiles/hailort_common.dir/os/posix/mmap_buffer.cpp.o.d"
+  "CMakeFiles/hailort_common.dir/os/posix/os_utils.cpp.o"
+  "CMakeFiles/hailort_common.dir/os/posix/os_utils.cpp.o.d"
+  "CMakeFiles/hailort_common.dir/os/posix/process.cpp.o"
+  "CMakeFiles/hailort_common.dir/os/posix/process.cpp.o.d"
+  "CMakeFiles/hailort_common.dir/os/posix/shared_memory_buffer.cpp.o"
+  "CMakeFiles/hailort_common.dir/os/posix/shared_memory_buffer.cpp.o.d"
+  "CMakeFiles/hailort_common.dir/os/posix/socket.cpp.o"
+  "CMakeFiles/hailort_common.dir/os/posix/socket.cpp.o.d"
+  "CMakeFiles/hailort_common.dir/utils.cpp.o"
+  "CMakeFiles/hailort_common.dir/utils.cpp.o.d"
+  "libhailort_common.a"
+  "libhailort_common.pdb"
+)
+
+# Per-language clean rules from dependency scanning.
+foreach(lang CXX)
+  include(CMakeFiles/hailort_common.dir/cmake_clean_${lang}.cmake OPTIONAL)
+endforeach()

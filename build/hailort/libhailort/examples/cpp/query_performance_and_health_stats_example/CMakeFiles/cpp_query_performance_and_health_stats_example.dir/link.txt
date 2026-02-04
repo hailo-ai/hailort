@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/cpp_query_performance_and_health_stats_example.dir/link.d CMakeFiles/cpp_query_performance_and_health_stats_example.dir/query_performance_and_health_stats_example.cpp.o -o cpp_query_performance_and_health_stats_example  -Wl,-rpath,/home/jordan/hailort/build/hailort/libhailort/src ../../../src/libhailort.so.5.2.0

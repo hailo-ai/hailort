@@ -1,0 +1,2 @@
+/usr/bin/ar qc libhailo_rpc.a CMakeFiles/hailo_rpc.dir/rpc_connection.cpp.o CMakeFiles/hailo_rpc.dir/hailo_session.cpp.o CMakeFiles/hailo_rpc.dir/raw_connection_internal/pcie/hailo_session_internal.cpp.o CMakeFiles/hailo_rpc.dir/raw_connection_internal/socket/hailo_session_internal.cpp.o CMakeFiles/hailo_rpc.dir/connection_context.cpp.o CMakeFiles/hailo_rpc.dir/client.cpp.o CMakeFiles/hailo_rpc.dir/server.cpp.o
+/usr/bin/ranlib libhailo_rpc.a

@@ -1,0 +1,2 @@
+/usr/bin/ar qc libscheduler_mon_proto.a CMakeFiles/scheduler_mon_proto.dir/scheduler_mon.pb.cc.o
+/usr/bin/ranlib libscheduler_mon_proto.a
