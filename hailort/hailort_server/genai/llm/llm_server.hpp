@@ -126,7 +126,7 @@ protected:
         std::shared_ptr<Event> tokenizer_arrived_event, std::shared_ptr<Event> embeddings_arrived_event, std::shared_ptr<Event> shutdown_event);
 
     virtual std::future<hailo_status> create_inference_managers_future(std::shared_ptr<VDevice> vdevice, const Hef &hef,
-        const std::string &lora_name, std::shared_ptr<Event> external_resources_created_event,
+        std::shared_ptr<Buffer> hef_buffer, const std::string &lora_name, std::shared_ptr<Event> external_resources_created_event,
         std::shared_ptr<Event> inference_models_created_event, std::shared_ptr<Event> shutdown_event);
 
     virtual std::future<Expected<Eigen::VectorXf>> parse_external_resources_future(const Hef &hef,
@@ -136,7 +136,7 @@ protected:
     virtual std::future<hailo_status> create_tokenizer_future(const Hef &hef,
         std::shared_ptr<Event> tokenizer_arrived_event, std::shared_ptr<Event> shutdown_event);
 
-    virtual std::future<hailo_status> create_token_embedder_future(const Hef &hef,
+    virtual std::future<hailo_status> create_token_embedder_future(const Hef &hef, std::shared_ptr<Buffer> hef_buffer,
         std::shared_ptr<Event> embeddings_arrived_event, std::shared_ptr<Event> pre_process_created_event, std::shared_ptr<Event> shutdown_event);
 
     virtual std::future<hailo_status> create_pre_process_future(const Hef &hef,

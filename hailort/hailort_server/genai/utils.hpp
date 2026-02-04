@@ -47,7 +47,9 @@ constexpr auto DEFAULT_SCHEDULER_TIMEOUT = std::chrono::milliseconds(0);
 constexpr auto DEFAULT_SCHEDULER_THRESHOLD = 1;
 
 // Timeout for asynchronous operations in server
-constexpr auto WAIT_FOR_OPERATION_TIMEOUT = std::chrono::seconds(10);
+// Increased from 10s to accommodate SOC_ACCELERATOR devices (e.g., Hailo-10H on RPi)
+// where model loading involves PCIe RPC transfers of large HEF buffers
+constexpr auto WAIT_FOR_OPERATION_TIMEOUT = std::chrono::seconds(120);
 
 inline Expected<Buffer> handle_check_hef_exists_request(const MemoryView &request)
 {

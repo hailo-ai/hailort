@@ -98,10 +98,10 @@ std::future<hailo_status> VLMServer::create_pre_process_future(const Hef &hef,
     });
 }
 
-std::future<hailo_status> VLMServer::create_token_embedder_future(const Hef &hef,
+std::future<hailo_status> VLMServer::create_token_embedder_future(const Hef &hef, std::shared_ptr<Buffer> hef_buffer,
     std::shared_ptr<Event> embeddings_arrived_event, std::shared_ptr<Event> pre_process_created_event, std::shared_ptr<Event> shutdown_event)
 {
-    return std::async(std::launch::async, [this, hef, embeddings_arrived_event, pre_process_created_event, shutdown_event]() -> hailo_status {
+    return std::async(std::launch::async, [this, hef, hef_buffer, embeddings_arrived_event, pre_process_created_event, shutdown_event]() -> hailo_status {
         CHECK_SUCCESS(WaitOrShutdown(pre_process_created_event, shutdown_event).wait(WAIT_FOR_OPERATION_TIMEOUT));
         CHECK_SUCCESS(WaitOrShutdown(embeddings_arrived_event, shutdown_event).wait(LONG_TIMEOUT)); // Waiting for data over the session
 
@@ -112,6 +112,8 @@ std::future<hailo_status> VLMServer::create_token_embedder_future(const Hef &hef
         TRY(m_token_embedder, TokenEmbedder<uint16_t>::create(embeddings_view,
             embeddings_view.size() / (sizeof(uint16_t) * m_embeddings_features), m_embeddings_features,
             m_image_pad_token_id, m_video_pad_token_id, embeddings_per_frame));
+        // Keep the HEF buffer alive — the TokenEmbedder's Eigen::Map points into it
+        m_token_embedder->set_resource_guard(hef_buffer);
         LOGGER__GENAI_STATS_END("[create] create token embedder");
 
         return HAILO_SUCCESS;
@@ -167,7 +169,7 @@ Expected<std::future<hailo_status>> VLMServer::create_resources_async(std::share
         auto external_resources_future = parse_external_resources_future(hef, hailo_config_json_arrived_event,
             theta_arrived_event, external_resources_created_event, shutdown_event);
 
-        auto inference_managers_future = create_inference_managers_future(vdevice, hef, "",
+        auto inference_managers_future = create_inference_managers_future(vdevice, hef, hef_buffer, "",
             external_resources_created_event, inference_models_created_event, shutdown_event);
 
         auto frame_encoder_future = create_frame_encoder_future(vdevice, hef, frame_encoder_created_event);
@@ -179,7 +181,7 @@ Expected<std::future<hailo_status>> VLMServer::create_resources_async(std::share
 
         if (!tokenizer_on_host) {
             auto tokenizer_future = create_tokenizer_future(hef, tokenizer_arrived_event, shutdown_event);
-            auto token_embedder_future = create_token_embedder_future(hef,
+            auto token_embedder_future = create_token_embedder_future(hef, hef_buffer,
                 embeddings_arrived_event, pre_process_created_event, shutdown_event);
             CHECK_SUCCESS(wait_for_future_status_or_shutdown(tokenizer_future, shutdown_event));
             CHECK_SUCCESS(wait_for_future_status_or_shutdown(token_embedder_future, shutdown_event));

@@ -26,7 +26,7 @@ class LLMInferenceManager : public InferenceManager
 {
 public:
     static Expected<std::unique_ptr<InferenceManager>> create(std::shared_ptr<hailort::VDevice> vdevice,
-        Hef hef, const std::string &model_name_suffix="");
+        Hef hef, std::shared_ptr<Buffer> hef_buffer, const std::string &model_name_suffix="");
     LLMInferenceManager(std::shared_ptr<hailort::VDevice> vdevice, std::shared_ptr<InferModel> model);
 
     virtual ~LLMInferenceManager() = default;
