@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -14,6 +14,8 @@
 #include "net_flow/ops_metadata/op_metadata.hpp"
 #include "hailo/hailort_common.hpp"
 
+#include <vector>
+
 namespace hailort
 {
 namespace net_flow
@@ -23,7 +25,8 @@ struct NmsPostProcessConfig
 {
 
     NmsPostProcessConfig(double nms_score_th = 0, double nms_iou_th = 0, uint32_t max_proposals_per_class = 0, uint32_t max_proposals_total = 0,
-        uint32_t number_of_classes = 0, bool background_removal = false, uint32_t background_removal_index = 0, bool bbox_only = false) :
+        uint32_t number_of_classes = 0, bool background_removal = false, uint32_t background_removal_index = 0, bool bbox_only = false,
+        const std::vector<bool> &classes_filter_mask = {}) :
             nms_score_th(nms_score_th),
             nms_iou_th(nms_iou_th),
             max_proposals_per_class(max_proposals_per_class),
@@ -31,7 +34,8 @@ struct NmsPostProcessConfig
             number_of_classes(number_of_classes),
             background_removal(background_removal),
             background_removal_index(background_removal_index),
-            bbox_only(bbox_only)
+            bbox_only(bbox_only),
+            classes_filter_mask(classes_filter_mask)
     {}
 
     // User given confidence threshold for a bbox. A bbox will be consider as detection if the
@@ -59,6 +63,9 @@ struct NmsPostProcessConfig
 
     // Indicates whether only the bbox decoding is being done
     bool bbox_only;
+
+    // Mask for filtering classes. If true for class index, class is kept. Else filtered.
+    std::vector<bool> classes_filter_mask;
 };
 
 static const float32_t REMOVED_CLASS_SCORE = 0.0f;

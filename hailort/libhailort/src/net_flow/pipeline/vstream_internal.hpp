@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -152,6 +152,7 @@ public:
     virtual hailo_status set_nms_iou_threshold(float32_t threshold) = 0;
     virtual hailo_status set_nms_max_proposals_per_class(uint32_t max_proposals_per_class) = 0;
     virtual hailo_status set_nms_max_accumulated_mask_size(uint32_t max_accumulated_mask_size) = 0;
+    virtual hailo_status set_nms_classes_filter_mask(const std::vector<bool> &classes_filter_mask) = 0;
 
 protected:
     OutputVStreamInternal(const hailo_vstream_info_t &vstream_info, const std::vector<hailo_quant_info_t> &quant_infos, const hailo_vstream_params_t &vstream_params,
@@ -209,6 +210,7 @@ public:
     virtual hailo_status set_nms_iou_threshold(float32_t threshold) override;
     virtual hailo_status set_nms_max_proposals_per_class(uint32_t max_proposals_per_class) override;
     virtual hailo_status set_nms_max_accumulated_mask_size(uint32_t max_accumulated_mask_size) override;
+    virtual hailo_status set_nms_classes_filter_mask(const std::vector<bool> &classes_filter_mask) override;
 
 private:
     OutputVStreamImpl(const hailo_vstream_info_t &vstream_info, const std::vector<hailo_quant_info_t> &quant_infos, const hailo_vstream_params_t &vstream_params,

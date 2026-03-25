@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -22,32 +22,36 @@
 namespace hailort
 {
 
-#define HAILO_CLASS_PATH                      ("/sys/class/hailo_chardev")
-#define HAILO_BOARD_LOCATION_FILENAME         ("board_location")
-#define HAILO_BOARD_ACCELERATOR_TYPE_FILENAME ("accelerator_type")
+#define HAILO_CLASS_PATH            "/sys/class/hailo1x"
+#define HAILO_INTEGRATED_CLASS_PATH "/sys/class/hailo1x_integrated"
+#define HAILO_DEVICE_ID_FILENAME    "device_id"
+
+static inline std::string devive_type_to_class_path(DeviceType device_type)
+{
+    return (device_type == DeviceType::INTEGRATED) ? HAILO_INTEGRATED_CLASS_PATH : HAILO_CLASS_PATH;
+}
 
 Expected<FileDescriptor> open_device_file(const std::string &path)
 {
     // Setting O_CLOEXEC to avoid leaking the driver in subprocesses that have exec'd
     // (since they load a new binary that doesn't necessarily know about the driver)
     int fd = open(path.c_str(), O_RDWR | O_CLOEXEC);
-    CHECK(fd >= 0, HAILO_DRIVER_OPERATION_FAILED,
-        "Failed to open device file {} with error {}", path, errno);
+    CHECK(fd >= 0, HAILO_DRIVER_OPERATION_FAILED, "Failed to open device file {} with error {}", path, errno);
     return FileDescriptor(fd);
 }
 
-Expected<std::vector<std::string>> list_devices()
+static Expected<std::vector<std::string>> list_devices(const std::string &class_path)
 {
     std::vector<std::string> devices;
-    DIR *dir_iter = opendir(HAILO_CLASS_PATH);
+    DIR *dir_iter = opendir(class_path.c_str());
     if (!dir_iter) {
         if (ENOENT == errno) {
             // Hailo chrdev-class does not exist; meaning no devices have been detected by driver.
             return devices;
-        } else {
-            LOGGER__ERROR("Failed to open hailo pcie class ({}), errno {}", HAILO_CLASS_PATH, errno);
-            return make_unexpected(HAILO_DRIVER_INVALID_RESPONSE);
         }
+
+        LOGGER__ERROR("Failed to open hailo class ({}): {}", class_path, errno);
+        return make_unexpected(HAILO_DRIVER_INVALID_RESPONSE);
     }
 
     struct dirent *dir = nullptr;
@@ -58,55 +62,26 @@ Expected<std::vector<std::string>> list_devices()
         }
         devices.push_back(device_name);
     }
-
     closedir(dir_iter);
+
     return devices;
 }
 
-Expected<std::vector<HailoRTDriver::DeviceInfo>> scan_devices()
+Expected<std::vector<DeviceInfo>> scan_devices_by_type(DeviceType device_type)
 {
-    TRY_V(auto devices, list_devices(), "Failed listing hailo devices");
+    const std::string class_path = devive_type_to_class_path(device_type);
+    TRY(auto devices, list_devices(class_path), "Failed listing hailo devices in path {}", class_path);
 
-    std::vector<HailoRTDriver::DeviceInfo> devices_info;
+    std::vector<DeviceInfo> devices_info;
     for (const auto &device_name : devices) {
-        TRY(auto device_info, query_device_info(device_name), "Failed parsing device info for {}", device_name);
+        TRY(auto device_info, query_device(device_type, device_name), "Failed parsing device info for {}", device_name);
         devices_info.push_back(device_info);
     }
 
     return devices_info;
 }
 
-Expected<std::vector<HailoRTDriver::DeviceInfo>> scan_soc_devices()
-{
-    TRY(auto all_devices_info, scan_devices());
-
-    // TODO- HRT-14078: change to be based on different classes
-    std::vector<HailoRTDriver::DeviceInfo> soc_devices_info;
-    for (const auto &device_info : all_devices_info) {
-        if (HailoRTDriver::AcceleratorType::SOC_ACCELERATOR == device_info.accelerator_type) {
-            soc_devices_info.push_back(device_info);
-        }
-    }
-
-    return soc_devices_info;
-}
-
-Expected<std::vector<HailoRTDriver::DeviceInfo>> scan_nnc_devices()
-{
-    TRY(auto all_devices_info, scan_devices());
-
-    // TODO- HRT-14078: change to be based on different classes
-    std::vector<HailoRTDriver::DeviceInfo> nnc_devices_info;
-    for (const auto &device_info : all_devices_info) {
-        if (HailoRTDriver::AcceleratorType::NNC_ACCELERATOR == device_info.accelerator_type) {
-            nnc_devices_info.push_back(device_info);
-        }
-    }
-
-    return nnc_devices_info;
-}
-
-Expected<std::string> get_line_from_file(const std::string &file_path)
+static Expected<std::string> get_line_from_file(const std::string &file_path)
 {
     std::ifstream file(file_path);
     CHECK_AS_EXPECTED(file.good(), HAILO_DRIVER_INVALID_RESPONSE, "Failed open {}", file_path);
@@ -118,22 +93,16 @@ Expected<std::string> get_line_from_file(const std::string &file_path)
     return line;
 }
 
-Expected<HailoRTDriver::DeviceInfo> query_device_info(const std::string &device_name)
+Expected<DeviceInfo> query_device(DeviceType device_type, const std::string &device_name)
 {
-    const std::string device_id_path = std::string(HAILO_CLASS_PATH) + "/" +
-        device_name + "/" + HAILO_BOARD_LOCATION_FILENAME;
+    const std::string class_path = devive_type_to_class_path(device_type);
+    const std::string device_id_path = class_path + "/" + device_name + "/" + HAILO_DEVICE_ID_FILENAME;
     TRY(auto device_id , get_line_from_file(device_id_path));
 
-    const std::string accelerator_type_path = std::string(HAILO_CLASS_PATH) + "/" +
-        device_name + "/" + HAILO_BOARD_ACCELERATOR_TYPE_FILENAME;
-    TRY(auto accelerator_type_s, get_line_from_file(accelerator_type_path));
-
-    int accelerator_type = std::stoi(accelerator_type_s);
-
-    HailoRTDriver::DeviceInfo device_info = {};
-    device_info.dev_path = std::string("/dev/") + device_name;
+    DeviceInfo device_info = {};
+    device_info.dev_path = "/dev/" + device_name;
     device_info.device_id = device_id;
-    device_info.accelerator_type = static_cast<HailoRTDriver::AcceleratorType>(accelerator_type);
+    device_info.device_type = device_type;
 
     return device_info;
 }
@@ -144,7 +113,7 @@ hailo_status convert_errno_to_hailo_status(int err, const char* ioctl_name)
     case ENOBUFS:
         // Expected error (when happens, can try resolve by allocating memory in different way)
         LOGGER__DEBUG("Ioctl {} failed due to insufficient amount of CMA memory", ioctl_name);
-        return HAILO_OUT_OF_HOST_CMA_MEMORY;
+        return HAILO_RESOURCE_EXHAUSTED;
     case ENOMEM:
         LOGGER__ERROR("Ioctl {} failed due to insufficient amount of memory", ioctl_name);
         return HAILO_OUT_OF_HOST_MEMORY;

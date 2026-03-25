@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -32,11 +32,9 @@ Expected<std::unique_ptr<VDeviceNativeInputStream>> VDeviceNativeInputStream::cr
         CHECK_NOT_NULL_AS_EXPECTED(reorder_queue, HAILO_OUT_OF_HOST_MEMORY);
     }
 
-    auto status = HAILO_UNINITIALIZED;
-    auto stream = make_unique_nothrow<VDeviceNativeInputStream>(std::move(streams),
-        std::move(core_op_activated_event), layer_info, batch_size, core_op_handle, std::move(reorder_queue), status);
-    CHECK_AS_EXPECTED((nullptr != stream), HAILO_OUT_OF_HOST_MEMORY);
-    CHECK_SUCCESS_AS_EXPECTED(status);
+    auto stream = make_unique_nothrow<VDeviceNativeInputStream>(std::move(streams), std::move(core_op_activated_event),
+        layer_info, batch_size, core_op_handle, std::move(reorder_queue));
+    CHECK_NOT_NULL(stream, HAILO_OUT_OF_HOST_MEMORY);
     return stream;
 }
 
@@ -237,11 +235,10 @@ Expected<std::unique_ptr<VDeviceNativeOutputStream>> VDeviceNativeOutputStream::
         CHECK_NOT_NULL_AS_EXPECTED(reorder_queue, HAILO_OUT_OF_HOST_MEMORY);
     }
 
-    auto status = HAILO_UNINITIALIZED;
-    auto stream = make_unique_nothrow<VDeviceNativeOutputStream>(std::move(streams),
-        std::move(core_op_activated_event), layer_info, batch_size, core_op_handle, std::move(reorder_queue), status);
-    CHECK_AS_EXPECTED((nullptr != stream), HAILO_OUT_OF_HOST_MEMORY);
-    CHECK_SUCCESS_AS_EXPECTED(status);
+    auto stream = make_unique_nothrow<VDeviceNativeOutputStream>(std::move(streams), std::move(core_op_activated_event),
+        layer_info, batch_size, core_op_handle, std::move(reorder_queue));
+    CHECK_NOT_NULL(stream, HAILO_OUT_OF_HOST_MEMORY);
+
     return stream;
 }
 

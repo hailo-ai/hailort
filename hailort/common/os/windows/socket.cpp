@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -10,6 +10,7 @@
 #include "common/socket.hpp"
 
 #include <array>
+#include <ws2ipdef.h>  // sockaddr_in6
 
 namespace hailort
 {

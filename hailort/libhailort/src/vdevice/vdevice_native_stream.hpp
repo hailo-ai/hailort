@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -38,9 +38,8 @@ public:
         const LayerInfo &layer_info,
         uint16_t batch_size,
         vdevice_core_op_handle_t core_op_handle,
-        std::unique_ptr<CallbackReorderQueue> &&callback_reorder_queue,
-        hailo_status &status) :
-            InputStreamBase(layer_info, std::move(core_op_activated_event), status),
+        std::unique_ptr<CallbackReorderQueue> &&callback_reorder_queue) :
+            InputStreamBase(layer_info, std::move(core_op_activated_event)),
             m_streams(std::move(streams)),
             m_next_transfer_stream(m_streams.begin()->first),
             m_acc_frames(0),
@@ -94,9 +93,8 @@ public:
         const LayerInfo &layer_info,
         uint16_t batch_size,
         vdevice_core_op_handle_t core_op_handle,
-        std::unique_ptr<CallbackReorderQueue> &&callback_reorder_queue,
-        hailo_status &status) :
-            OutputStreamBase(layer_info, std::move(core_op_activated_event), status),
+        std::unique_ptr<CallbackReorderQueue> &&callback_reorder_queue) :
+            OutputStreamBase(layer_info, std::move(core_op_activated_event)),
             m_streams(std::move(streams)),
             m_next_transfer_stream(m_streams.begin()->first),
             m_acc_frames(0),

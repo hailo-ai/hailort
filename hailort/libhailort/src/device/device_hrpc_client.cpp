@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -13,18 +13,12 @@
 #include "serializer.hpp"
 #include "vdma/vdma_device.hpp"
 
-
 namespace hailort
 {
 
-Expected<std::shared_ptr<Client>> DeviceHrpcClient::get_connected_client(const std::string &device_id)
+Expected<std::shared_ptr<Client>> DeviceHrpcClient::create_connected_client(const std::string &device_id)
 {
-    auto client = make_shared_nothrow<Client>(device_id);
-    CHECK_NOT_NULL(client, HAILO_OUT_OF_HOST_MEMORY);
-
-    auto status = client->connect();
-    CHECK_SUCCESS(status, "Failed to connect to server");
-
+    TRY_WITH_ACCEPTABLE_STATUS(HAILO_INVALID_FIRMWARE, auto client, Client::created_connected(device_id));
     client->set_notification_callback(
     [callback_dispatcher_manager = client->callback_dispatcher_manager()]
     (const MemoryView &serialized_reply) -> hailo_status {
@@ -40,8 +34,8 @@ Expected<std::shared_ptr<Client>> DeviceHrpcClient::get_connected_client(const s
 
 Expected<std::unique_ptr<Device>> DeviceHrpcClient::create(const std::string &device_id)
 {
-    TRY(auto client, get_connected_client(device_id));
-    return DeviceHrpcClient::create(device_id, client);
+    TRY_WITH_ACCEPTABLE_STATUS(HAILO_INVALID_FIRMWARE, auto client, create_connected_client(device_id));
+    return DeviceHrpcClient::create(client);
 }
 
 Expected<rpc_object_handle_t> DeviceHrpcClient::create_remote_device(std::shared_ptr<Client> client)
@@ -53,21 +47,24 @@ Expected<rpc_object_handle_t> DeviceHrpcClient::create_remote_device(std::shared
     return CreateDeviceSerializer::deserialize_reply(MemoryView(result.body.data(), result.header.size));
 }
 
-Expected<std::unique_ptr<Device>> DeviceHrpcClient::create(const std::string &device_id,
-    std::shared_ptr<Client> client)
+Expected<std::unique_ptr<Device>> DeviceHrpcClient::create(std::shared_ptr<Client> client)
 {
-    auto device_handle = INVALID_HANDLE_ID;
-    std::shared_ptr<ClientCallbackDispatcher> callback_dispatcher = nullptr;
-    if (client) {
-        TRY(device_handle, create_remote_device(client), "Failed to create device");
-        TRY(callback_dispatcher, client->callback_dispatcher_manager()->new_dispatcher(RpcCallbackType::DEVICE_NOTIFICATION, false));
-    }
+    TRY(auto device_handle, create_remote_device(client), "Failed to create device");
+    TRY(auto callback_dispatcher, client->callback_dispatcher_manager()->new_dispatcher(RpcCallbackType::DEVICE_NOTIFICATION, false));
 
-    auto device = make_unique_nothrow<DeviceHrpcClient>(device_id, client, device_handle, callback_dispatcher);
+    auto device = make_unique_nothrow<DeviceHrpcClient>(client, device_handle, callback_dispatcher);
     CHECK_NOT_NULL(device, HAILO_OUT_OF_HOST_MEMORY);
 
     auto status = device->set_default_notification_callbacks();
     CHECK_SUCCESS(status, "Failed to set default notification callbacks for Device HRPC-client");
+
+    if (Type::USB == device->get_type()) {
+        TRY(auto current_limit, device->get_current_limit(), "Failed to get current limit");
+        if ((HAILO_CURRENT_LIMIT_900_MA == current_limit) || (HAILO_CURRENT_LIMIT_1500_MA == current_limit)) {
+            LOGGER__INFO("USB-C source electrical current advertised: {:.1f}A. The module may run in reduced-performance mode. For full performance, use a USB-C port that advertises 3.0A.",
+                static_cast<float32_t>(current_limit) / 1000.0f);
+        }
+    }
 
     return std::unique_ptr<Device>(std::move(device));
 }
@@ -92,10 +89,7 @@ DeviceHrpcClient::~DeviceHrpcClient()
 
     auto result_expected = m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__DESTROY),
         MemoryView(request_buffer.value()->data(), *request_size));
-    if (!result_expected) {
-        LOGGER__CRITICAL("Failed to destroy Device! status = {}", result_expected.status());
-        return;
-    }
+    DTOR_LOG_ON_FAILURE(result_expected, "Failed to destroy Device! status = {}");
 
     auto status = m_client->callback_dispatcher_manager()->remove_dispatcher(m_callback_dispatcher->id());
     if (HAILO_SUCCESS != status) {
@@ -127,7 +121,6 @@ Expected<hailo_extended_device_information_t> DeviceHrpcClient::get_extended_dev
 
 Expected<hailo_chip_temperature_info_t> DeviceHrpcClient::get_chip_temperature()
 {
-
     CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
 
     using Serializer = GetChipTemperatureSerializer;
@@ -152,13 +145,13 @@ Expected<hailo_health_stats_t> DeviceHrpcClient::query_health_stats()
     return Serializer::deserialize_reply(MemoryView(result.body.data(), result.header.size));
 }
 
-Expected<hailo_performance_stats_t> DeviceHrpcClient::query_performance_stats()
+Expected<hailo_performance_stats_t> DeviceHrpcClient::query_performance_stats(std::chrono::milliseconds sampling_period)
 {
     CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
 
     using Serializer = QueryPerformanceStatsSerializer;
     TRY(auto request_buffer, m_client->allocate_request_buffer(), "Failed to allocate request buffer");
-    TRY(auto request_size, Serializer::serialize_request(m_handle, MemoryView(*request_buffer)));
+    TRY(auto request_size, Serializer::serialize_request(m_handle, sampling_period, MemoryView(*request_buffer)));
     TRY(auto result, m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__QUERY_PERFORMANCE_STATS),
         MemoryView(request_buffer->data(), request_size)));
 
@@ -370,7 +363,7 @@ hailo_status DeviceHrpcClient::before_fork()
 
 hailo_status DeviceHrpcClient::after_fork_in_parent()
 {
-    TRY(m_client, get_connected_client(m_device_id), "Failed to create client");
+    TRY(m_client, create_connected_client(m_device_id), "Failed to create client");
     TRY(m_callback_dispatcher, m_client->callback_dispatcher_manager()->new_dispatcher(RpcCallbackType::DEVICE_NOTIFICATION, false));
     // Keeping the same device handle
     return HAILO_SUCCESS;
@@ -378,7 +371,7 @@ hailo_status DeviceHrpcClient::after_fork_in_parent()
 
 hailo_status DeviceHrpcClient::after_fork_in_child()
 {
-    TRY(m_client, get_connected_client(m_device_id), "Failed to create client");
+    TRY(m_client, create_connected_client(m_device_id), "Failed to create client");
     TRY(m_callback_dispatcher, m_client->callback_dispatcher_manager()->new_dispatcher(RpcCallbackType::DEVICE_NOTIFICATION, false));
     TRY(m_handle, create_remote_device(m_client), "Failed to create device");
     return HAILO_SUCCESS;
@@ -438,6 +431,18 @@ Expected<size_t> DeviceHrpcClient::fetch_logs(MemoryView buffer, hailo_log_type_
 
     TRY(auto result, m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__FETCH_LOGS),
         MemoryView(request_buffer->data(), request_size), std::move(write_buffers), std::move(log_transfer_buffers)));
+
+    return Serializer::deserialize_reply(MemoryView(result.body.data(), result.header.size));
+}
+
+Expected<uint32_t> DeviceHrpcClient::get_current_limit()
+{
+    using Serializer = GetCurrentLimitSerializer;
+    CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
+    TRY(auto request_buffer, m_client->allocate_request_buffer(), "Failed to allocate request buffer");
+    TRY(auto request_size, Serializer::serialize_request(m_handle, MemoryView(*request_buffer)));
+    TRY(auto result, m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__GET_CURRENT_LIMIT),
+        MemoryView(request_buffer->data(), request_size)));
 
     return Serializer::deserialize_reply(MemoryView(result.body.data(), result.header.size));
 }

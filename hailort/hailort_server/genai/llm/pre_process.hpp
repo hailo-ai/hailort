@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -63,6 +63,18 @@ struct InputLayersNamesSuffixes {
     std::string pe_q_sin = INPUT_LAYER_PE_Q_SIN_SUFF;
     std::string pe_k_cos = INPUT_LAYER_PE_K_COS_SUFF;
     std::string pe_k_sin = INPUT_LAYER_PE_K_SIN_SUFF;
+
+    std::string deepstack_layer1;
+    std::string deepstack_layer2;
+    std::string deepstack_layer3;
+
+    std::vector<std::string> deepstack_as_vector() const {
+        std::vector<std::string> result;
+        if (!deepstack_layer1.empty()) result.push_back(deepstack_layer1);
+        if (!deepstack_layer2.empty()) result.push_back(deepstack_layer2);
+        if (!deepstack_layer3.empty()) result.push_back(deepstack_layer3);
+        return result;
+    }
 };
 
 struct PreProcessParams {
@@ -91,6 +103,7 @@ public:
     hailo_status prepare_inputs_tbt(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer, const std::vector<EmbeddingViewWrapper> &input_token_embedding);
     void reset_local_cache();
     static bool is_positional_embed_layer(const std::string &name, const InputLayersNamesSuffixes &input_layers_names_suffixes);
+    static bool is_deepstack_layer(const std::string &name, const InputLayersNamesSuffixes &input_layers_names_suffixes);
 
     std::tuple<size_t, eigen_matrix_2d_u16_t, eigen_tensor_4d_u32_t, int> get_local_cache() const;
     void set_local_cache(size_t cache_size, const eigen_matrix_2d_u16_t &embeddings, const eigen_tensor_4d_u32_t &pos_ids, int timestamp_value);

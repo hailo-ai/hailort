@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -14,7 +14,6 @@
 #include "hailo/hailort.h"
 #include "vdma/channel/boundary_channel.hpp"
 #include "vdma/channel/interrupts_dispatcher.hpp"
-#include "vdma/channel/transfer_launcher.hpp"
 
 namespace hailort
 {
@@ -63,7 +62,6 @@ public:
 
     static Expected<PcieSession> connect(std::shared_ptr<HailoRTDriver> driver, pcie_connection_port_t port);
     static Expected<PcieSession> accept(std::shared_ptr<HailoRTDriver> driver, pcie_connection_port_t port);
-    static hailo_status listen(std::shared_ptr<HailoRTDriver> driver, pcie_connection_port_t port, uint8_t backlog_size);
 
     ~PcieSession() { close(); }
 
@@ -90,7 +88,6 @@ public:
         m_should_close(other.m_should_close.exchange(false)),
         m_driver(std::move(other.m_driver)),
         m_interrupts_dispatcher(std::move(other.m_interrupts_dispatcher)),
-        m_transfer_launcher(std::move(other.m_transfer_launcher)),
         m_input(std::move(other.m_input)),
         m_output(std::move(other.m_output)),
         m_session_type(other.m_session_type)
@@ -107,11 +104,9 @@ private:
 
     PcieSession(std::shared_ptr<HailoRTDriver> &&driver,
         std::unique_ptr<vdma::InterruptsDispatcher> &&interrupts_dispatcher,
-        std::unique_ptr<vdma::TransferLauncher> &&transfer_launcher,
         vdma::BoundaryChannelPtr &&input, vdma::BoundaryChannelPtr &&output, PcieSessionType session_type) :
         m_driver(std::move(driver)),
         m_interrupts_dispatcher(std::move(interrupts_dispatcher)),
-        m_transfer_launcher(std::move(transfer_launcher)),
         m_input(std::move(input)),
         m_output(std::move(output)),
         m_session_type(session_type)
@@ -126,7 +121,6 @@ private:
     std::shared_ptr<HailoRTDriver> m_driver;
 
     std::unique_ptr<vdma::InterruptsDispatcher> m_interrupts_dispatcher;
-    std::unique_ptr<vdma::TransferLauncher> m_transfer_launcher;
 
     vdma::BoundaryChannelPtr m_input;
     vdma::BoundaryChannelPtr m_output;

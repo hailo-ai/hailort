@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -19,11 +19,13 @@
 #include "common/utils.hpp"
 
 #include "device_common/control.hpp"
-#include "vdma/pcie/pcie_device.hpp"
+#include "vdma/legacy_pcie/legacy_pcie_device.hpp"
 #include "vdma/integrated/integrated_device.hpp"
 #include "device/device_hrpc_client.hpp"
 #include "utils/query_stats_utils.hpp"
 #include "utils/logger_fetcher.hpp"
+#include "device_common/pcie_utils.hpp"
+#include "device_common/usb/usb_utils.hpp"
 
 #include "byte_order.h"
 #include "firmware_header_utils.h"
@@ -33,7 +35,6 @@
 #ifndef _MSC_VER
 #include <sys/utsname.h>
 #endif
-
 
 namespace hailort
 {
@@ -66,28 +67,32 @@ static bool is_valid_ip_address(const std::string &ip_address)
 
 Expected<std::vector<std::string>> Device::scan()
 {
-    // TODO: HRT-7530 support both CORE and PCIE
     if (IntegratedDevice::is_loaded()) {
         return std::vector<std::string>{IntegratedDevice::DEVICE_ID};
     }
-    else {
-        TRY(auto pcie_device_infos, PcieDevice::scan());
 
-        std::vector<std::string> results;
-        results.reserve(pcie_device_infos.size());
+    TRY(auto pcie_device_infos, PcieUtils::scan());
+    TRY(auto usb_device_infos, UsbUtils::scan());
 
-        for (const auto pcie_device_info : pcie_device_infos) {
-            TRY(auto device_id, pcie_device_info_to_string(pcie_device_info));
-            results.emplace_back(device_id);
-        }
+    std::vector<std::string> results;
+    results.reserve(pcie_device_infos.size() + usb_device_infos.size());
 
-        return results;
+    for (const auto &pcie_device_info : pcie_device_infos) {
+        TRY(auto device_id, PcieUtils::pcie_device_info_to_string(pcie_device_info));
+        results.emplace_back(device_id);
     }
+
+    for (const auto &usb_device_info : usb_device_infos) {
+        TRY(auto device_id, UsbUtils::usb_device_info_to_string(usb_device_info));
+        results.emplace_back(device_id);
+    }
+
+    return results;
 }
 
 Expected<std::vector<hailo_pcie_device_info_t>> Device::scan_pcie()
 {
-    return PcieDevice::scan();
+    return PcieUtils::scan();
 }
 
 Expected<std::unique_ptr<Device>> Device::create()
@@ -102,76 +107,86 @@ Expected<std::unique_ptr<Device>> Device::create()
 
 Expected<std::unique_ptr<Device>> Device::create(const std::string &device_id)
 {
-    const bool DONT_LOG_ON_FAILURE = false;
     if (IntegratedDevice::DEVICE_ID == device_id) {
         return create_core();
-    } else if (auto pcie_info = PcieDevice::parse_pcie_device_info(device_id, DONT_LOG_ON_FAILURE)) {
-        return create_pcie(pcie_info.release());
-    } else if (is_valid_ip_address(device_id)) {
-        return DeviceHrpcClient::create(device_id);
-    } else {
-        LOGGER__ERROR("Invalid device id {}", device_id);
-        return make_unexpected(HAILO_INVALID_ARGUMENT);
     }
+
+    return DeviceHrpcClient::create(device_id);
 }
 
 Expected<std::unique_ptr<Device>> Device::create_pcie()
 {
-    TRY(auto device, PcieDevice::create());
+    TRY(auto device, LegacyPcieDevice::create());
     return device;
 }
 
 Expected<std::unique_ptr<Device>> Device::create_pcie(const hailo_pcie_device_info_t &device_info)
 {
-    TRY(auto device, PcieDevice::create(device_info));
+    TRY(auto device, LegacyPcieDevice::create(device_info));
     return device;
 }
 
 Expected<hailo_pcie_device_info_t> Device::parse_pcie_device_info(const std::string &device_info_str)
 {
-    const bool LOG_ON_FAILURE = true;
-    return PcieDevice::parse_pcie_device_info(device_info_str, LOG_ON_FAILURE);
+    TRY(auto pcie_info, PcieUtils::parse_pcie_device_info(device_info_str), "Invalid PCIe device info string");
+    return pcie_info;
 }
 
 Expected<std::string> Device::pcie_device_info_to_string(const hailo_pcie_device_info_t &device_info)
 {
-    return PcieDevice::pcie_device_info_to_string(device_info);
+    return PcieUtils::pcie_device_info_to_string(device_info);
 }
 
 Expected<Device::Type> Device::get_device_type(const std::string &device_id)
 {
-    const bool DONT_LOG_ON_FAILURE = false;
     if (IntegratedDevice::DEVICE_ID == device_id) {
-        return Type::INTEGRATED;
+        return Device::Type::INTEGRATED;
     }
-    else if (auto pcie_info = PcieDevice::parse_pcie_device_info(device_id, DONT_LOG_ON_FAILURE)) {
-        return Type::PCIE;
-    } else if (is_valid_ip_address(device_id)) {
-        return Type::ETH;
+
+    auto pcie_info = PcieUtils::parse_pcie_device_info(device_id);
+    if (pcie_info) {
+        return Device::Type::PCIE;
     }
-    else {
-        LOGGER__ERROR("Invalid device id {}", device_id);
-        return make_unexpected(HAILO_INVALID_ARGUMENT);
+
+    if (auto usb_info = UsbUtils::parse_usb_device_info(device_id)) {
+        return Device::Type::USB;
     }
+
+    if (is_valid_ip_address(device_id)) {
+        return Device::Type::ETH;
+    }
+
+    LOGGER__ERROR("Invalid device id {}", device_id);
+    return make_unexpected(HAILO_INVALID_ARGUMENT);
 }
 
 bool Device::device_ids_equal(const std::string &first, const std::string &second)
 {
-    const bool DONT_LOG_ON_FAILURE = false;
     if (IntegratedDevice::DEVICE_ID == first) {
         // On integrated devices device all ids should be the same
         return first == second;
-    } else if (auto first_pcie_info = PcieDevice::parse_pcie_device_info(first, DONT_LOG_ON_FAILURE)) {
-        auto second_pcie_info = PcieDevice::parse_pcie_device_info(second, DONT_LOG_ON_FAILURE);
+    }
+
+    if (auto first_pcie_info = PcieUtils::parse_pcie_device_info(first)) {
+        auto second_pcie_info = PcieUtils::parse_pcie_device_info(second);
         if (!second_pcie_info) {
             // second is not pcie
             return false;
         }
-        return PcieDevice::pcie_device_infos_equal(*first_pcie_info, *second_pcie_info);
-    } else {
-        // first device does not match.
-        return false;
+        return PcieUtils::are_pcie_device_infos_equal(*first_pcie_info, *second_pcie_info);
     }
+
+    if (auto first_usb_info = UsbUtils::parse_usb_device_info(first)) {
+        auto second_usb_info = UsbUtils::parse_usb_device_info(second);
+        if (!second_usb_info) {
+            // second is not usb
+            return false;
+        }
+        return UsbUtils::are_usb_device_infos_equal(*first_usb_info, *second_usb_info);
+    }
+
+    // first device does not match.
+    return false;
 }
 
 uint32_t Device::get_control_sequence()
@@ -193,13 +208,14 @@ Expected<hailo_stream_interface_t> Device::get_default_streams_interface() const
 {
     switch(m_type) {
     case Type::PCIE:
+    case Type::USB:  // TODO: do we even need this?
         return HAILO_STREAM_INTERFACE_PCIE;
     case Type::INTEGRATED:
         return HAILO_STREAM_INTERFACE_INTEGRATED;
     case Type::ETH:
         return HAILO_STREAM_INTERFACE_ETH;
     default:
-        LOGGER__ERROR("Failed to get default streams interface.");
+        LOGGER__ERROR("Failed to get default streams interface for device type {}.", static_cast<int>(m_type));
         return make_unexpected(HAILO_INTERNAL_FAILURE);
     }
 }
@@ -354,9 +370,10 @@ Expected<hailo_health_stats_t> Device::query_health_stats()
 #endif
 }
 
-Expected<hailo_performance_stats_t> Device::query_performance_stats()
+Expected<hailo_performance_stats_t> Device::query_performance_stats(std::chrono::milliseconds sampling_period)
 {
 #ifndef __linux__
+    (void)sampling_period;
     LOGGER__ERROR("Query performance stats is supported only on Linux systems");
     return make_unexpected(HAILO_NOT_SUPPORTED);
 #else
@@ -366,37 +383,8 @@ Expected<hailo_performance_stats_t> Device::query_performance_stats()
         (device_arch == HAILO_ARCH_HAILO10H), HAILO_INVALID_DEVICE_ARCHITECTURE,
         "Query performance stats is not supported for device arch {}", HailoRTCommon::get_device_arch_str(device_arch));
 
-    hailo_performance_stats_t performance_stats = {-1, -1, -1, -1, -1, -1};
-
-    auto cpu_utilization = QueryStatsUtils::calculate_cpu_utilization();
-    if (HAILO_SUCCESS == cpu_utilization.status()) {
-        performance_stats.cpu_utilization = cpu_utilization.release();
-    }
-
-    auto ram_sizes =  QueryStatsUtils::calculate_ram_sizes();
-    if (HAILO_SUCCESS == ram_sizes.status()) {
-        performance_stats.ram_size_total = std::get<0>(ram_sizes.value());
-        performance_stats.ram_size_used = std::get<1>(ram_sizes.value());
-    }
-
-    auto dsp_utilization = QueryStatsUtils::get_dsp_utilization();
-    if (HAILO_SUCCESS == dsp_utilization.status()) {
-        performance_stats.dsp_utilization = dsp_utilization.release();
-    }
-
-    auto ddr_noc_utilization = QueryStatsUtils::get_ddr_noc_utilization();
-    if (HAILO_SUCCESS == ddr_noc_utilization.status()) {
-        performance_stats.ddr_noc_total_transactions = ddr_noc_utilization.release();
-    }
-
-    auto id_info_str = get_dev_id();
-    auto device_arch_str = HailoRTCommon::get_device_arch_str(device_arch);
-    auto nnc_utilization = QueryStatsUtils::get_nnc_utilization(id_info_str, device_arch_str);
-    if (HAILO_SUCCESS == nnc_utilization.status()) {
-        performance_stats.nnc_utilization = nnc_utilization.release();
-    }
-
-    return performance_stats;
+    return PerformanceStatsMeasurement::measure(sampling_period, get_dev_id(),
+        HailoRTCommon::get_device_arch_str(device_arch));
 #endif
 }
 
@@ -664,7 +652,7 @@ Expected<std::unique_ptr<Device>> Device::create_core()
 
 static void default_crc_error_notification_callback(Device &device, const hailo_notification_t&, void*)
 {
-    LOGGER__CRITICAL("Device {} recorded a CRC error in NN-core. Shutting down device streams", device.get_dev_id());
+    LOGGER__WARNING("Device {} recorded a CRC error in NN-core.", device.get_dev_id());
 }
 
 static void default_throttling_state_change_notification_callback(Device &device,
@@ -745,6 +733,10 @@ Expected<Device::Capabilities> Device::get_capabilities()
     TRY(caps.current_measurements, has_power_sensor(), "Failed to check if power sensor is installed");
     TRY(caps.power_measurements, has_power_sensor(), "Failed to check if power sensor is installed");
     return caps;
+}
+
+Expected<uint32_t> Device::get_current_limit() {
+    return HAILO_CURRENT_LIMIT_NA; // Not applicable, but not an error
 }
 
 } /* namespace hailort */

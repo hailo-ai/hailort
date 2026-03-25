@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -32,13 +32,14 @@ public:
         {}
 
         hailo_status start();
-        uint32_t push_text(std::stringstream &ss);
+        std::string get_text() const;
         void push_json(nlohmann::ordered_json &json);
         virtual hailort::Expected<double> get_last_measured_fps();
+        virtual void measure() = 0;
 
     protected:
         virtual hailo_status start_impl() = 0;
-        virtual uint32_t push_text_impl(std::stringstream &ss) = 0;
+        virtual std::string get_text_impl() const = 0;
         virtual void push_json_impl(nlohmann::ordered_json &json) = 0;
 
         bool m_started;
@@ -47,13 +48,16 @@ public:
     LiveStats(std::chrono::milliseconds interval, bool should_print);
     ~LiveStats();
     void add(std::shared_ptr<Track> track, uint8_t level); // prints tracks in consecutive order from low-to-high levels
-    void measure_and_print();
     hailo_status dump_stats(const std::string &json_path, const std::string &inference_mode);
     hailo_status start();
     void stop();
     hailort::Expected<std::vector<double>> get_last_measured_fps_per_network_group();
 
 private:
+    void measure_and_print();
+    void measure();
+    void print_measurements();
+
     bool m_running;
     std::chrono::milliseconds m_interval;
     bool m_should_print;
@@ -61,7 +65,7 @@ private:
     std::map<uint8_t, std::vector<std::shared_ptr<Track>>> m_tracks;
     std::thread m_thread;
     std::mutex m_mutex;
-    uint32_t m_prev_count;
+    size_t m_prev_line_count;
     hailort::CursorAdjustment m_enable_ansi_escape_sequences;
 };
 

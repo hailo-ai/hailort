@@ -95,7 +95,7 @@ install(TARGETS gsthailo
     RUNTIME DESTINATION "${GSTREAMER_LIB_DEST}"
     LIBRARY DESTINATION "${GSTREAMER_LIB_DEST}"
     ARCHIVE DESTINATION "${GSTREAMER_LIB_DEST}"
-    CONFIGURATIONS Release)
+)
 
 # Install the entire gst-hailo/include directory and its contents
 install(DIRECTORY gst-hailo/include

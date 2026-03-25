@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -14,6 +14,55 @@
 #include <hailo/hailort.h>
 #include "common/utils.hpp"
 #include "hailo/expected.hpp"
+
+/** Socket-related includes */
+#if defined(_MSC_VER)
+// Windows socket headers
+#include <winsock2.h>  // SOCKET, closesocket, send, recv
+#include <Ws2tcpip.h>  // socklen_t, inet_pton, inet_ntop
+#include <afunix.h>    // sockaddr_un
+#else
+// UNIX socket headers
+#include <sys/time.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <sys/un.h>
+#endif
+
+/** Typedefs */
+
+// socket_t
+#ifndef socket_t
+#if defined(_MSC_VER)
+typedef SOCKET socket_t;
+#else
+typedef int socket_t;
+#endif
+#endif
+
+// timeval_t
+#ifndef timeval_t
+typedef struct timeval timeval_t;
+#endif
+
+/** Defines and Macros */
+
+// TODO: Fix this hack
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+#endif
+
+#if !defined(_MSC_VER) && !defined(INVALID_SOCKET)
+// Already defined in Windows
+#define INVALID_SOCKET (socket_t)(-1)
+#endif
+
+#if !defined(_MSC_VER) && !defined(SOCKET_ERROR)
+// Already defined in Windows
+#define SOCKET_ERROR (int)(-1)
+#endif
+
 
 namespace hailort
 {

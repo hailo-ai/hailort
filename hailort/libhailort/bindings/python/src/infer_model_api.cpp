@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -169,7 +169,7 @@ std::vector<size_t> InferModelInferStreamWrapper::shape() const
     auto format = m_infer_stream.format();
     hailo_nms_shape_t nms_shape; // if the format is non-NMS, this struct won't be used
 
-    if (HailoRTCommon::is_nms(format.order))
+    if (HailoRTCommon::is_non_chip_nms(format.order))
     {
         auto expected = m_infer_stream.get_nms_shape();
         VALIDATE_EXPECTED(expected);
@@ -192,6 +192,11 @@ bool InferModelInferStreamWrapper::is_nms() const
 void InferModelInferStreamWrapper::set_nms_score_threshold(float32_t threshold)
 {
     m_infer_stream.set_nms_score_threshold(threshold);
+}
+
+void InferModelInferStreamWrapper::set_nms_classes_filter_mask(const std::vector<bool> &classes_filter_mask)
+{
+    m_infer_stream.set_nms_classes_filter_mask(classes_filter_mask);
 }
 
 void InferModelInferStreamWrapper::set_nms_iou_threshold(float32_t threshold)
@@ -518,6 +523,7 @@ void InferModelInferStreamWrapper::bind(py::module &m)
         .def("format", &InferModelInferStreamWrapper::format)
         .def("is_nms", &InferModelInferStreamWrapper::is_nms)
         .def("set_nms_score_threshold", &InferModelInferStreamWrapper::set_nms_score_threshold)
+        .def("set_nms_classes_filter_mask", &InferModelInferStreamWrapper::set_nms_classes_filter_mask)
         .def("set_nms_iou_threshold", &InferModelInferStreamWrapper::set_nms_iou_threshold)
         .def("set_nms_max_proposals_per_class", &InferModelInferStreamWrapper::set_nms_max_proposals_per_class)
         .def("set_nms_max_proposals_total", &InferModelInferStreamWrapper::set_nms_max_proposals_total)

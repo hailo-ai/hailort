@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -161,7 +161,8 @@ Expected<Buffer> Speech2TextServer::handle_create_speech2text_request(const Memo
     if (!group_id.empty()) {
         params.group_id = group_id.c_str();
     }
-    TRY_AS_HRPC_STATUS(auto vdevice, m_vdevice_manager->create_shared_vdevice(params, DEFAULT_SPEECH2TEXT_CONNECTION_PORT), Speech2TextCreateSerializer);
+    TRY_AS_HRPC_STATUS(auto vdevice, m_vdevice_manager->create_vdevice_for_genai(params, DEFAULT_SPEECH2TEXT_CONNECTION_PORT),
+        Speech2TextCreateSerializer);
     LOGGER__GENAI_STATS_END("[create] create vdevice");
 
     LOGGER__GENAI_STATS_START("[create] transfer HEF");

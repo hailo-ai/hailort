@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the LGPL 2.1 license (https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt)
  *
  * This library is free software; you can redistribute it and/or
@@ -98,7 +98,7 @@ void HailoSendImpl::set_property(GObject *object, guint property_id, const GValu
     GST_DEBUG_OBJECT(m_element, "set_property");
 
     if ((object == nullptr) || (value == nullptr) || (pspec == nullptr)) {
-        g_error("set_property got null parameter!");
+        GST_ERROR("set_property got null parameter!");
         return;
     }
 
@@ -117,7 +117,7 @@ void HailoSendImpl::get_property(GObject *object, guint property_id, GValue *val
     GST_DEBUG_OBJECT(m_element, "get_property");
 
     if ((object == nullptr) || (value == nullptr) || (pspec == nullptr)) {
-        g_error("get_property got null parameter!");
+        GST_ERROR("get_property got null parameter!");
         return;
     }
 

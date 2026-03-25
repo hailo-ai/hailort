@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -31,7 +31,7 @@ public:
     GenAICommon() = delete;
 
     static Expected<std::shared_ptr<SessionWrapper>> create_session_wrapper(
-        const hailo_vdevice_params_t &vdevice_params, uint16_t connection_port);
+        std::shared_ptr<VDevice> vdevice, uint16_t connection_port);
 
 private:
     static hailo_status validate_genai_vdevice_params(const hailo_vdevice_params_t &vdevice_params);

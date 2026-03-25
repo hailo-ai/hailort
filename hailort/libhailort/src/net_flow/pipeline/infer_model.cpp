@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -44,7 +44,7 @@ size_t InferModelBase::InferStream::Impl::get_frame_size() const
 
 Expected<hailo_nms_shape_t> InferModelBase::InferStream::Impl::get_nms_shape() const
 {
-    CHECK_AS_EXPECTED(HailoRTCommon::is_nms(m_vstream_info.format.order), HAILO_INVALID_OPERATION,
+    CHECK_AS_EXPECTED(HailoRTCommon::is_non_chip_nms(m_vstream_info.format.order), HAILO_INVALID_OPERATION,
         "Output {} is not NMS", name());
     auto res = m_vstream_info.nms_shape;
     return res;
@@ -68,7 +68,7 @@ void InferModelBase::InferStream::Impl::set_format_order(hailo_format_order_t or
 
 bool InferModelBase::InferStream::Impl::is_nms() const
 {
-    return HailoRTCommon::is_nms(m_vstream_info.format.order);
+    return HailoRTCommon::is_non_chip_nms(m_vstream_info.format.order);
 }
 
 void InferModelBase::InferStream::Impl::set_nms_score_threshold(float32_t threshold)
@@ -79,6 +79,11 @@ void InferModelBase::InferStream::Impl::set_nms_score_threshold(float32_t thresh
 void InferModelBase::InferStream::Impl::set_nms_iou_threshold(float32_t threshold)
 {
     m_nms_iou_threshold = threshold;
+}
+
+void InferModel::InferStream::Impl::set_nms_classes_filter_mask(const std::vector<bool> &classes_filter_mask)
+{
+    m_nms_classes_filter_mask = classes_filter_mask;
 }
 
 void InferModelBase::InferStream::Impl::set_nms_max_proposals_per_class(uint32_t max_proposals_per_class)
@@ -122,6 +127,11 @@ uint32_t InferModelBase::InferStream::Impl::nms_max_proposals_total() const
 uint32_t InferModelBase::InferStream::Impl::nms_max_accumulated_mask_size() const
 {
     return m_nms_max_accumulated_mask_size;
+}
+
+const std::vector<bool> &InferModel::InferStream::Impl::nms_classes_filter_mask() const
+{
+    return m_nms_classes_filter_mask;
 }
 
 InferModelBase::InferStream::InferStream(std::shared_ptr<InferModelBase::InferStream::Impl> pimpl) : m_pimpl(pimpl)
@@ -183,6 +193,11 @@ void InferModelBase::InferStream::set_nms_iou_threshold(float32_t threshold)
     m_pimpl->set_nms_iou_threshold(threshold);
 }
 
+void InferModel::InferStream::set_nms_classes_filter_mask(const std::vector<bool> &classes_filter_mask)
+{
+    m_pimpl->set_nms_classes_filter_mask(classes_filter_mask);
+}
+
 void InferModelBase::InferStream::set_nms_max_proposals_per_class(uint32_t max_proposals_per_class)
 {
     m_pimpl->set_nms_max_proposals_per_class(max_proposals_per_class);
@@ -225,6 +240,7 @@ uint32_t InferModelBase::InferStream::nms_max_accumulated_mask_size() const
 
 Expected<std::shared_ptr<InferModelBase>> InferModelBase::create(VDevice &vdevice, Hef hef, const std::string &network_name)
 {
+    release_free_memory();
     TRY(auto inputs, create_infer_stream_inputs(hef, network_name));
     TRY(auto outputs, create_infer_stream_outputs(hef, network_name));
 
@@ -369,6 +385,7 @@ Expected<ConfiguredInferModel> InferModelBase::configure()
     CHECK_AS_EXPECTED(std::all_of(m_inputs.begin(), m_inputs.end(), [](const auto &input_pair) {
         return ((input_pair.second.m_pimpl->m_nms_score_threshold == INVALID_NMS_CONFIG) &&
                 (input_pair.second.m_pimpl->m_nms_iou_threshold == INVALID_NMS_CONFIG) &&
+                input_pair.second.m_pimpl->m_nms_classes_filter_mask.empty() &&
                 (input_pair.second.m_pimpl->m_nms_max_accumulated_mask_size == static_cast<uint32_t>(INVALID_NMS_CONFIG)) &&
                 (input_pair.second.m_pimpl->m_nms_max_proposals_per_class == static_cast<uint32_t>(INVALID_NMS_CONFIG)) &&
                 (input_pair.second.m_pimpl->m_nms_max_proposals_total == static_cast<uint32_t>(INVALID_NMS_CONFIG)));
@@ -382,6 +399,7 @@ Expected<ConfiguredInferModel> InferModelBase::configure()
 
         if ((output_pair.second.m_pimpl->m_nms_score_threshold == INVALID_NMS_CONFIG) &&
             (output_pair.second.m_pimpl->m_nms_iou_threshold == INVALID_NMS_CONFIG) &&
+            output_pair.second.m_pimpl->m_nms_classes_filter_mask.empty() &&
             (output_pair.second.m_pimpl->m_nms_max_accumulated_mask_size == static_cast<uint32_t>(INVALID_NMS_CONFIG)) &&
             (output_pair.second.m_pimpl->m_nms_max_proposals_per_class == static_cast<uint32_t>(INVALID_NMS_CONFIG)) &&
             (output_pair.second.m_pimpl->m_nms_max_proposals_total == static_cast<uint32_t>(INVALID_NMS_CONFIG))) {
@@ -393,6 +411,11 @@ Expected<ConfiguredInferModel> InferModelBase::configure()
         }
         if (output_pair.second.m_pimpl->m_nms_iou_threshold != INVALID_NMS_CONFIG) {
             auto status = network_groups.value()[0]->set_nms_iou_threshold(edge_name, output_pair.second.m_pimpl->m_nms_iou_threshold);
+            CHECK_SUCCESS_AS_EXPECTED(status);
+        }
+        if (!output_pair.second.m_pimpl->m_nms_classes_filter_mask.empty()) {
+            auto status = network_groups.value()[0]->set_nms_classes_filter_mask(edge_name,
+                output_pair.second.m_pimpl->m_nms_classes_filter_mask);
             CHECK_SUCCESS_AS_EXPECTED(status);
         }
         if (output_pair.second.m_pimpl->m_nms_max_proposals_per_class != static_cast<uint32_t>(INVALID_NMS_CONFIG)) {
@@ -851,11 +874,14 @@ hailo_status ConfiguredInferModelImpl::shutdown()
 {
     m_async_infer_runner->abort();
     std::unique_lock<std::mutex> lock(m_mutex);
-    m_cv.wait_for(lock, WAIT_FOR_ASYNC_IN_DTOR_TIMEOUT, [this] () -> bool {
+    auto was_successful = m_cv.wait_for(lock, WAIT_FOR_ASYNC_IN_DTOR_TIMEOUT, [this] () -> bool {
         return m_ongoing_parallel_transfers == 0;
     });
 
-    return deactivate();
+    auto status = deactivate();
+    CHECK(was_successful, HAILO_INTERNAL_FAILURE, "Failed to shutdown infer model!");
+
+    return status;
 }
 
 hailo_status ConfiguredInferModelImpl::update_cache_offset(int32_t offset_delta_entries)

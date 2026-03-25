@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -23,7 +23,6 @@ public:
     void add_channel(BoundaryChannelPtr channel);
 
     ChannelsBitmap bitmap() const;
-    bool should_measure_timestamp() const;
     Expected<BoundaryChannelPtr> get_by_id(vdma::ChannelId channel_id);
     Expected<BoundaryChannelPtr> get_by_name(const std::string &stream_name);
 

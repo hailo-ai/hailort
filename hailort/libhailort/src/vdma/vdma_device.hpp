@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -17,7 +17,6 @@
 #include "device_common/device_internal.hpp"
 #include "network_group/network_group_internal.hpp"
 #include "vdma/channel/interrupts_dispatcher.hpp"
-#include "vdma/channel/transfer_launcher.hpp"
 #include "vdma/driver/hailort_driver.hpp"
 #include "core_op/resource_manager/cache_manager.hpp"
 
@@ -57,7 +56,6 @@ public:
     }
 
     ExpectedRef<vdma::InterruptsDispatcher> get_vdma_interrupts_dispatcher();
-    ExpectedRef<vdma::TransferLauncher> get_vdma_transfer_launcher();
 
     virtual hailo_status dma_map(void *address, size_t size, hailo_dma_buffer_direction_t direction) override;
     virtual hailo_status dma_unmap(void *address, size_t size, hailo_dma_buffer_direction_t direction) override;
@@ -90,7 +88,6 @@ protected:
     // The vdma interrupts dispatcher contains a callback with a reference to the current activated network group
     // (reference to the ResourcesManager). Hence, it must be destroyed before the networks groups are destroyed.
     std::unique_ptr<vdma::InterruptsDispatcher> m_vdma_interrupts_dispatcher;
-    std::unique_ptr<vdma::TransferLauncher> m_vdma_transfer_launcher;
 
     ActiveCoreOpHolder m_active_core_op_holder;
     bool m_is_configured;

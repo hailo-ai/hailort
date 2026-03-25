@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -10,7 +10,6 @@
 #ifndef _HAILO_TRANSFER_COMMON_HPP_
 #define _HAILO_TRANSFER_COMMON_HPP_
 
-#include "hailo/stream.hpp"
 #include "hailo/buffer.hpp"
 
 #include "vdma/memory/mapped_buffer.hpp"
@@ -57,6 +56,15 @@ public:
     {
         CHECK(is_dmabuf(), HAILO_INTERNAL_FAILURE, "dmabuf_fd not supported for MEMORYVIEW");
         return Expected<int>(m_dmabuf.fd);
+    }
+
+    Expected<std::pair<TransferBuffer, TransferBuffer>> split(size_t at)
+    {
+        CHECK(is_memview(), HAILO_INTERNAL_FAILURE, "cannot split dmabuf");
+        CHECK((at > 0) && (at < m_size), HAILO_INTERNAL_FAILURE, "bad buffer split at {}", at);
+
+        return std::make_pair(
+            TransferBuffer(m_base_buffer, at, m_offset), TransferBuffer(m_base_buffer, m_size - at, (m_offset + at)));
     }
 
     size_t offset() const
@@ -124,13 +132,14 @@ private:
     size_t m_offset;
 };
 
+using TransferBuffers = std::vector<TransferBuffer>;
+
 // Internal function, wrapper to the user callbacks, accepts the callback status as an argument.
 using TransferDoneCallback = std::function<void(hailo_status)>;
 
 struct TransferRequest {
-    // Initialization dependency - callback must be before transfer_buffers to avoid race condition
     TransferDoneCallback callback = [](hailo_status) {};
-    std::vector<TransferBuffer> transfer_buffers;
+    TransferBuffers transfer_buffers;
 
     TransferRequest() = default;
 
@@ -138,7 +147,7 @@ struct TransferRequest {
         callback(callback_arg), transfer_buffers({ std::move(transfer_buffers_arg) })
     {}
 
-    TransferRequest(std::vector<TransferBuffer> &&transfer_buffers_arg, const TransferDoneCallback &callback_arg) :
+    TransferRequest(TransferBuffers &&transfer_buffers_arg, const TransferDoneCallback &callback_arg) :
         callback(callback_arg), transfer_buffers(std::move(transfer_buffers_arg))
     {}
 
@@ -148,13 +157,6 @@ struct TransferRequest {
             total_transfer_size += buffer.size();
         }
         return total_transfer_size;
-    }
-
-    Expected<bool> is_request_end_aligned() {
-        const auto dma_able_alignment = OsUtils::get_dma_able_alignment();
-        TRY(auto base_buffer, transfer_buffers[0].base_buffer());
-        const auto buffer_size = transfer_buffers[0].size();
-        return !((reinterpret_cast<uintptr_t>(base_buffer.data()) + buffer_size) % dma_able_alignment);
     }
 };
 

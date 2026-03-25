@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -68,6 +68,7 @@ enum class HailoRpcActionID {
     DEVICE__REMOVE_NOTIFICATION_CALLBACK,
     DEVICE__FETCH_LOGS,
     DEVICE__ECHO_BUFFER,
+    DEVICE__GET_CURRENT_LIMIT,
 
     NOTIFICATION,
 
@@ -507,8 +508,8 @@ struct QueryHealthStatsSerializer
 struct QueryPerformanceStatsSerializer
 {
     QueryPerformanceStatsSerializer() = delete;
-    static Expected<size_t> serialize_request(rpc_object_handle_t device_handle, MemoryView buffer);
-    static Expected<rpc_object_handle_t> deserialize_request(const MemoryView &serialized_request);
+    static Expected<size_t> serialize_request(rpc_object_handle_t device_handle, std::chrono::milliseconds sampling_period, MemoryView buffer);
+    static Expected<std::tuple<rpc_object_handle_t, std::chrono::milliseconds>> deserialize_request(const MemoryView &serialized_request);
     static Expected<Buffer> serialize_reply(const hailo_performance_stats_t &info = {});
     static Expected<hailo_performance_stats_t> deserialize_reply(const MemoryView &serialized_reply);
 };
@@ -606,6 +607,15 @@ struct EchoBufferSerializer
     static Expected<size_t> serialize_request(uint32_t buffer_size, MemoryView buffer);
     static Expected<uint32_t> deserialize_request(const MemoryView &serialized_request);
     static Expected<Buffer> serialize_reply();
+};
+
+struct GetCurrentLimitSerializer
+{
+    GetCurrentLimitSerializer() = delete;
+    static Expected<size_t> serialize_request(rpc_object_handle_t device_handle, MemoryView buffer);
+    static Expected<rpc_object_handle_t> deserialize_request(const MemoryView &serialized_request);
+    static Expected<Buffer> serialize_reply(const uint32_t current_limit_mA);
+    static Expected<uint32_t> deserialize_reply(const MemoryView &serialized_reply);
 };
 
 } /* namespace hailort */

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -54,6 +54,7 @@ public:
 
     static constexpr const char *DEVICE_ID = HailoRTDriver::INTEGRATED_NNC_DEVICE_ID;
     virtual Expected<bool> has_power_sensor() override;
+    virtual Expected<uint32_t> get_current_limit() override;
 
 protected:
     virtual hailo_status reset_impl(CONTROL_PROTOCOL__reset_type_t reset_type) override;
@@ -74,7 +75,6 @@ private:
     };
 #endif
 };
-
 
 } /* namespace hailort */
 

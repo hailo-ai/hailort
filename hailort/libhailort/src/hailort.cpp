@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -26,7 +26,7 @@
 #include "common/os_utils.hpp"
 
 #include "device_common/control.hpp"
-#include "vdma/pcie/pcie_device.hpp"
+#include "vdma/legacy_pcie/legacy_pcie_device.hpp"
 #include "utils/sensor_config_utils.hpp"
 #include "utils/hailort_logger.hpp"
 #include "utils/shared_resource_manager.hpp"
@@ -176,7 +176,7 @@ hailo_status hailo_scan_pcie_devices(
     CHECK_ARG_NOT_NULL(pcie_device_infos);
     CHECK_ARG_NOT_NULL(number_of_devices);
 
-    auto scan_results = PcieDevice::scan();
+    auto scan_results = LegacyPcieDevice::scan();
     CHECK_EXPECTED_AS_STATUS(scan_results);
 
     CHECK(scan_results->size() <= pcie_device_infos_length, HAILO_INSUFFICIENT_BUFFER,
@@ -241,6 +241,9 @@ hailo_status hailo_device_get_type_by_device_id(const hailo_device_id_t *device_
         break;
     case Device::Type::INTEGRATED:
         *device_type = HAILO_DEVICE_TYPE_INTEGRATED;
+        break;
+    case Device::Type::USB:
+        *device_type = HAILO_DEVICE_TYPE_USB;
         break;
     default:
         LOGGER__ERROR("Internal failure, invalid device type returned");
@@ -349,24 +352,6 @@ hailo_status hailo_reset_device(hailo_device device, hailo_reset_device_mode_t m
     return HAILO_SUCCESS;
 }
 
-hailo_status hailo_update_firmware(hailo_device device, void *firmware_buffer, uint32_t firmware_buffer_size)
-{
-    CHECK_ARG_NOT_NULL(device);
-    CHECK_ARG_NOT_NULL(firmware_buffer);
-    auto status = device->device->firmware_update(MemoryView(firmware_buffer, firmware_buffer_size), true);
-    CHECK_SUCCESS(status);
-    return HAILO_SUCCESS;
-}
-
-hailo_status hailo_update_second_stage(hailo_device device, void *second_stage_buffer, uint32_t second_stage_buffer_size)
-{
-    CHECK_ARG_NOT_NULL(device);
-    CHECK_ARG_NOT_NULL(second_stage_buffer);
-    auto status = device->device->second_stage_update(reinterpret_cast<uint8_t*>(second_stage_buffer), second_stage_buffer_size);
-    CHECK_SUCCESS(status);
-    return HAILO_SUCCESS;
-}
-
 hailo_status hailo_power_measurement(hailo_device device, hailo_dvm_options_t dvm,
     hailo_power_measurement_types_t measurement_type, float32_t *measurement)
 {
@@ -413,30 +398,6 @@ hailo_status hailo_stop_power_measurement(hailo_device device)
     return HAILO_SUCCESS;
 }
 
-hailo_status hailo_reset_sensor(hailo_device device, uint8_t section_index)
-{
-    CHECK_ARG_NOT_NULL(device);
-    auto status = device->device->sensor_reset(section_index);
-    CHECK_SUCCESS(status);
-    return HAILO_SUCCESS;
-}
-
-hailo_status hailo_set_sensor_i2c_bus_index(hailo_device device, hailo_sensor_types_t sensor_type, uint8_t bus_index)
-{
-    CHECK_ARG_NOT_NULL(device);
-    auto status = Control::sensor_set_i2c_bus_index(*device->device, sensor_type, bus_index);
-    CHECK_SUCCESS(status);
-    return HAILO_SUCCESS;
-}
-
-hailo_status hailo_load_and_start_sensor(hailo_device device, uint8_t section_index)
-{
-    CHECK_ARG_NOT_NULL(device);
-    auto status = device->device->sensor_load_and_start_config(section_index);
-    CHECK_SUCCESS(status);
-    return HAILO_SUCCESS;
-}
-
 hailo_status hailo_i2c_read(hailo_device device, const hailo_i2c_slave_config_t *slave_config, uint32_t register_address, uint8_t *data, uint32_t length)
 {
     CHECK_ARG_NOT_NULL(device);
@@ -453,44 +414,6 @@ hailo_status hailo_i2c_write(hailo_device device, const hailo_i2c_slave_config_t
     CHECK_ARG_NOT_NULL(slave_config);
     CHECK_ARG_NOT_NULL(data);
     auto status = Control::i2c_write(*device->device, slave_config, register_address, data, length);
-    CHECK_SUCCESS(status);
-    return HAILO_SUCCESS;
-}
-
-hailo_status hailo_dump_sensor_config(hailo_device device, uint8_t section_index, const char *config_file_path)
-{
-    CHECK_ARG_NOT_NULL(device);
-    CHECK_ARG_NOT_NULL(config_file_path);
-
-    auto status = device->device->sensor_dump_config(section_index, config_file_path);
-    CHECK_SUCCESS(status);
-    return HAILO_SUCCESS;
-}
-
-hailo_status hailo_store_sensor_config(hailo_device device, uint32_t section_index, hailo_sensor_types_t sensor_type,
-    uint32_t reset_config_size, uint16_t config_height, uint16_t config_width, uint16_t config_fps,
-    const char *config_file_path, const char *config_name)
-{   
-    CHECK_ARG_NOT_NULL(device);
-    CHECK_ARG_NOT_NULL(config_file_path);
-    CHECK_ARG_NOT_NULL(config_name);
-    
-    auto status = device->device->store_sensor_config(section_index, sensor_type, reset_config_size, config_height, config_width,
-        config_fps, config_file_path, config_name);
-    CHECK_SUCCESS(status);
-    return HAILO_SUCCESS;
-}
-
-hailo_status hailo_store_isp_config(hailo_device device, uint32_t reset_config_size, uint16_t config_height, uint16_t config_width,
-    uint16_t config_fps,  const char *isp_static_config_file_path, const char *isp_runtime_config_file_path, const char *config_name)
-{
-    CHECK_ARG_NOT_NULL(device);
-    CHECK_ARG_NOT_NULL(isp_static_config_file_path);
-    CHECK_ARG_NOT_NULL(isp_runtime_config_file_path);
-    CHECK_ARG_NOT_NULL(config_name);
-    
-    auto status = device->device->store_isp_config(reset_config_size, config_height, config_width,
-        config_fps, isp_static_config_file_path, isp_runtime_config_file_path, config_name);
     CHECK_SUCCESS(status);
     return HAILO_SUCCESS;
 }

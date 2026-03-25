@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -109,7 +109,7 @@ public:
         size_t number_of_contexts, const DescSizesParams &sg_desc_params, const DescSizesParams &ccb_desc_params,
         bool force_sg_type_buffer = false);
     static Expected<InternalBufferPlanning> create_sram_buffer_planning(
-        const std::map<EdgeLayerKey, EdgeLayerInfo> &edge_layer_infos, const DescSizesParams &continuous_desc_params);
+        const std::map<EdgeLayerKey, EdgeLayerInfo> &edge_layer_infos, const DescSizesParams &sram_desc_params);
     // Reporting functions
     static BufferPlanReport report_planning_info(const InternalBufferPlanning &buffer_planning);
 

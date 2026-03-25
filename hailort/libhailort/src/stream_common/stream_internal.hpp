@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -118,7 +118,7 @@ public:
     virtual hailo_status cancel_pending_transfers();
 
 protected:
-    explicit InputStreamBase(const LayerInfo &layer_info, EventPtr core_op_activated_event, hailo_status &status) :
+    explicit InputStreamBase(const LayerInfo &layer_info, EventPtr core_op_activated_event) :
         m_layer_info(layer_info),
         m_core_op_activated_event(std::move(core_op_activated_event))
     {
@@ -126,7 +126,6 @@ protected:
         assert(1 == stream_infos.size());
         m_stream_info = stream_infos[0];
         m_quant_infos = layer_info.quant_infos;
-        status = HAILO_SUCCESS;
     }
 
     LayerInfo m_layer_info;
@@ -190,14 +189,13 @@ public:
     virtual hailo_status cancel_pending_transfers();
 
 protected:
-    explicit OutputStreamBase(const LayerInfo &layer_info, EventPtr core_op_activated_event, hailo_status &status) :
+    explicit OutputStreamBase(const LayerInfo &layer_info, EventPtr core_op_activated_event) :
         m_layer_info(layer_info), m_core_op_activated_event(std::move(core_op_activated_event))
     {
         const auto &stream_infos = LayerInfoUtils::get_stream_infos_from_layer_info(layer_info);
         assert(1 == stream_infos.size());
         m_stream_info = stream_infos[0];
         m_quant_infos = m_layer_info.quant_infos;
-        status = HAILO_SUCCESS;
     }
 
     OutputStreamBase(const LayerInfo &layer_info, const hailo_stream_info_t &stream_info,

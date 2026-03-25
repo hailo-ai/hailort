@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -15,7 +15,6 @@
 namespace hailort
 {
 
-constexpr std::chrono::seconds TRANSFER_TIMEOUT(10);
 constexpr size_t MAX_BODY_SIZE(2048);
 constexpr size_t MAX_READ_TRANSFERS(2);
 
@@ -77,19 +76,19 @@ std::tuple<rpc_message_header_t, MemoryView> RpcConnection::parse_message(Buffer
     return std::make_tuple(header, MemoryView(buffer->data() + sizeof(rpc_message_header_t), header.size));
 }
 
-hailo_status RpcConnection::read_buffer(MemoryView buffer)
+hailo_status RpcConnection::read_buffer(MemoryView buffer, std::chrono::milliseconds timeout)
 {
-    return read_buffers({ TransferBuffer(buffer) });
+    return read_buffers({ TransferBuffer(buffer) }, timeout);
 }
 
-hailo_status RpcConnection::read_buffers(std::vector<TransferBuffer> &&buffers)
+hailo_status RpcConnection::read_buffers(std::vector<TransferBuffer> &&buffers, std::chrono::milliseconds timeout)
 {
     hailo_status transfer_status = HAILO_UNINITIALIZED;
 
     const size_t total_size = std::accumulate(buffers.begin(), buffers.end(), size_t{0},
         [] (size_t acc, const TransferBuffer &buffer) { return acc + buffer.size(); });
 
-    auto status = wait_for_read_buffer_async_ready(total_size, TRANSFER_TIMEOUT);
+    auto status = wait_for_read_buffer_async_ready(total_size, timeout);
     CHECK_SUCCESS(status);
 
     TransferRequest transfer_request;
@@ -110,7 +109,7 @@ hailo_status RpcConnection::read_buffers(std::vector<TransferBuffer> &&buffers)
     CHECK_SUCCESS(status);
 
     std::unique_lock<std::mutex> lock(m_read_mutex);
-    CHECK(m_read_cv.wait_for(lock, TRANSFER_TIMEOUT, [&] { return transfer_status != HAILO_UNINITIALIZED; }),
+    CHECK(m_read_cv.wait_for(lock, timeout, [&] { return transfer_status != HAILO_UNINITIALIZED; }),
         HAILO_TIMEOUT, "Timeout waiting for transfer completion");
 
     return transfer_status;
@@ -174,7 +173,11 @@ hailo_status RpcConnection::close()
     if (m_session != nullptr) {
         status = m_session->close();
         if (HAILO_SUCCESS != status) {
-            LOGGER__ERROR("Failed to close session, status = {}", status);
+            if (is_device_unreachable(status)) {
+                LOGGER__INFO("Session close skipped, device is not reachable (status {})", status);
+            } else {
+                LOGGER__ERROR("Failed to close session, status = {}", status);
+            }
         }
     }
 

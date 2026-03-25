@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -394,7 +394,7 @@ hailo_status send_loop(const inference_runner_params &params, SendObject &send_o
         }
         for (int j = 0; j < batch_size; j++) {
             if (params.measure_overall_latency) {
-                overall_latency_meter.add_start_sample(std::chrono::steady_clock::now().time_since_epoch());
+                overall_latency_meter.add_start_sample();
             }
 
             const size_t offset = (i % frames_in_buffer) * send_object.get_frame_size();
@@ -433,7 +433,7 @@ hailo_status recv_loop(const inference_runner_params &params, RecvObject &recv_o
             }
 
             if (params.measure_overall_latency) {
-                overall_latency_meter.add_end_sample(recv_object.name(), std::chrono::steady_clock::now().time_since_epoch());
+                overall_latency_meter.add_end_sample(recv_object.name());
             }
 
             if (show_progress && params.show_progress) {
@@ -475,7 +475,7 @@ Expected<std::map<std::string, std::vector<OutputVStream>>> create_output_vstrea
         // We don't cover a case of multiple outputs where only some of them are NMS (no such model currently), and anyway it is handled in run2
         TRY(const auto vstream_infos, configured_net_group.get_output_vstream_infos());
         auto nms_output = std::any_of(vstream_infos.begin(), vstream_infos.end(), [] (const hailo_vstream_info_t &output_info) {
-            return HailoRTCommon::is_nms(output_info);
+            return HailoRTCommon::is_non_chip_nms(output_info);
         });
         auto quantized = ((params.transform.format_type != HAILO_FORMAT_TYPE_FLOAT32) && !nms_output);
         TRY(auto output_vstreams_params, configured_net_group.make_output_vstream_params(quantized,

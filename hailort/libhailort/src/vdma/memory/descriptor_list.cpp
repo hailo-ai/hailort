@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -82,8 +82,7 @@ DescriptorList::DescriptorList(DescriptorList &&other) noexcept :
 }
 
 hailo_status DescriptorList::program(MappedBufferPtr buffer, size_t buffer_size,
-    size_t buffer_offset, ChannelId channel_id, uint32_t starting_desc, uint32_t batch_size /* = 1 */,
-    InterruptsDomain last_desc_interrupts /* = InterruptsDomain::NONE */)
+    size_t buffer_offset, ChannelId channel_id, uint32_t starting_desc, uint32_t batch_size /* = 1 */)
 {
     const auto desc_list_capacity = m_desc_page_size * count();
     CHECK(buffer_size <= desc_list_capacity, HAILO_INVALID_ARGUMENT,
@@ -91,7 +90,7 @@ hailo_status DescriptorList::program(MappedBufferPtr buffer, size_t buffer_size,
         buffer_size, desc_list_capacity);
 
     return m_driver.descriptors_list_program(m_desc_list_info.handle, buffer->handle(), buffer_offset, buffer_size,
-        batch_size, channel_id.channel_index, starting_desc, last_desc_interrupts);
+        batch_size, channel_id.channel_index, starting_desc);
 }
 
 uint32_t DescriptorList::descriptors_in_buffer(size_t buffer_size) const

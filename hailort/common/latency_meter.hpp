@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -43,8 +43,9 @@ public:
      * Adds the given timestamp as a start.
      * @note Assumes it is the only thread that is calling the function
      */
-    void add_start_sample(duration timestamp)
+    void add_start_sample()
     {
+        auto timestamp = std::chrono::system_clock::now().time_since_epoch();
         m_start_timestamps.push_back(timestamp);
         update_latency();
     }
@@ -53,11 +54,10 @@ public:
      * Adds the given timestamp as the end of the given channel. The operation is done
      * after this function is called on all channels.
      * @note Assumes that only one thread per channel is calling this function.
-     */  
-    void add_end_sample(const std::string &stream_name, duration timestamp)
+     */
+    void add_end_sample(const std::string &stream_name)
     {
-        // Safe to access from several threads (when each pass different channel) because the map cannot
-        // be changed in runtime.
+        auto timestamp = std::chrono::system_clock::now().time_since_epoch();
         assert(m_end_timestamps_per_channel.find(stream_name) != m_end_timestamps_per_channel.end());
         m_end_timestamps_per_channel.at(stream_name).push_back(timestamp);
         update_latency();
@@ -89,28 +89,26 @@ private:
         std::lock_guard<std::mutex> lock_guard(m_lock);
 
         if (m_start_timestamps.empty()) {
-            // wait for begin sample
             return;
         }
 
         duration end(0);
         for (auto &end_timesatmps : m_end_timestamps_per_channel) {
             if (end_timesatmps.second.empty()) {
-                // Wait for all channel samples
+                // Wait for all channel samples.
                 return;
             }
-
             end = std::max(end, end_timesatmps.second.front());
         }
 
         duration start = m_start_timestamps.front();
-        assert(start <= end);
+        if (start > end) {
+            return;
+        }
 
-        // calculate the latency
         m_latency_sum += (end - start);
         m_latency_count++;
 
-        // pop fronts
         m_start_timestamps.pop_front();
         for (auto &end_timesatmps : m_end_timestamps_per_channel) {
             end_timesatmps.second.pop_front();

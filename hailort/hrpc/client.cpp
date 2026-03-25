@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -24,6 +24,17 @@ inline static std::chrono::milliseconds get_request_timeout(const std::chrono::m
     return default_timeout;
 }
 
+Expected<std::shared_ptr<Client>> Client::created_connected(const std::string &device_id)
+{
+    auto client = make_shared_nothrow<Client>(device_id);
+    CHECK_NOT_NULL(client, HAILO_OUT_OF_HOST_MEMORY);
+
+    auto status = client->connect();
+    CHECK_SUCCESS_WITH_ACCEPTABLE_STATUS(HAILO_INVALID_FIRMWARE, status, "Failed to connect to server");
+
+    return client;
+}
+
 Client::~Client()
 {
     m_is_running = false;
@@ -35,15 +46,13 @@ Client::~Client()
     }
 }
 
-// TODO: Connect should be a static method that returns a client
-hailo_status Client::connect(bool is_localhost)
+hailo_status Client::connect()
 {
     m_callback_dispatcher_manager = make_shared_nothrow<ClientCallbackDispatcherManager>();
     CHECK_NOT_NULL(m_callback_dispatcher_manager, HAILO_OUT_OF_HOST_MEMORY);
 
-    m_device_id = is_localhost ? SERVER_ADDR_USE_UNIX_SOCKET : m_device_id;
     TRY(m_conn_context, ConnectionContext::create_client_shared(m_device_id));
-    TRY(auto conn, Session::connect(m_conn_context, HAILORT_SERVER_PORT));
+    TRY_WITH_ACCEPTABLE_STATUS(HAILO_INVALID_FIRMWARE, auto conn, Session::connect(m_conn_context, HAILORT_SERVER_PORT));
 
     // TODO: Use conn.max_ongoing_transfers() function (HRT-16534)
     TRY(m_pool_allocator, PoolAllocator::create_shared(PcieSession::MAX_ONGOING_TRANSFERS, REQUEST_PROTO_MAX_SIZE,
@@ -107,7 +116,7 @@ Expected<rpc_message_t> Client::execute_request(uint32_t action_id, const Memory
     std::chrono::milliseconds timeout)
 {
     auto status = wait_for_execute_request_ready(request, get_request_timeout(timeout));
-    CHECK_SUCCESS(status);
+    CHECK_SUCCESS_ACCEPT_DISCONNECT(status);
 
     std::mutex mutex;
     std::condition_variable cv;
@@ -120,8 +129,8 @@ Expected<rpc_message_t> Client::execute_request(uint32_t action_id, const Memory
         cv.notify_one();
     };
 
-    TRY_WITH_ACCEPTABLE_STATUS(HAILO_COMMUNICATION_CLOSED, auto message_id,
-        execute_request_async_impl(action_id, request, reply_received_callback, std::move(write_buffers), std::move(read_buffers)));
+    TRY_WITH_ACCEPTABLE_DISCONNECT(auto message_id, execute_request_async_impl(action_id, request,
+        reply_received_callback, std::move(write_buffers), std::move(read_buffers)));
 
     std::unique_lock<std::mutex> lock(mutex);
     auto wait_status = cv.wait_for(lock, get_request_timeout(timeout));
@@ -180,7 +189,7 @@ Expected<message_id_t> Client::execute_request_async_impl(uint32_t action_id, co
     if ((HAILO_SUCCESS != status) || (!m_is_running)) {
         (void)m_reply_data.pop(message_id);
     }
-    CHECK_SUCCESS(status);
+    CHECK_SUCCESS_ACCEPT_DISCONNECT(status);
 
     return message_id;
 }

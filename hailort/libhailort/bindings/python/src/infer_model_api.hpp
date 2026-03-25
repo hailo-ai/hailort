@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -170,6 +170,7 @@ public:
     hailo_format_t format() const;
     bool is_nms() const;
     void set_nms_score_threshold(float32_t threshold);
+    void set_nms_classes_filter_mask(const std::vector<bool> &classes_filter_mask);
     void set_nms_iou_threshold(float32_t threshold);
     void set_nms_max_proposals_per_class(uint32_t max_proposals_per_class);
     void set_nms_max_proposals_total(uint32_t max_proposals_total);

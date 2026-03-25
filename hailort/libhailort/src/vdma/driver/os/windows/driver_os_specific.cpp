@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -188,39 +188,21 @@ Expected<std::vector<std::string>> list_devices(GUID guid)
     return names;
 }
 
-Expected<std::vector<HailoRTDriver::DeviceInfo>> scan_devices(GUID guid)
+Expected<std::vector<DeviceInfo>> scan_devices_by_type(DeviceType device_type)
 {
-    TRY (auto names, list_devices(guid), "Failed listing hailo devices");
+    GUID guid = (device_type == DeviceType::INTEGRATED) ? GUID_DEVINTERFACE_HailoKM_NNC : GUID_DEVINTERFACE_HailoKM_SOC;
+    TRY(auto names, list_devices(guid), "Failed listing hailo devices");
 
-    std::vector<HailoRTDriver::DeviceInfo> devices_info;
+    std::vector<DeviceInfo> devices_info;
     for (const auto &name : names) {
-        auto device_info = query_device_info(name);
-        CHECK_EXPECTED(device_info, "Failed parsing device info for {}", name);
-        if (GUID_DEVINTERFACE_HailoKM_NNC == guid) {
-            device_info->accelerator_type = HailoRTDriver::AcceleratorType::NNC_ACCELERATOR;
-        } else if (GUID_DEVINTERFACE_HailoKM_SOC == guid) {
-            device_info->accelerator_type = HailoRTDriver::AcceleratorType::SOC_ACCELERATOR;
-        }
-        devices_info.push_back(device_info.release());
+        TRY(auto device_info, query_device(device_type, name), "Failed parsing device info for {}", name);
+        devices_info.push_back(device_info);
     }
 
     return devices_info;
 }
 
-Expected<std::vector<HailoRTDriver::DeviceInfo>> scan_soc_devices()
-{
-    GUID guid = GUID_DEVINTERFACE_HailoKM_SOC;
-    return scan_devices(guid);
-}
-
-Expected<std::vector<HailoRTDriver::DeviceInfo>> scan_nnc_devices()
-{
-    GUID guid = GUID_DEVINTERFACE_HailoKM_NNC;
-    return scan_devices(guid);
-}
-
-static Expected<uint32_t> parse_uint32_property(const std::wstring &dev_interface,
-    const DEVPROPKEY* key)
+static Expected<uint32_t> parse_uint32_property(const std::wstring &dev_interface, const DEVPROPKEY *key)
 {
     CDeviceInterfaceProperty prop(dev_interface.c_str(), key);
     uint32_t number = 0;
@@ -266,24 +248,22 @@ hailo_status convert_errno_to_hailo_status(int err, const char *ioctl_name) {
     }
 }
 
-#define DEVICE_ADDRESS_GET_FUNC(device_func) ((device_func) & 0xff)
-#define DEVICE_ADDRESS_GET_DEV(device_func) ((device_func) >> 16)
-
-Expected<HailoRTDriver::DeviceInfo> query_device_info(const std::string &device_name)
+static inline std::string device_get_bdf(uint32_t bus, uint32_t device_func)
 {
-    const auto device_name_wstring = StringConverter::ansi_to_utf16(device_name);
-    CHECK_EXPECTED(device_name_wstring);
+    return fmt::format("{:04x}:{:02x}:{:02x}.{}", 0, bus, ((device_func) >> 16), ((device_func) & 0xff));
+}
 
-    auto bus = parse_uint32_property(device_name_wstring.value(), &DEVPKEY_Device_BusNumber);
-    CHECK_EXPECTED(bus);
+Expected<DeviceInfo> query_device(DeviceType device_type, const std::string &device_name)
+{
+    TRY(const auto device_name_wstring, StringConverter::ansi_to_utf16(device_name));
+    TRY(const auto bus, parse_uint32_property(device_name_wstring, &DEVPKEY_Device_BusNumber));
+    TRY(const auto device_func, parse_uint32_property(device_name_wstring, &DEVPKEY_Device_Address));
 
-    auto device_func = parse_uint32_property(device_name_wstring.value(), &DEVPKEY_Device_Address);
-    CHECK_EXPECTED(device_func);
-
-    HailoRTDriver::DeviceInfo device_info{};
-    device_info.device_id = fmt::format("{:04x}:{:02x}:{:02x}.{}", 0, *bus, DEVICE_ADDRESS_GET_DEV(*device_func),
-        DEVICE_ADDRESS_GET_FUNC(*device_func));
+    DeviceInfo device_info{};
     device_info.dev_path = device_name;
+    device_info.device_id = device_get_bdf(bus, device_func);
+    device_info.device_type = device_type;
+
     return device_info;
 }
 
@@ -307,7 +287,6 @@ Expected<HailoRTDriver::DeviceInfo> query_device_info(const std::string &device_
 
 COMPATIBLE_PARAM_CAST(hailo_vdma_enable_channels_params, VdmaEnableChannels)
 COMPATIBLE_PARAM_CAST(hailo_vdma_disable_channels_params, VdmaDisableChannels)
-COMPATIBLE_PARAM_CAST(hailo_vdma_interrupts_read_timestamp_params, VdmaInterruptsReadTimestamps)
 COMPATIBLE_PARAM_CAST(hailo_vdma_interrupts_wait_params, VdmaInterruptsWait)
 COMPATIBLE_PARAM_CAST(hailo_vdma_buffer_sync_params, VdmaBufferSync)
 COMPATIBLE_PARAM_CAST(hailo_fw_control, FirmwareControl)
@@ -324,7 +303,6 @@ COMPATIBLE_PARAM_CAST(hailo_vdma_launch_transfer_params, LaunchTransfer)
 COMPATIBLE_PARAM_CAST(hailo_vdma_prepare_transfer_params, PrepareTransfer)
 COMPATIBLE_PARAM_CAST(hailo_soc_connect_params, ConnectParams)
 COMPATIBLE_PARAM_CAST(hailo_soc_close_params, SocCloseParams)
-COMPATIBLE_PARAM_CAST(hailo_pci_ep_listen_params, ListenParams)
 COMPATIBLE_PARAM_CAST(hailo_pci_ep_accept_params, AcceptParams)
 COMPATIBLE_PARAM_CAST(hailo_pci_ep_close_params, PciEpCloseParams)
 COMPATIBLE_PARAM_CAST(hailo_write_action_list_params, WriteActionListParams)

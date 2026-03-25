@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -54,10 +54,10 @@ struct DetectionBbox
         : m_class_id(class_id), m_bbox(bbox), m_bbox_with_mask{} {}
 
     DetectionBbox(const hailo_bbox_float32_t &bbox, uint16_t class_id, std::vector<float32_t> &&mask,
-        float32_t image_height, float32_t image_width, bool is_crop_optimization_on)
+        float32_t image_height, float32_t image_width)
         : m_class_id(class_id), m_coefficients(std::move(mask)), m_bbox(bbox),
             m_bbox_with_mask{{bbox.y_min, bbox.x_min, bbox.y_max, bbox.x_max}, bbox.score, class_id,
-                get_mask_size_in_bytes(static_cast<uint32_t>(image_height), static_cast<uint32_t>(image_width), is_crop_optimization_on), nullptr, 0}
+                get_mask_size_in_bytes(static_cast<uint32_t>(image_height), static_cast<uint32_t>(image_width)), nullptr, 0}
         {}
 
     DetectionBbox() : DetectionBbox(hailo_bbox_float32_t{
@@ -78,13 +78,9 @@ struct DetectionBbox
         return std::min(static_cast<uint32_t>(std::ceil(m_bbox.y_max * static_cast<float32_t>(image_height))), image_height);
     }
 
-    inline uint32_t get_bbox_height(uint32_t image_height, bool is_crop_optimization_on) const
+    inline uint32_t get_bbox_height(uint32_t image_height) const
     {
-        if (is_crop_optimization_on) {
-            return get_bbox_y_max(image_height) - get_bbox_y_min(image_height);
-        } else {
-            return static_cast<uint32_t>(std::ceil((m_bbox.y_max - m_bbox.y_min) * static_cast<float32_t>(image_height)));
-        }
+        return get_bbox_y_max(image_height) - get_bbox_y_min(image_height);
     }
 
     inline uint32_t get_bbox_x_min(uint32_t image_width) const
@@ -97,19 +93,15 @@ struct DetectionBbox
         return std::min(static_cast<uint32_t>(std::ceil(m_bbox.x_max * static_cast<float32_t>(image_width))), image_width);
     }
 
-    inline uint32_t get_bbox_width(uint32_t image_width, bool is_crop_optimization_on) const
+    inline uint32_t get_bbox_width(uint32_t image_width) const
     {
-        if (is_crop_optimization_on) {
-            return get_bbox_x_max(image_width) - get_bbox_x_min(image_width);
-        } else {
-            return static_cast<uint32_t>(std::ceil((m_bbox.x_max - m_bbox.x_min) * static_cast<float32_t>(image_width)));
-        }
+        return get_bbox_x_max(image_width) - get_bbox_x_min(image_width);
     }
 
-    inline size_t get_mask_size_in_bytes(uint32_t image_height, uint32_t image_width, bool is_crop_optimization_on) const
+    inline size_t get_mask_size_in_bytes(uint32_t image_height, uint32_t image_width) const
     {
-        auto box_height = get_bbox_height(image_height, is_crop_optimization_on);
-        auto box_width = get_bbox_width(image_width, is_crop_optimization_on);
+        auto box_height = get_bbox_height(image_height);
+        auto box_width = get_bbox_width(image_width);
         auto mask_size = box_width * box_height;
 
         return mask_size;

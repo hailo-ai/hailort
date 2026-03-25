@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -35,8 +35,7 @@ public:
     InterruptsDispatcher(InterruptsDispatcher &&) = delete;
     InterruptsDispatcher &operator=(InterruptsDispatcher &&) = delete;
 
-    hailo_status start(const ChannelsBitmap &channels_bitmap, bool enable_timestamp_measure,
-        const ProcessIrqCallback &process_irq);
+    hailo_status start(const ChannelsBitmap &channels_bitmap, const ProcessIrqCallback &process_irq);
     hailo_status start(const ChannelsGroup &channels_group);
     hailo_status stop();
 

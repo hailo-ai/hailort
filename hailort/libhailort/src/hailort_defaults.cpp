@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -112,16 +112,6 @@ hailo_format_type_t HailoRTDefaults::get_default_nms_format_type(hailo_format_or
     default:
         return HAILO_FORMAT_TYPE_FLOAT32; // For all other NMS formats, the data is float32s
     }
-}
-
-struct sockaddr_in HailoRTDefaults::get_sockaddr()
-{
-    struct sockaddr_in address{};
-    address.sin_family = AF_INET;
-    address.sin_port = 0;
-    address.sin_addr.s_addr = INADDR_ANY;
-    // sin_zero is already zeroed
-    return address;
 }
 
 hailo_format_t HailoRTDefaults::get_user_buffer_format()

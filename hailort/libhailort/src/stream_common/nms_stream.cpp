@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -330,14 +330,12 @@ Expected<std::shared_ptr<NmsOutputStream>> NmsOutputStream::create(std::shared_p
     const LayerInfo &edge_layer, size_t max_queue_size, EventPtr core_op_activated_event,
     hailo_stream_interface_t stream_interface)
 {
-    auto status = HAILO_UNINITIALIZED;
     auto nms_stream = make_shared_nothrow<NmsOutputStream>(base_stream, edge_layer, max_queue_size,
-        std::move(core_op_activated_event), stream_interface, status);
+        std::move(core_op_activated_event), stream_interface);
     CHECK_NOT_NULL_AS_EXPECTED(nms_stream, HAILO_OUT_OF_HOST_MEMORY);
-    CHECK_SUCCESS_AS_EXPECTED(status);
 
     // On nms stream, we always want that the underline stream will own the buffers the read operations.
-    status = base_stream->set_buffer_mode(StreamBufferMode::OWNING);
+    auto status = base_stream->set_buffer_mode(StreamBufferMode::OWNING);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     return nms_stream;

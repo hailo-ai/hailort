@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -188,40 +188,6 @@ void DeviceWrapper::reset(hailo_reset_device_mode_t mode)
     VALIDATE_STATUS(status);
 }
 
-hailo_fw_user_config_information_t DeviceWrapper::examine_user_config()
-{
-    auto user_config_info = device().examine_user_config();
-    VALIDATE_EXPECTED(user_config_info);
-
-    return user_config_info.release();
-}
-
-py::bytes DeviceWrapper::read_user_config()
-{
-    auto config_buffer = device().read_user_config();
-    VALIDATE_EXPECTED(config_buffer);
-
-    std::unique_ptr<std::string> response = std::make_unique<std::string>(
-        const_cast<char*>(reinterpret_cast<const char*>(config_buffer->data())), config_buffer->size());
-    VALIDATE_NOT_NULL(response, HAILO_OUT_OF_HOST_MEMORY);
-
-    return *response;
-}
-
-void DeviceWrapper::write_user_config(py::bytes data)
-{
-    std::string data_str(data); 
-    MemoryView data_view = MemoryView::create_const(data_str.c_str(), data_str.size());
-    auto status = device().write_user_config(data_view);
-    VALIDATE_STATUS(status);
-}
-
-void DeviceWrapper::erase_user_config()
-{
-    auto status = device().erase_user_config();
-    VALIDATE_STATUS(status);
-}
-
 py::bytes DeviceWrapper::read_board_config()
 {
     auto config_buffer = device().read_board_config();
@@ -258,74 +224,6 @@ hailo_health_info_t DeviceWrapper::get_health_information()
     return health_info.release();
 }
 
-void DeviceWrapper::sensor_store_config(uint32_t section_index, uint32_t reset_data_size, uint32_t sensor_type, const std::string &config_file_path,
-    uint16_t config_height, uint16_t config_width, uint16_t config_fps, const std::string &config_name)
-{
-    auto status = device().store_sensor_config(section_index, static_cast<hailo_sensor_types_t>(sensor_type), reset_data_size,
-        config_height, config_width, config_fps, config_file_path, config_name);
-    VALIDATE_STATUS(status);
-}
-
-void DeviceWrapper::store_isp_config(uint32_t reset_config_size, uint16_t config_height, uint16_t config_width, uint16_t config_fps,
-    const std::string &isp_static_config_file_path, const std::string &isp_runtime_config_file_path, const std::string &config_name)
-{
-    auto status = device().store_isp_config(reset_config_size, config_height, config_width, config_fps,
-        isp_static_config_file_path, isp_runtime_config_file_path, config_name);
-    VALIDATE_STATUS(status);
-}
-
-py::bytes DeviceWrapper::sensor_get_sections_info()
-{
-    auto buffer = device().sensor_get_sections_info();
-    VALIDATE_EXPECTED(buffer);
-    
-    std::unique_ptr<std::string> response = std::make_unique<std::string>(
-        const_cast<char*>(reinterpret_cast<const char*>(buffer->data())), buffer->size());
-    VALIDATE_NOT_NULL(response, HAILO_OUT_OF_HOST_MEMORY);
-
-    return *response;
-}
-
-void DeviceWrapper::sensor_set_i2c_bus_index(uint32_t sensor_type, uint32_t bus_index)
-{
-    hailo_status status = device().sensor_set_i2c_bus_index(static_cast<hailo_sensor_types_t>(sensor_type), bus_index);
-    VALIDATE_STATUS(status);
-}
-
-void DeviceWrapper::sensor_load_and_start_config(uint32_t section_index)
-{
-    auto status = device().sensor_load_and_start_config(section_index);
-    VALIDATE_STATUS(status);
-}
-
-void DeviceWrapper::sensor_reset(uint32_t section_index)
-{
-    auto status = device().sensor_reset(section_index);
-    VALIDATE_STATUS(status);
-}
-
-void DeviceWrapper::sensor_set_generic_i2c_slave(uint16_t slave_address,
-    uint8_t register_address_size, uint8_t bus_index, uint8_t should_hold_bus, uint8_t endianness)
-{
-    auto status = device().sensor_set_generic_i2c_slave(slave_address, register_address_size,
-        bus_index, should_hold_bus, endianness);
-    VALIDATE_STATUS(status);
-}
-
-void DeviceWrapper::firmware_update(py::bytes fw_bin, uint32_t fw_bin_length, bool should_reset)
-{
-    auto status = device().firmware_update(MemoryView::create_const(std::string(fw_bin).c_str(), fw_bin_length),
-        should_reset);
-    VALIDATE_STATUS(status);
-}
-
-void DeviceWrapper::second_stage_update(py::bytes second_stage_bin, uint32_t second_stage_bin_length)
-{
-    auto status = device().second_stage_update((uint8_t *)std::string(second_stage_bin).c_str(), 
-        second_stage_bin_length);
-    VALIDATE_STATUS(status);
-}
-
 void DeviceWrapper::set_pause_frames(bool rx_pause_frames_enable)
 {
     auto status = device().set_pause_frames(rx_pause_frames_enable);
@@ -359,11 +257,26 @@ uint32_t DeviceWrapper::previous_system_state(hailo_cpu_id_t cpu_id)
 }
 
 hailo_chip_temperature_info_t DeviceWrapper::get_chip_temperature()
-{   
+{
     auto temp_info = device().get_chip_temperature();
     VALIDATE_EXPECTED(temp_info);
 
     return temp_info.release();
+}
+
+hailo_performance_stats_t DeviceWrapper::query_performance_stats(uint32_t sampling_period_ms)
+{
+    auto perf_stats = device().query_performance_stats(std::chrono::milliseconds(sampling_period_ms));
+    VALIDATE_EXPECTED(perf_stats);
+    return perf_stats.release();
+}
+
+uint32_t DeviceWrapper::get_current_limit()
+{
+    auto current_limit = device().get_current_limit();
+    VALIDATE_EXPECTED(current_limit);
+
+    return current_limit.release();
 }
 
 void DeviceWrapper::set_notification_callback(const std::function<void(uintptr_t, const hailo_notification_t&, py::object)> &callback,
@@ -420,29 +333,18 @@ void DeviceWrapper::bind(py::module &m)
     .def("stop_power_measurement", &DeviceWrapper::stop_power_measurement)
     .def("set_power_measurement", &DeviceWrapper::set_power_measurement)
     .def("get_power_measurement", &DeviceWrapper::get_power_measurement)
-    .def("firmware_update", &DeviceWrapper::firmware_update)
-    .def("second_stage_update", &DeviceWrapper::second_stage_update)
-    .def("examine_user_config", &DeviceWrapper::examine_user_config)
-    .def("read_user_config", &DeviceWrapper::read_user_config)
-    .def("write_user_config", &DeviceWrapper::write_user_config)
-    .def("erase_user_config", &DeviceWrapper::erase_user_config)
     .def("read_board_config", &DeviceWrapper::read_board_config)
     .def("write_board_config", &DeviceWrapper::write_board_config)
     .def("i2c_write", &DeviceWrapper::i2c_write)
     .def("i2c_read", &DeviceWrapper::i2c_read)
-    .def("sensor_store_config", &DeviceWrapper::sensor_store_config)
-    .def("store_isp_config", &DeviceWrapper::store_isp_config)
-    .def("sensor_set_i2c_bus_index", &DeviceWrapper::sensor_set_i2c_bus_index)
-    .def("sensor_load_and_start_config", &DeviceWrapper::sensor_load_and_start_config)
-    .def("sensor_reset", &DeviceWrapper::sensor_reset)
-    .def("sensor_set_generic_i2c_slave", &DeviceWrapper::sensor_set_generic_i2c_slave)
-    .def("sensor_get_sections_info", &DeviceWrapper::sensor_get_sections_info)
     .def("reset", &DeviceWrapper::reset)
     .def("wd_enable", &DeviceWrapper::wd_enable)
     .def("wd_disable", &DeviceWrapper::wd_disable)
     .def("wd_config", &DeviceWrapper::wd_config)
     .def("previous_system_state", &DeviceWrapper::previous_system_state)
     .def("get_chip_temperature", &DeviceWrapper::get_chip_temperature)
+    .def("query_performance_stats", &DeviceWrapper::query_performance_stats, py::arg("sampling_period_ms") = 100)
+    .def("get_current_limit", &DeviceWrapper::get_current_limit)
     .def("get_extended_device_information", &DeviceWrapper::get_extended_device_information)
     .def("set_pause_frames", &DeviceWrapper::set_pause_frames)
     .def("test_chip_memories", &DeviceWrapper::test_chip_memories)

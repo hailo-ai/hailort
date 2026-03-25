@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -37,8 +37,8 @@ public:
         EventPtr core_op_activated_event);
 
     VdmaInputStream(VdmaDevice &device, vdma::BoundaryChannelPtr channel, const LayerInfo &edge_layer,
-                    EventPtr core_op_activated_event, hailo_stream_interface_t stream_interface,
-                    BounceBufferQueuePtr &&bounce_buffers_pool, hailo_status &status);
+        EventPtr core_op_activated_event, hailo_stream_interface_t stream_interface,
+        BounceBufferQueuePtr &&bounce_buffers_pool);
     virtual ~VdmaInputStream();
 
     virtual hailo_stream_interface_t get_interface() const override;
@@ -74,8 +74,7 @@ public:
         EventPtr core_op_activated_event);
 
     VdmaOutputStream(VdmaDevice &device, vdma::BoundaryChannelPtr channel, const LayerInfo &edge_layer,
-                     EventPtr core_op_activated_event, hailo_stream_interface_t interface,
-                     hailo_status &status);
+        EventPtr core_op_activated_event, hailo_stream_interface_t interface);
     virtual ~VdmaOutputStream();
 
     virtual hailo_stream_interface_t get_interface() const override;
@@ -100,7 +99,6 @@ private:
     static void default_d2h_callback(hailo_status) {};
     static uint32_t get_transfer_size(const hailo_stream_info_t &stream_info, const LayerInfo &layer_info);
     Expected<TransferRequest> align_transfer_request(TransferRequest &&transfer_request);
-    Expected<TransferRequest> align_transfer_request_only_end(TransferRequest &&transfer_request);
 
     VdmaDevice &m_device;
     vdma::BoundaryChannelPtr m_channel;

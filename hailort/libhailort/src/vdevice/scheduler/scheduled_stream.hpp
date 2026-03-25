@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -44,9 +44,8 @@ public:
         const scheduler_core_op_handle_t &core_op_handle,
         EventPtr &&core_op_activated_event,
         const LayerInfo &layer_info,
-        std::shared_ptr<InferRequestAccumulator> &&infer_requests_accumulator,
-        hailo_status &status) :
-            AsyncInputStreamBase(layer_info, std::move(core_op_activated_event), status),
+        std::shared_ptr<InferRequestAccumulator> &&infer_requests_accumulator) :
+            AsyncInputStreamBase(layer_info, std::move(core_op_activated_event)),
             m_vdevice(vdevice),
             m_streams(std::move(streams)),
             m_core_op_handle(core_op_handle),
@@ -88,9 +87,8 @@ public:
         const scheduler_core_op_handle_t &core_op_handle,
         const LayerInfo &layer_info,
         EventPtr &&core_op_activated_event,
-        std::shared_ptr<InferRequestAccumulator> &&infer_requests_accumulator,
-        hailo_status &status) :
-            AsyncOutputStreamBase(layer_info, std::move(core_op_activated_event), status),
+        std::shared_ptr<InferRequestAccumulator> &&infer_requests_accumulator) :
+            AsyncOutputStreamBase(layer_info, std::move(core_op_activated_event)),
             m_vdevice(vdevice),
             m_streams(std::move(streams)),
             m_core_op_handle(core_op_handle),

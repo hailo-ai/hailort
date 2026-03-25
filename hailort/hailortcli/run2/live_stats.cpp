@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -12,7 +12,6 @@
 #include "common/os_utils.hpp"
 #include "common/utils.hpp"
 #include <nlohmann/json.hpp>
-#include <sstream>
 #include <iostream>
 
 using namespace hailort;
@@ -26,12 +25,9 @@ hailo_status LiveStats::Track::start()
     return HAILO_SUCCESS;
 }
 
-uint32_t LiveStats::Track::push_text(std::stringstream &ss)
+std::string LiveStats::Track::get_text() const
 {
-    if (!m_started) {
-        return 0;
-    }
-    return push_text_impl(ss);
+    return m_started ? get_text_impl() : "";
 }
 
 void LiveStats::Track::push_json(nlohmann::ordered_json &json)
@@ -56,7 +52,7 @@ LiveStats::LiveStats(std::chrono::milliseconds interval, bool should_print) :
     m_stop_event(),
     m_tracks(),
     m_mutex(),
-    m_prev_count(0),
+    m_prev_line_count(0),
     m_enable_ansi_escape_sequences(CursorAdjustment())
 {
     auto event_exp = Event::create_shared(Event::State::not_signalled);
@@ -78,26 +74,33 @@ void LiveStats::add(std::shared_ptr<Track> track, uint8_t level)
 
 void LiveStats::measure_and_print()
 {
-    std::stringstream ss;
-    uint32_t count = 0;
+    measure();
+    if (m_should_print) {
+        print_measurements();
+    }
+}
 
-    {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        for (auto &level_pair : m_tracks) {
-            for (auto &track : level_pair.second) {
-                count += track->push_text(ss); // The push_text method indirectly calls measuring
-            }
+void LiveStats::measure()
+{
+    for (auto &level_pair : m_tracks) {
+        for (auto &track : level_pair.second) {
+            track->measure();
         }
     }
-    // The m_should_print boolean covers only this code because
-    // the other code in this function - the tracks logic - does the actual measurmenets
-    // TODO: separate print from LiveStats - currently it does measurements AND prints (HRT-18254)
-    if (m_should_print) {
-        // On the first print m_prev_count = 0, so no lines will be deleted
-        CliCommon::reset_cursor(m_prev_count);
-        std::cout << ss.str() << std::flush;
+}
+
+void LiveStats::print_measurements()
+{
+    std::string s;
+    for (const auto &[key, level_tracks] : m_tracks) {
+        for (const auto &track : level_tracks) {
+            s += track->get_text();
+        }
     }
-    m_prev_count = count;
+    // On the first print m_prev_count = 0, so no lines will be deleted
+    CliCommon::reset_cursor(m_prev_line_count);
+    std::cout << s << std::flush;
+    m_prev_line_count = std::count(s.begin(), s.end(), '\n');
 }
 
 hailo_status LiveStats::dump_stats(const std::string &json_path, const std::string &inference_mode)

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -765,7 +765,7 @@ Expected<std::vector<std::shared_ptr<NetworkRunner>>> Run2::init_and_run_net_run
             CHECK_AS_EXPECTED(!user_requested_temperature_measurement() || supported_features.temperature_measurements,
                 HAILO_INVALID_OPERATION, "Temperature measurement not supported. Disable the measure-temp option");
 
-            TRY(auto measurement_live_track, MeasurementLiveTrack::create_shared(device.get(),
+            TRY(auto measurement_live_track, MeasurementLiveTrack::create_shared(device.get().get_dev_id(),
                 user_requested_power_measurement(), user_requested_current_measurement(),
                 user_requested_temperature_measurement()));
 

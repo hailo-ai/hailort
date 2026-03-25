@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -751,7 +751,8 @@ class ActivateDdrOutputChannelAction : public ContextSwitchConfigAction
 public:
     static Expected<ContextSwitchConfigActionPtr> create(const vdma::ChannelId &channel_id,
         uint8_t stream_index, const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
-        const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info, uint32_t buffered_rows_count);
+        const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info, uint32_t buffered_rows_count,
+        const vdma::ChannelId &connected_h2d_channel_id);
 
     virtual bool supports_repeated_block() const override;
     virtual Expected<Buffer> serialize_params(const ContextResources &context_resources) const override;
@@ -759,13 +760,15 @@ public:
 private:
     ActivateDdrOutputChannelAction(const vdma::ChannelId &channel_id,
         uint8_t stream_index, const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
-        const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info, uint32_t buffered_rows_count);
+        const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info, uint32_t buffered_rows_count,
+        const vdma::ChannelId &connected_h2d_channel_id);
 
     const vdma::ChannelId m_channel_id;
     const uint8_t m_stream_index;
     const CONTROL_PROTOCOL__nn_stream_config_t m_nn_stream_config;
     const CONTROL_PROTOCOL__host_buffer_info_t m_host_buffer_info;
     const uint32_t m_buffered_rows_count;
+    const vdma::ChannelId m_connected_h2d_channel_id;
 };
 
 class ActivateCacheInputChannelAction : public ContextSwitchConfigAction

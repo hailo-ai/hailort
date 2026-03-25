@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -55,18 +55,18 @@ Expected<CopiedConfigBuffer> CopiedConfigBuffer::create(HailoRTDriver &driver, v
     return CopiedConfigBuffer(std::move(buffer_ptr), channel_id, buffer_size);
 }
 
-Expected<std::unique_ptr<vdma::VdmaEdgeLayer>> CopiedConfigBuffer::create_buffer(HailoRTDriver &driver, vdma::ChannelId channel_id,
-    const std::vector<uint32_t> &bursts_sizes, const uint32_t buffer_size)
+Expected<std::unique_ptr<vdma::VdmaEdgeLayer>> CopiedConfigBuffer::create_buffer(HailoRTDriver &driver,
+    vdma::ChannelId channel_id, const std::vector<uint32_t> &bursts_sizes, const uint32_t buffer_size)
 {
-    auto buffer_ptr = should_use_ccb(driver.dma_type()) ?
-        create_ccb_buffer(driver, buffer_size) :
-        create_sg_buffer(driver, channel_id, bursts_sizes);
-    if (should_use_ccb(driver.dma_type()) && (HAILO_OUT_OF_HOST_CMA_MEMORY == buffer_ptr.status())) {
-        /* Try to use sg buffer instead */
-        return create_sg_buffer(driver, channel_id, bursts_sizes);
-    } else {
-        return buffer_ptr;
+    if (should_use_ccb(driver.dma_type())) {
+        auto edge_layer_exp = create_ccb_buffer(driver, buffer_size);
+        if (HAILO_RESOURCE_EXHAUSTED != edge_layer_exp.status()) {
+            return edge_layer_exp;
+        }
+        // Fallback to SG buffer if there is not enough contiguous-memory for CCB.
     }
+
+    return create_sg_buffer(driver, channel_id, bursts_sizes);
 }
 
 Expected<vdma::BufferSizesRequirements> CopiedConfigBuffer::get_buffer_requirements(const ConfigBufferInfo &config_buffer_info,
@@ -180,7 +180,7 @@ Expected<std::unique_ptr<vdma::VdmaEdgeLayer>> CopiedConfigBuffer::create_ccb_bu
 {
     TRY(const auto requirements, get_ccb_buffer_requirements(buffer_size, driver.get_continuous_desc_params()));
 
-    TRY_WITH_ACCEPTABLE_STATUS(HAILO_OUT_OF_HOST_CMA_MEMORY, auto buffer,
+    TRY_WITH_ACCEPTABLE_STATUS(HAILO_RESOURCE_EXHAUSTED, auto buffer,
         vdma::CmaBuffer::create(requirements.buffer_size(), driver));
 
     auto buffer_ptr = make_shared_nothrow<vdma::CmaBuffer>(std::move(buffer));

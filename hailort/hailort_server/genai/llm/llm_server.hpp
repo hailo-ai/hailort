@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -32,6 +32,7 @@
 #include "hailort_server.hpp"
 
 #include "nlohmann/json.hpp"
+#include <optional>
 #include <queue>
 #include <future>
 
@@ -75,6 +76,8 @@ public:
     Expected<Buffer> handle_get_stop_tokens_request(const MemoryView &request);
     Expected<Buffer> handle_get_context_usage_size(const MemoryView &request);
     Expected<Buffer> handle_get_max_context_capacity(const MemoryView &request);
+    Expected<Buffer> handle_acquire_kv_cache_request(const MemoryView &request);
+    Expected<Buffer> handle_check_hef_exists_request(const MemoryView &request);
 
 protected:
     Expected<std::pair<int, LLMGeneratorCompletion::Status>> generate_next_token_on_demand(const std::vector<int> &tokens,
@@ -235,6 +238,8 @@ protected:
 
     InputLayersNamesSuffixes m_input_layers_names_suffixes;
     PreProcessParams m_pre_process_params;
+
+    std::optional<KvCacheGuard> m_kv_cache_guard;
 };
 
 class LLMServerManager : public GenAIServerManager

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -105,7 +105,7 @@ public:
             /**
              * Sets the edge's buffer to a new one, of type hailo_pix_buffer_t.
              *
-             * Each plane in the \ref hailo_pix_buffer_t must feet the requirements listed in \ref set_buffer.
+             * Each plane in the \ref hailo_pix_buffer_t must fit the requirements listed in \ref set_buffer.
              *
              * @param[in] pix_buffer      The new buffer to be set.
              * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
@@ -496,6 +496,13 @@ public:
          * @param[in] threshold        NMS score threshold to set.
          */
         void set_nms_score_threshold(float32_t threshold);
+
+        /**
+         * Set NMS classes filter mask, used for filtering out classes.
+         *
+         * @param[in] classes_filter_mask        NMS classes filter mask to set.
+         */
+        void set_nms_classes_filter_mask(const std::vector<bool> &classes_filter_mask);
 
         /**
          * Set NMS intersection over union overlap Threshold,

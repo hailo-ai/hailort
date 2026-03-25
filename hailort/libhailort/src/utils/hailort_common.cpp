@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -9,6 +9,7 @@
 
 #include "hailo/hailort_common.hpp"
 #include "common/utils.hpp"
+#include "common/internal_env_vars.hpp"
 
 namespace hailort
 {
@@ -63,7 +64,9 @@ Expected<std::vector<hailo_device_id_t>> HailoRTCommon::to_device_ids_vector(con
 uint32_t HailoRTCommon::get_nms_host_frame_size(const hailo_nms_shape_t &nms_shape, const hailo_format_t &format)
 {
     double frame_size = 0;
-    if (HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK == format.order) {
+    if (IS_PP_DISABLED() && HailoRTCommon::is_nms_on_chip(format.order)) {
+        return nms_shape.max_accumulated_mask_size;
+    } else if (HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK == format.order) {
         frame_size = get_nms_with_byte_mask_host_frame_size(nms_shape);
     } else if (HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE == format.order) {
         frame_size = get_nms_by_score_host_frame_size(nms_shape);

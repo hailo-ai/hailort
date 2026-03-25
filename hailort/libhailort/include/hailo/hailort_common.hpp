@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -89,6 +89,19 @@ public:
         // Counter + bboxes
         const uint32_t size_per_class = 1 + (BBOX_PARAMS * max_bboxes_per_class);
         return size_per_class * nms_shape.number_of_classes;
+    }
+
+    /**
+     * Rounds an integer value down to the next multiple of a specified size.
+     *
+     * @param[in] num             Original number.
+     * @param[in] alignment       Returned number should be aligned to this parameter.
+     * @return aligned number
+     */
+    template<typename T, typename U>
+    static constexpr T align_down(T num, U alignment) {
+        auto remainder = num % alignment;
+        return num - remainder;
     }
 
     /**
@@ -481,7 +494,7 @@ public:
             format.order = vstream_info.format.order;
         }
 
-        if (HailoRTCommon::is_nms(vstream_info)) {
+        if (HailoRTCommon::is_nms(vstream_info.format.order)) {
             return get_nms_host_frame_size(vstream_info.nms_shape, format);
         } else {
             return get_frame_size(vstream_info.shape, format);
@@ -506,17 +519,22 @@ public:
         return (HAILO_STREAM_INTERFACE_PCIE == stream_interface) || (HAILO_STREAM_INTERFACE_INTEGRATED == stream_interface);
     }
 
-    static constexpr bool is_nms(const hailo_vstream_info_t &vstream_info)
+    static constexpr bool is_non_chip_nms(const hailo_vstream_info_t &vstream_info)
     {
-        return is_nms(vstream_info.format.order);
+        return is_non_chip_nms(vstream_info.format.order);
     }
 
-    static constexpr bool is_nms(const hailo_stream_info_t &stream_info)
+    static constexpr bool is_non_chip_nms(const hailo_stream_info_t &stream_info)
     {
-        return is_nms(stream_info.format.order);
+        return is_non_chip_nms(stream_info.format.order);
     }
 
     static constexpr bool is_nms(const hailo_format_order_t &order)
+    {
+        return (is_non_chip_nms(order) || is_nms_on_chip(order));
+    }
+
+    static constexpr bool is_non_chip_nms(const hailo_format_order_t &order)
     {
         return (is_nms_by_class(order) || is_nms_by_score(order));
     }
@@ -529,6 +547,11 @@ public:
     static constexpr bool is_nms_by_score(const hailo_format_order_t &order)
     {
         return ((HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK == order) || (HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE == order));
+    }
+
+    static constexpr bool is_nms_on_chip(const hailo_format_order_t &order)
+    {
+        return (HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP == order);
     }
 
     // TODO HRT-10073: change to supported features list

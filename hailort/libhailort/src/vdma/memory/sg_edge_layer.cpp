@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -43,7 +43,7 @@ Expected<uint32_t> SgEdgeLayer::program_descriptors(size_t transfer_size,
     size_t desc_offset, size_t buffer_offset, uint32_t batch_size)
 {
     CHECK_SUCCESS(m_desc_list.program(get_mapped_buffer(), transfer_size, buffer_offset+m_offset, m_channel_id,
-        static_cast<uint32_t>(desc_offset), batch_size, InterruptsDomain::NONE));
+        static_cast<uint32_t>(desc_offset), batch_size));
     return descriptors_in_buffer(transfer_size) * batch_size;
 }
 

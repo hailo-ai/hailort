@@ -28,7 +28,7 @@ set(HAILORT_COMMON_DIR "${CMAKE_CURRENT_LIST_DIR}/../../../../../hailort/")
 set(HAILO_EXTERNALS_CMAKE_SCRIPTS ${HAILORT_COMMON_DIR}/cmake/external/)
 set(HAILO_EXTERNAL_DIR ${HAILORT_COMMON_DIR}/external) # used in pybind11.cmake
 set(HAILORT_VERSION_MAJOR 5)
-set(HAILORT_VERSION_MINOR 2)
+set(HAILORT_VERSION_MINOR 3)
 set(HAILORT_VERSION_REVISION 0)
 
 if(UNIX)
@@ -73,6 +73,14 @@ set_target_properties(_pyhailort PROPERTIES
     C_VISIBILITY_PRESET       hidden
     CXX_VISIBILITY_PRESET     hidden
 )
+
+if (WIN32)
+    if (CMAKE_SIZEOF_VOID_P EQUAL 8)
+        target_compile_definitions(_pyhailort PRIVATE _AMD64_=1)
+    else()
+        target_compile_definitions(_pyhailort PRIVATE _X86_=1)
+    endif()
+endif()
 
 if(LIBHAILORT_PATH AND HAILORT_INCLUDE_DIR)
     message(STATUS "Will link against given libhailort: ${LIBHAILORT_PATH}")

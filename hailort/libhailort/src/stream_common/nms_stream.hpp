@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -90,8 +90,8 @@ public:
     virtual hailo_stream_interface_t get_interface() const override;
 
     NmsOutputStream(std::shared_ptr<OutputStreamBase> base_stream, const LayerInfo &edge_layer, size_t max_queue_size,
-        EventPtr core_op_activated_event, hailo_stream_interface_t stream_interface, hailo_status &status) :
-            AsyncOutputStreamBase(edge_layer, std::move(core_op_activated_event), status),
+        EventPtr core_op_activated_event, hailo_stream_interface_t stream_interface) :
+            AsyncOutputStreamBase(edge_layer, std::move(core_op_activated_event)),
             m_base_stream(base_stream),
             m_reader_thread(base_stream, max_queue_size, stream_interface)
     {}

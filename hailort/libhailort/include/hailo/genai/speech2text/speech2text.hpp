@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -13,6 +13,7 @@
 
 #include "hailo/hailort.h"
 #include "hailo/expected.hpp"
+#include "hailo/hailort_common.hpp"
 #include "hailo/vdevice.hpp"
 #include <string_view>
 
@@ -166,7 +167,7 @@ public:
     * @param[in] timeout            The timeout for the operation.
     * @return Upon success, returns Expected of std::string. Otherwise, returns Unexpected of ::hailo_status error.
     */
-    Expected<std::string> generate_all_text(MemoryView audio_buffer, const Speech2TextGeneratorParams &generator_params, std::chrono::milliseconds timeout = DEFAULT_OPERATION_TIMEOUT);
+    Expected<std::string> generate_all_text(MemoryView audio_buffer, const Speech2TextGeneratorParams &generator_params, std::chrono::milliseconds timeout = DEFAULT_GENERATE_ALL_TIMEOUT);
 
     /**
     * Generates a full transcription from the given audio data and returns it as a single string.
@@ -176,7 +177,7 @@ public:
     * @return Upon success, returns Expected of std::string. Otherwise, returns Unexpected of ::hailo_status error.
     * @note The default generator parameters are used in this method, as returned by create_generator_params().
     */
-    Expected<std::string> generate_all_text(MemoryView audio_buffer, std::chrono::milliseconds timeout = DEFAULT_OPERATION_TIMEOUT);
+    Expected<std::string> generate_all_text(MemoryView audio_buffer, std::chrono::milliseconds timeout = DEFAULT_GENERATE_ALL_TIMEOUT);
 
     /**
     * Generates transcription segments from audio data, and returns them as a vector of SegmentInfo.
@@ -188,7 +189,7 @@ public:
     *         the transcription segments. Otherwise, returns Unexpected of ::hailo_status error.
     */
     Expected<std::vector<SegmentInfo>> generate_all_segments(MemoryView audio_buffer,
-        const Speech2TextGeneratorParams &generator_params, std::chrono::milliseconds timeout = DEFAULT_OPERATION_TIMEOUT);
+        const Speech2TextGeneratorParams &generator_params, std::chrono::milliseconds timeout = DEFAULT_GENERATE_ALL_TIMEOUT);
 
     /**
     * Generates transcription segments from audio data, and returns them as a vector of SegmentInfo.
@@ -199,7 +200,7 @@ public:
     *         the transcription segments. Otherwise, returns Unexpected of ::hailo_status error.
     * @note The default generator parameters are used in this method, as returned by create_generator_params().
     */
-    Expected<std::vector<SegmentInfo>> generate_all_segments(MemoryView audio_buffer, std::chrono::milliseconds timeout = DEFAULT_OPERATION_TIMEOUT);
+    Expected<std::vector<SegmentInfo>> generate_all_segments(MemoryView audio_buffer, std::chrono::milliseconds timeout = DEFAULT_GENERATE_ALL_TIMEOUT);
 
     /**
     * Tokenizes a given text into a vector of integers representing the tokens.
@@ -209,7 +210,7 @@ public:
     */
     Expected<std::vector<int>> tokenize(const std::string &text);
 
-    static constexpr std::chrono::milliseconds DEFAULT_OPERATION_TIMEOUT = std::chrono::seconds(10);
+    static constexpr std::chrono::milliseconds DEFAULT_GENERATE_ALL_TIMEOUT = std::chrono::minutes(10);
 
     Speech2Text(Speech2Text &&);
     Speech2Text &operator=(Speech2Text &&) = delete;

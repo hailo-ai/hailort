@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -194,6 +194,7 @@ public:
     virtual hailo_status set_nms_max_bboxes_per_class(const std::string &edge_name, uint32_t max_bboxes_per_class) override;
     virtual hailo_status set_nms_max_bboxes_total(const std::string &edge_name, uint32_t max_bboxes_total) override;
     virtual hailo_status set_nms_max_accumulated_mask_size(const std::string &edge_name, uint32_t max_accumulated_mask_size) override;
+    virtual hailo_status set_nms_classes_filter_mask(const std::string &edge_name, const std::vector<bool> &classes_filter_mask) override;
 
     Expected<std::shared_ptr<net_flow::NmsOpMetadata>> get_nms_meta_data(const std::string &edge_name);
 

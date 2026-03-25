@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -325,11 +325,14 @@ private:
             res.format.order = HailoRTDefaults::get_default_host_format_order(layer_info.format);
         }
 
-        if (HailoRTCommon::is_nms(res)) {
+        if (HailoRTCommon::is_non_chip_nms(res)) {
             res.nms_shape.max_bboxes_per_class = layer_info.nms_info.max_bboxes_per_class * layer_info.nms_info.chunks_per_frame;
             res.nms_shape.number_of_classes = layer_info.nms_info.number_of_classes;
             res.nms_shape.max_bboxes_total = res.nms_shape.max_bboxes_per_class * layer_info.nms_info.number_of_classes;
             res.format.type = HailoRTDefaults::get_default_nms_format_type(res.format.order);
+        // For NMS_ON_CHIP with pp disabled, store hw_frame_size so client can allocate correct buffer size
+        } else if (IS_PP_DISABLED() && HailoRTCommon::is_nms_on_chip(res.format.order)) {
+            res.nms_shape.max_accumulated_mask_size = HailoRTCommon::get_nms_hw_frame_size(layer_info.nms_info);
         } else {
             res.shape.height = layer_info.shape.height;
             res.shape.width = layer_info.shape.width;

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -13,6 +13,7 @@
 #include "common/filesystem.hpp"
 #include "utils/query_stats_utils.hpp"
 #include "utils/profiler/tracer_macros.hpp"
+#include "utils/profiler/monitor_handler.hpp"
 #include "common/env_vars.hpp"
 
 #include <iostream>
@@ -20,83 +21,61 @@
 #include <sstream>
 #include <string>
 #include <thread>
-#include <chrono>
 #include <inttypes.h>
 #include <regex>
 #include <cstdint>
 
 namespace hailort {
 
-// Platform-specific macros for popen and pclose
-#ifdef _WIN32
-#define popen _popen
-#define pclose _pclose
-#endif
-
-#define MEM_INFO_PATH ("/proc/meminfo")
 #define CPU_INFO_PATH ("/proc/stat")
-#define PERFORMANCE_QUERY_SAMPLING_TIME_WINDOW (std::chrono::milliseconds(100))
-#define EPSILON_TIME (std::chrono::milliseconds(1))
 #define MAX_COMMAND_OUTPUT_LENGTH (4096)
 #define HAILO_NOC_PERF_FILE_PATH "/etc/hailo_noc_perf.sh"
 #define HAILO_NOC_MEASURE_OUTPUT_FILE_PATH "/tmp/noc_measure_output.txt"
 #define HAILO_BIST_FAILURE_MASK_FILE_PATH "/sys/devices/soc0/mbist_status"
 #define HAILO_ON_DIE_VOLTAGE_FILE_PATH "/sys/class/hwmon/hwmon0/in0_input"
+#define HAILO_NNC_VDMA_MONITOR_PATH "/sys/class/hailo1x_integrated/h1x/vdma_monitor"
 
 
-Expected<float32_t> QueryStatsUtils::calculate_cpu_utilization()
+float32_t QueryStatsUtils::get_cpu_utilization(const CpuStatsSample &prev_sample, const CpuStatsSample &current_sample)
 {
-    // First sample
-    uint64_t user1, nice1, system1, idle1, iowait1, irq1, softirq1, steal1;
-    auto status = parse_cpu_stats(user1, nice1, system1, idle1, iowait1, irq1, softirq1, steal1);
-    CHECK_SUCCESS_AS_EXPECTED(status);
+    uint64_t total_delta = current_sample.total() - prev_sample.total();
+    if (0 == total_delta) {
+        return 0;
+    }
 
-    std::this_thread::sleep_for(PERFORMANCE_QUERY_SAMPLING_TIME_WINDOW);
-
-    // Second sample
-    uint64_t user2, nice2, system2, idle2, iowait2, irq2, softirq2, steal2;
-    status = parse_cpu_stats(user2, nice2, system2, idle2, iowait2, irq2, softirq2, steal2);
-    CHECK_SUCCESS_AS_EXPECTED(status);
-
-    // Calculate deltas
-    uint64_t total1 = user1 + nice1 + system1 + idle1 + iowait1 + irq1 + softirq1 + steal1;
-    uint64_t total2 = user2 + nice2 + system2 + idle2 + iowait2 + irq2 + softirq2 + steal2;
-    uint64_t totalDelta = total2 - total1;
-
-    uint64_t idleDelta = (idle2 + iowait2) - (idle1 + iowait1);
+    uint64_t idle_delta = current_sample.idle_total() - prev_sample.idle_total();
 
     // Calculate utilization percentage
-    float32_t utilization = (static_cast<float32_t>(totalDelta - idleDelta) / static_cast<float32_t>(totalDelta)) * static_cast<float32_t>(100.0);
-    return utilization;
+    return (static_cast<float32_t>(total_delta - idle_delta) /
+            static_cast<float32_t>(total_delta)) * 100.0f;
 }
 
-
 // Function parses the first line of /proc/stat
-hailo_status QueryStatsUtils::parse_cpu_stats(uint64_t &user, uint64_t &nice, uint64_t &system, uint64_t &idle,
-    uint64_t &iowait, uint64_t &irq, uint64_t &softirq, uint64_t &steal)
+Expected<CpuStatsSample> QueryStatsUtils::get_cpu_stats()
 {
     std::ifstream procStat(CPU_INFO_PATH);
     CHECK(procStat.is_open(), HAILO_OPEN_FILE_FAILURE, "Unable to open {}", CPU_INFO_PATH);
 
     std::string line;
-    char cpu_label[16];
+    char cpu_label[16] = {0};
+    CpuStatsSample sample;
 
     getline(procStat, line); // Read the first line (starts with "cpu")
     int matches = sscanf(line.c_str(),
         "%s %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64,
-        cpu_label, &user, &nice, &system, &idle, &iowait, &irq, &softirq, &steal);
+        cpu_label, &sample.user, &sample.nice, &sample.system, &sample.idle, &sample.iowait, &sample.irq, &sample.softirq,
+        &sample.steal);
 
     procStat.close();
     constexpr int EXPECTED_MATCHES = 9; // 8 values + cpu label
     CHECK((EXPECTED_MATCHES == matches) && ("cpu" == std::string(cpu_label).substr(0, 3)), HAILO_INTERNAL_FAILURE,
           "Failed to parse CPU stats from {}", CPU_INFO_PATH);
 
-    return HAILO_SUCCESS;
+    return sample;
 }
 
 Expected<std::tuple<int64_t, int64_t>> QueryStatsUtils::calculate_ram_sizes()
 {
-    // function is based on Linux 'free' command
     int64_t total_ram = -1;
     int64_t used_ram = -1;
     TRY(const auto output, Process::create_and_wait_for_output("free", MAX_COMMAND_OUTPUT_LENGTH));
@@ -110,7 +89,7 @@ Expected<std::tuple<int64_t, int64_t>> QueryStatsUtils::calculate_ram_sizes()
         if (label == "Mem:") {
             if (stream >> total >> used >> freeMem >> shared >> buffCache >> available) {
                 total_ram = static_cast<int64_t>(total);
-                used_ram = total_ram - static_cast<int64_t>(freeMem);
+                used_ram = total_ram - static_cast<int64_t>(available);
             }
             break;
         }
@@ -122,20 +101,18 @@ Expected<std::tuple<int64_t, int64_t>> QueryStatsUtils::calculate_ram_sizes()
     return std::make_tuple(total_ram, used_ram);
 }
 
-std::string QueryStatsUtils::get_sampling_time_window_as_string()
+std::string QueryStatsUtils::get_sampling_time_window_as_string(std::chrono::milliseconds sampling_period)
 {
     std::ostringstream oss;
     oss.precision(1);  // Set precision to 1 decimal place
-    oss << std::fixed << std::chrono::duration<double>(PERFORMANCE_QUERY_SAMPLING_TIME_WINDOW).count();
+    oss << std::fixed << std::chrono::duration<double>(sampling_period).count();
     return oss.str();
 }
 
-Expected<int32_t> QueryStatsUtils::get_dsp_utilization()
+Expected<int32_t> QueryStatsUtils::get_dsp_utilization(std::chrono::milliseconds sampling_period)
 {
-    std::string delay_str = get_sampling_time_window_as_string();
-
+    std::string delay_str = get_sampling_time_window_as_string(sampling_period);
     const std::string dsp_utilization_command = "dsp-utilization -i 1 -b --delay " + delay_str;
-
     TRY(const auto output, Process::create_and_wait_for_output(dsp_utilization_command, MAX_COMMAND_OUTPUT_LENGTH));
 
     // Use regex to extract the percentage value (e.g., %15)
@@ -211,9 +188,9 @@ Expected<uint32_t> QueryStatsUtils::get_bist_failure_mask()
     return read_single_data_from_file<uint32_t>(HAILO_BIST_FAILURE_MASK_FILE_PATH, false);
 }
 
-Expected<int32_t> QueryStatsUtils::get_ddr_noc_utilization()
+Expected<int32_t> QueryStatsUtils::get_ddr_noc_utilization(std::chrono::milliseconds sampling_period)
 {
-    std::string delay_str = get_sampling_time_window_as_string();
+    std::string delay_str = get_sampling_time_window_as_string(sampling_period);
 
     if (Filesystem::does_file_exists(HAILO_NOC_MEASURE_OUTPUT_FILE_PATH)) {
         std::remove(HAILO_NOC_MEASURE_OUTPUT_FILE_PATH);
@@ -236,41 +213,113 @@ Expected<int32_t> QueryStatsUtils::get_ddr_noc_utilization()
     return total_transactions;
 }
 
-Expected<float32_t> QueryStatsUtils::get_nnc_utilization(const std::string &id_info_str, const std::string &device_arch_str)
+Expected<NncUtilSample> QueryStatsUtils::get_current_nnc_utilization()
+{
+    std::ifstream file(HAILO_NNC_VDMA_MONITOR_PATH);
+    CHECK(file.is_open(), HAILO_OPEN_FILE_FAILURE, "Unable to open {}", HAILO_NNC_VDMA_MONITOR_PATH);
+
+    std::string header_line;
+    std::getline(file, header_line); // Skip the "INUSE\tTOTAL" header
+
+    uint64_t in_use = 0;
+    uint64_t total = 0;
+    file >> in_use >> total;
+    CHECK(file.good() || file.eof(), HAILO_FILE_OPERATION_FAILURE,
+          "Failed to parse vdma_monitor data from {}", HAILO_NNC_VDMA_MONITOR_PATH);
+
+    return NncUtilSample{in_use, total};
+}
+
+float32_t QueryStatsUtils::get_nnc_utilization(const NncUtilSample &prev_sample, const NncUtilSample &current_sample)
+{
+    if ((prev_sample.total > current_sample.total) || (prev_sample.in_use > current_sample.in_use)) {
+        LOGGER__ERROR("Invalid NNC util values, status = {}", HAILO_INTERNAL_FAILURE);
+        return -1.0f;
+    }
+
+    if (current_sample.total == prev_sample.total) {
+        return 0.0f;
+    }
+
+    uint64_t total_delta = current_sample.total - prev_sample.total;
+    uint64_t in_use_delta = current_sample.in_use - prev_sample.in_use;
+    return (static_cast<float32_t>(in_use_delta) / static_cast<float32_t>(total_delta)) * 100.0f;
+}
+
+void PerformanceStatsMeasurement::start_measurement(const std::string &device_id, const std::string &device_arch)
 {
     TRACE(MonitorStartTrace, "");
-    TRACE(AddDeviceTrace, id_info_str, device_arch_str);
+    TRACE(AddDeviceTrace, device_id, device_arch);
+    m_start_time = std::chrono::steady_clock::now();
+    auto cpu_sample = QueryStatsUtils::get_cpu_stats();
+    if (cpu_sample) {
+        m_cpu_sample = cpu_sample.release();
+        m_is_cpu_sample_valid = true;
+    }
 
-    std::this_thread::sleep_for(PERFORMANCE_QUERY_SAMPLING_TIME_WINDOW + EPSILON_TIME);
+    auto nnc_util_sample = QueryStatsUtils::get_current_nnc_utilization();
+    if (nnc_util_sample) {
+        m_nnc_util_sample = nnc_util_sample.release();
+        m_is_nnc_util_sample_valid = true;
+    }
+}
+
+std::chrono::milliseconds PerformanceStatsMeasurement::get_remaining_sleep_time(std::chrono::milliseconds sampling_period)
+{
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - m_start_time);
+    if (elapsed < sampling_period) {
+        return sampling_period - elapsed;
+    }
+    return std::chrono::milliseconds(0);
+}
+
+hailo_performance_stats_t PerformanceStatsMeasurement::end_measurement()
+{
+    if (m_is_cpu_sample_valid) {
+        auto second_cpu_sample = QueryStatsUtils::get_cpu_stats();
+        if (second_cpu_sample) {
+            m_performance_stats.cpu_utilization = QueryStatsUtils::get_cpu_utilization(m_cpu_sample, second_cpu_sample.value());
+        }
+    }
+
+    if (m_is_nnc_util_sample_valid) {
+        auto second_nnc_util_sample = QueryStatsUtils::get_current_nnc_utilization();
+        if (second_nnc_util_sample) {
+            m_performance_stats.nnc_utilization = QueryStatsUtils::get_nnc_utilization(m_nnc_util_sample, second_nnc_util_sample.value());
+        }
+    }
+
+    auto ram_sizes = QueryStatsUtils::calculate_ram_sizes();
+    if (ram_sizes) {
+        m_performance_stats.ram_size_total = std::get<0>(ram_sizes.value());
+        m_performance_stats.ram_size_used = std::get<1>(ram_sizes.value());
+    }
+
+    // TODO HRT-16545: Enable when this function will run faster
+    // auto ddr_noc_utilization = QueryStatsUtils::get_ddr_noc_utilization(sampling_period);
+    // if (HAILO_SUCCESS == ddr_noc_utilization.status()) {
+    //     performance_stats.ddr_noc_total_transactions = ddr_noc_utilization.release();
+    // }
 
     TRACE(DumpProfilerStateTrace);
 
-    const uint32_t MAX_RETRIES = 5;
-    uint32_t retry = 0;
-    float32_t utilization = 0.0f;
+    return m_performance_stats;
+}
 
-    while (retry < MAX_RETRIES) {
-        // Getting only files changed recently, to avoid reading old files
-        TRY(auto nnc_utilization_file_paths, Filesystem::get_latest_files_in_dir_flat(
-            NNC_UTILIZATION_TMP_DIR, PERFORMANCE_QUERY_SAMPLING_TIME_WINDOW));
-        if (!nnc_utilization_file_paths.empty()) {
-            auto utilization_exp = read_single_data_from_file<float32_t>(nnc_utilization_file_paths[0], true);
-            if (HAILO_SUCCESS == utilization_exp.status()) {
-                utilization = utilization_exp.release();
-                break;
-            }
-        }
+hailo_performance_stats_t PerformanceStatsMeasurement::measure(std::chrono::milliseconds sampling_period,
+    const std::string &device_id, const std::string &device_arch)
+{
+    // TODO: Print errors (only once so the log won't be spammed) in case of an error (HRT-20218s)
+    PerformanceStatsMeasurement measurement;
+    measurement.start_measurement(device_id, device_arch);
 
-        LOGGER__WARNING("No data available to process to get nnc_utilization, retrying... (attempt {}/{})", retry + 1, MAX_RETRIES);
-        retry++;
-        std::this_thread::sleep_for(PERFORMANCE_QUERY_SAMPLING_TIME_WINDOW);
+    auto remaining_sleep = measurement.get_remaining_sleep_time(sampling_period);
+    if (remaining_sleep.count() > 0) {
+        std::this_thread::sleep_for(remaining_sleep);
     }
 
-    TRACE(MonitorEndTrace, "", id_info_str);
-
-    CHECK((retry < MAX_RETRIES), HAILO_INTERNAL_FAILURE, "Failed to get nnc_utilization after {} retries", MAX_RETRIES);
-
-    return utilization;
+    return measurement.end_measurement();
 }
 
 } /* namespace hailort */

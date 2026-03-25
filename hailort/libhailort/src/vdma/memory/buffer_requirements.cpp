@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -159,17 +159,22 @@ Expected<BufferSizesRequirements> BufferSizesRequirements::get_buffer_requiremen
     return BufferSizesRequirements{ descs_count, results->desc_page_size() };
 }
 
-BufferSizesRequirements BufferSizesRequirements::get_sram_buffer_requirements(
-    const DescSizesParams &desc_sizes_params, uint32_t transfer_size)
+Expected<BufferSizesRequirements> BufferSizesRequirements::get_sram_buffer_requirements(
+    const DescSizesParams &desc_sizes_params, uint32_t row_size, uint32_t minimum_rows)
 {
-    // SRAM-Buffers are a special case. We simply use the default page-size
-    // and force the block-count to be above the minimum required by FW.
+    // NOTE: HW requires that circular buffers have at least 1 descriptor free
+    // at all times, and that the size of CCB buffers will be a power of 2.
+    uint16_t desc_page_size = desc_sizes_params.default_page_size;
+    uint32_t descs_per_row = DIV_ROUND_UP(row_size, desc_page_size);
 
-    uint16_t sram_blk_size = desc_sizes_params.default_page_size;
-    uint32_t sram_blk_cnt = DIV_ROUND_UP(transfer_size, sram_blk_size);
-    sram_blk_cnt = std::max(sram_blk_cnt, desc_sizes_params.min_descs_count);
+    // DDR-Portal rows should always fit in 2^16 descriptors.
+    CHECK(descs_per_row < desc_sizes_params.max_descs_count, HAILO_INSUFFICIENT_BUFFER);
 
-    return BufferSizesRequirements(sram_blk_cnt, sram_blk_size);
+    uint32_t descs_in_buffer = (descs_per_row * minimum_rows) + 1;
+    descs_in_buffer = get_nearest_powerof_2(descs_in_buffer, desc_sizes_params.min_descs_count);
+    descs_in_buffer = std::min(descs_in_buffer, desc_sizes_params.max_descs_count);
+
+    return BufferSizesRequirements(descs_in_buffer, desc_page_size);
 }
 
 uint16_t BufferSizesRequirements::find_initial_desc_page_size(const DescSizesParams &desc_sizes_params,

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -32,14 +32,12 @@ Expected<std::unique_ptr<ScheduledInputStream>> ScheduledInputStream::create(
     // ScheduledInputStream or by the user)
     for (auto &stream : streams) {
         auto status = stream.second.get().set_buffer_mode(StreamBufferMode::NOT_OWNING);
-        CHECK_SUCCESS_AS_EXPECTED(status);
+        CHECK_SUCCESS(status);
     }
 
-    auto status = HAILO_UNINITIALIZED;
     auto local_vdevice_stream = make_unique_nothrow<ScheduledInputStream>(vdevice, std::move(streams), core_op_handle,
-        std::move(core_op_activated_event), layer_info, std::move(infer_requests_accumulator), status);
-    CHECK_NOT_NULL_AS_EXPECTED(local_vdevice_stream, HAILO_OUT_OF_HOST_MEMORY);
-    CHECK_SUCCESS_AS_EXPECTED(status);
+        std::move(core_op_activated_event), layer_info, std::move(infer_requests_accumulator));
+    CHECK_NOT_NULL(local_vdevice_stream, HAILO_OUT_OF_HOST_MEMORY);
 
     return local_vdevice_stream;
 }
@@ -95,15 +93,13 @@ Expected<std::unique_ptr<ScheduledOutputStream>> ScheduledOutputStream::create(
     // ScheduledOutputStream or by the user)
     for (auto &stream : streams) {
         auto status = stream.second.get().set_buffer_mode(StreamBufferMode::NOT_OWNING);
-        CHECK_SUCCESS_AS_EXPECTED(status);
+        CHECK_SUCCESS(status);
     }
 
 
-    auto status = HAILO_UNINITIALIZED;
-    auto stream = make_unique_nothrow<ScheduledOutputStream>(vdevice, std::move(streams), core_op_handle,
-        layer_info, std::move(core_op_activated_event), std::move(infer_requests_accumulator), status);
-    CHECK_NOT_NULL_AS_EXPECTED(stream, HAILO_OUT_OF_HOST_MEMORY);
-    CHECK_SUCCESS_AS_EXPECTED(status);
+    auto stream = make_unique_nothrow<ScheduledOutputStream>(vdevice, std::move(streams), core_op_handle, layer_info,
+        std::move(core_op_activated_event), std::move(infer_requests_accumulator));
+    CHECK_NOT_NULL(stream, HAILO_OUT_OF_HOST_MEMORY);
 
     return stream;
 }

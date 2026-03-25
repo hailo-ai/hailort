@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -170,6 +170,11 @@ void OutputVStreamWrapper::bind(py::module &m)
     .def("set_nms_score_threshold", [](OutputVStream &self, float32_t threshold)
     {
         hailo_status status = self.set_nms_score_threshold(threshold);
+        VALIDATE_STATUS(status);
+    })
+    .def("set_nms_classes_filter_mask", [](OutputVStream &self, const std::vector<bool> &classes_filter_mask)
+    {
+        hailo_status status = self.set_nms_classes_filter_mask(classes_filter_mask);
         VALIDATE_STATUS(status);
     })
     .def("set_nms_iou_threshold", [](OutputVStream &self, float32_t threshold)
@@ -411,6 +416,10 @@ void InferVStreamsWrapper::bind(py::module &m)
     .def("set_nms_score_threshold", [](InferVStreamsWrapper &self, float32_t threshold)
     {
         VALIDATE_STATUS(self.m_infer_pipeline->set_nms_score_threshold(threshold));
+    })
+    .def("set_nms_classes_filter_mask", [](InferVStreamsWrapper &self, const std::vector<bool> &classes_filter_mask)
+    {
+        VALIDATE_STATUS(self.m_infer_pipeline->set_nms_classes_filter_mask(classes_filter_mask));
     })
     .def("set_nms_iou_threshold", [](InferVStreamsWrapper &self, float32_t threshold)
     {

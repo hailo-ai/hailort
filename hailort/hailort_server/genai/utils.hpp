@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -48,34 +48,6 @@ constexpr auto DEFAULT_SCHEDULER_THRESHOLD = 1;
 
 // Timeout for asynchronous operations in server
 constexpr auto WAIT_FOR_OPERATION_TIMEOUT = std::chrono::seconds(10);
-
-inline Expected<Buffer> handle_check_hef_exists_request(const MemoryView &request)
-{
-    TRY_AS_HRPC_STATUS(auto pair, GenAICheckHefExistsSerializer::deserialize_request(request),
-        GenAICheckHefExistsSerializer);
-    const auto &hef_path = pair.first;
-    const auto &hef_hash = pair.second;
-
-    if (!Filesystem::does_file_exists(hef_path)) {
-    LOGGER__INFO("HEF file '{}' does not exist on device", hef_path);
-    TRY_AS_HRPC_STATUS(auto reply, GenAICheckHefExistsSerializer::serialize_reply(HAILO_SUCCESS, false),
-        GenAICheckHefExistsSerializer);
-    return reply;
-    }
-
-    TRY_AS_HRPC_STATUS(auto local_hef_hash, Hef::hash(hef_path), GenAICheckHefExistsSerializer);
-    if (local_hef_hash != hef_hash) {
-    LOGGER__INFO("HEF file '{}' exists on device, but hash '{}' does not match expected hash '{}'", hef_path, local_hef_hash, hef_hash);
-    TRY_AS_HRPC_STATUS(auto reply, GenAICheckHefExistsSerializer::serialize_reply(HAILO_SUCCESS, false),
-        GenAICheckHefExistsSerializer);
-    return reply;
-    }
-
-    LOGGER__INFO("HEF file '{}' exists on device and hash '{}' matches expected hash '{}'", hef_path, local_hef_hash, hef_hash);
-    TRY_AS_HRPC_STATUS(auto reply, GenAICheckHefExistsSerializer::serialize_reply(HAILO_SUCCESS, true),
-        GenAICheckHefExistsSerializer);
-    return reply;
-}
 
 inline std::map<std::string, MemoryView> buffers_to_memviews(const std::map<std::string, BufferPtr> &buffers)
 {

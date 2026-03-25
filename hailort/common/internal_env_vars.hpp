@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -47,12 +47,6 @@ namespace hailort
 /* Set a custom value for dma-alignment. Default is PAGE_SIZE. */
 #define HAILO_CUSTOM_DMA_ALIGNMENT_ENV_VAR ("HAILO_CUSTOM_DMA_ALIGNMENT")
 
-/* HRTPP runtime optimizations for performance.
-   HAILORT_YOLOV5_SEG_PP_CROP_OPT does an early crop of masks.
-   HAILORT_YOLOV5_SEG_NN_RESIZE uses resize nearest neighbor and cancels sigmoid calc */
-#define HAILORT_YOLOV5_SEG_PP_CROP_OPT_ENV_VAR ("HAILORT_YOLOV5_SEG_PP_CROP_OPT")
-#define HAILORT_YOLOV5_SEG_NN_RESIZE_ENV_VAR ("HAILORT_YOLOV5_SEG_NN_RESIZE")
-
 /* Logger */
 
 /* Forces flush of the logger to file on every trace, instead of the default (warnings and above) */
@@ -89,7 +83,7 @@ namespace hailort
 /* Forces using descriptor-lists instead of CCB for inter-context-channels on h1x devices */
 #define HAILO_FORCE_INFER_CONTEXT_CHANNEL_OVER_DESC_ENV_VAR ("HAILO_FORCE_INFER_CONTEXT_CHANNEL_OVER_DESC")
 
-/* Determines the size of each mapped buffer into which the ccws section will be splitted to.
+/* Determines the size of each mapped buffer into which the ccws section will be split to.
     Relevant only when the aligned_ccws feature is enbabled */
 #define HAILO_ALIGNED_CCWS_MAPPED_BUFFER_SIZE_ENV_VAR ("HAILO_ALIGNED_CCWS_MAPPED_BUFFER_SIZE")
 #define HAILO_ALIGNED_CCWS_MAPPED_BUFFER_SIZE (2 * 1024 * 1024)
@@ -98,26 +92,20 @@ namespace hailort
     Instead - we will alocate aligned config buffers and will copy the CCWs to them */
 #define HAILO_DISABLE_ALIGNED_CCWS_ENV_VAR ("HAILO_DISABLE_ALIGNED_CCWS")
 
-/* Forces using descriptor-lists instead of CCB for ddr-channels on h1x devices */
-#define HAILO_FORCE_DDR_CHANNEL_OVER_CCB_ENV_VAR ("HAILO_FORCE_DDR_CHANNEL_OVER_CCB")
-
 /* Sets the default power-mode of the ConfiguredNetworkGroups to `HAILO_POWER_MODE_ULTRA_PERFORMANCE` */
 #define FORCE_POWER_MODE_ULTRA_PERFORMANCE_ENV_VAR ("FORCE_POWER_MODE_ULTRA_PERFORMANCE")
 
 /* Set HW infer Tool to use CCB for Boundary Channels*/
 #define HAILO_HW_INFER_BOUNDARY_CHANNELS_OVER_CCB_ENV_VAR ("HAILO_HW_INFER_BOUNDARY_CHANNELS_OVER_CCB")
 
-/* Allow DDR-portal layers to use SRAM as optimization (Pluto only) */
-#define HAILO_HW_INFER_ALLOW_DDR_PORTALS_OVER_SRAM_ENV_VAR ("HAILO_HW_INFER_ALLOW_DDR_PORTALS_OVER_SRAM")
+/* Disable DDR-portal layers to use SRAM as optimization (Pluto only). */
+#define HAILO_HW_INFER_DISABLE_DDR_PORTALS_OVER_SRAM_ENV_VAR ("HAILO_HW_DISABLE_DDR_PORTALS_OVER_SRAM")
 
 /* Disables the post process operations on HEFs that have it - Hailo10 only! */
 #define HAILO_DISABLE_PP_ENV_VAR ("HAILO_DISABLE_PP")
 
 /* Sets log level for the syslog sink - relevant for H10 usage. valid values: debug, info, warning, error, critical */
 #define HAILORT_SYSLOG_LOGGER_LEVEL_ENV_VAR ("HAILORT_SYSLOG_LOGGER_LEVEL")
-
-/* Disables strict versioning check for HEFs */
-#define HAILO_IGNORE_STRICT_VERSION_ENV_VAR ("HAILO_IGNORE_STRICT_VERSION")
 
 } /* namespace hailort */
 

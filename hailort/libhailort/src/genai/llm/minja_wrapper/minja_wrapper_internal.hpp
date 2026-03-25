@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -13,7 +13,17 @@
 
 #include "minja_wrapper.hpp"
 
+// Disable warnings from the minja library:
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4244 4101)
+#endif
+
 #include <minja/chat-template.hpp>
+
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 namespace hailort
 {

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -9,14 +9,14 @@
  * ResourceManager is used on 2 possible flows with the following dependencies:
  *
  * !-Working with physical device-!
- * VdmaDevice (either PcieDevice or IntegratedDevice)
+ * VdmaDevice (either LegacyPcieDevice or IntegratedDevice)
  * |--vector of VdmaConfigCoreOp
  *              |--ResourceManager <only one>
  *                 |--reference to physical device
  *
  * !-Working with virtual device-!
  * VDevice
- * |--vector of VdmaDevice (either PcieDevice or IntegratedDevice)
+ * |--vector of VdmaDevice (either LegacyPcieDevice or IntegratedDevice)
  * |--vector of VDeviceCoreOp
  *              |-- vector of VdmaConfigCoreOp <one per phys device>
  *                            |--ResourceManager <only one>
@@ -35,7 +35,7 @@
 #include "core_op/resource_manager/action_list_buffer_builder/action_list_buffer_builder.hpp"
 #include "device_common/control_protocol.hpp"
 #include "vdma/channel/boundary_channel.hpp"
-#include "vdma/pcie/pcie_device.hpp"
+#include "vdma/legacy_pcie/legacy_pcie_device.hpp"
 #include "internal_buffer_manager.hpp"
 #include "vdma/memory/cma_buffer.hpp"
 
@@ -224,8 +224,6 @@ public:
     hailo_status reset_state_machine();
     hailo_status start_vdma_interrupts_dispatcher();
     hailo_status stop_vdma_interrupts_dispatcher();
-    hailo_status start_vdma_transfer_launcher();
-    hailo_status stop_vdma_transfer_launcher();
     Expected<uint16_t> get_network_batch_size(const std::string &network_name) const;
     Expected<vdma::BoundaryChannelPtr> get_boundary_vdma_channel_by_stream_name(const std::string &stream_name);
     Expected<std::shared_ptr<const vdma::BoundaryChannel>> get_boundary_vdma_channel_by_stream_name(

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the LGPL 2.1 license (https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt)
  *
  * This library is free software; you can redistribute it and/or
@@ -324,7 +324,7 @@ Expected<std::shared_ptr<ConfiguredNetworkGroup>> NetworkGroupConfigManager::con
     if (result) {
         return result;
     } else if (1 != network_group_list->size()) {
-        g_error("Configuring HEF with multiple network_groups without providing valid network_group name. passed name = %s, status = %d", network_group_name, HAILO_NOT_FOUND);
+        GST_ERROR("Configuring HEF with multiple network_groups without providing valid network_group name. passed name = %s, status = %d", network_group_name, HAILO_NOT_FOUND);
         return make_unexpected(HAILO_NOT_FOUND);
     } else {
         return std::move(network_group_list->at(0));

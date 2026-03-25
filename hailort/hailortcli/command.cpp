@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -49,7 +49,7 @@ hailo_status DeviceCommand::execute()
 {
     pre_execute();
 
-    TRY(auto devices, create_devices(m_device_params));
+    TRY_WITH_ACCEPTABLE_STATUS(HAILO_INVALID_FIRMWARE, auto devices, create_devices(m_device_params));
     return execute_on_devices(devices);
 }
 

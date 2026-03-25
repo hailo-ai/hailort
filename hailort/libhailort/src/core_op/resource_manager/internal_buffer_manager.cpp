@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -13,13 +13,9 @@
   **/
 
 #include "internal_buffer_manager.hpp"
-#include "hef/layer_info.hpp"
-#include "vdma/memory/sg_buffer.hpp"
 #include "vdma/memory/cma_buffer.hpp"
-#include "vdma/memory/buffer_requirements.hpp"
-
-
-#include <numeric>
+#include "vdma/memory/sg_buffer.hpp"
+#include "vdma/memory/sram_buffer.hpp"
 
 namespace hailort
 {
@@ -50,8 +46,7 @@ Expected<std::shared_ptr<vdma::VdmaBuffer>> InternalBufferManager::create_interm
 Expected<std::shared_ptr<vdma::VdmaBuffer>> InternalBufferManager::create_intermediate_ccb_buffer(
     const size_t buffer_size)
 {
-    TRY_WITH_ACCEPTABLE_STATUS(HAILO_OUT_OF_HOST_CMA_MEMORY, auto buffer,
-        vdma::CmaBuffer::create(buffer_size, m_driver));
+    TRY_WITH_ACCEPTABLE_STATUS(HAILO_RESOURCE_EXHAUSTED, auto buffer, vdma::CmaBuffer::create(buffer_size, m_driver));
 
     auto buffer_ptr = make_shared_nothrow<vdma::CmaBuffer>(std::move(buffer));
     CHECK_NOT_NULL_AS_EXPECTED(buffer_ptr, HAILO_OUT_OF_HOST_MEMORY);
@@ -62,7 +57,7 @@ Expected<std::shared_ptr<vdma::VdmaBuffer>> InternalBufferManager::create_interm
 Expected<std::shared_ptr<vdma::VdmaBuffer>> InternalBufferManager::create_intermediate_sram_buffer(
     const size_t buffer_size)
 {
-    TRY_WITH_ACCEPTABLE_STATUS(HAILO_OUT_OF_FW_MEMORY, auto buffer, m_sram_buffer_allocator.allocate(buffer_size));
+    TRY_WITH_ACCEPTABLE_STATUS(HAILO_RESOURCE_EXHAUSTED, auto buffer, m_sram_buffer_allocator.allocate(buffer_size));
 
     auto buffer_ptr = make_shared_nothrow<vdma::SramBuffer>(std::move(buffer));
     CHECK_NOT_NULL_AS_EXPECTED(buffer_ptr, HAILO_OUT_OF_HOST_MEMORY);
@@ -115,23 +110,20 @@ hailo_status InternalBufferManager::plan_and_execute(std::map<EdgeLayerKey, Edge
     InternalBufferPlanning buffers_executed {};
     std::vector<EdgeLayerKey> edge_layers_executed {};
 
-    const DescSizesParams continuous_desc_params = m_driver.get_continuous_desc_params();
-    const DescSizesParams sg_desc_params = m_driver.get_sg_desc_params();
-
-    // TODO HRT-19648: Remove this env-var.
-    if (is_env_variable_on(HAILO_HW_INFER_ALLOW_DDR_PORTALS_OVER_SRAM_ENV_VAR)) {
-
+    if (vdma::SramBufferAllocator::should_use_sram_buffers()) {
         // NOTE: We create a plan that makes ALL ddr-portal buffers over SRAM, without size considerations.
         // Later, when we exectute the plan, we take as many buffers as we can fit in 2MB SRAM and the rest
         // are ignored.
 
-        TRY(auto buffer_plan, InternalBufferPlanner::create_sram_buffer_planning(edge_layers, continuous_desc_params));
+        LOGGER__INFO("Using SRAM for DDR-Portal buffers.");
+
+        const DescSizesParams sram_desc_params = m_driver.get_sram_desc_params();
+        TRY(auto buffer_plan, InternalBufferPlanner::create_sram_buffer_planning(edge_layers, sram_desc_params));
 
         auto status = execute_plan(buffer_plan, edge_layers_executed, buffers_executed);
-        if (HAILO_OUT_OF_FW_MEMORY != status) {
-            // Out of FW-memory is ok; ignore and move on.
-            CHECK_SUCCESS(status);
-        }
+        CHECK_SUCCESS(status);
+
+        LOGGER__INFO("{} DDR-Portal buffers allocated in SRAM.", buffers_executed.size());
 
         for (const auto &edge_layer_key : edge_layers_executed) {
             edge_layers.erase(edge_layer_key);
@@ -139,6 +131,8 @@ hailo_status InternalBufferManager::plan_and_execute(std::map<EdgeLayerKey, Edge
         edge_layers_executed.clear();
     }
 
+    const DescSizesParams continuous_desc_params = m_driver.get_continuous_desc_params();
+    const DescSizesParams sg_desc_params = m_driver.get_sg_desc_params();
     BufferPlanReport default_planner_report {};
     bool first_pass = true;
 
@@ -155,10 +149,7 @@ hailo_status InternalBufferManager::plan_and_execute(std::map<EdgeLayerKey, Edge
         TRY(auto buffer_planning, buffer_planning_exp);
 
         auto status = execute_plan(buffer_planning, edge_layers_executed, buffers_executed);
-        if (HAILO_OUT_OF_HOST_CMA_MEMORY != status) {
-            // Out of CMA-memory is ok; ignore and move on.
-            CHECK_SUCCESS(status);
-        }
+        CHECK_SUCCESS(status);
 
         if (first_pass) {
             default_planner_report = InternalBufferPlanner::report_planning_info(buffers_executed);
@@ -193,14 +184,11 @@ hailo_status InternalBufferManager::plan_and_execute(std::map<EdgeLayerKey, Edge
 hailo_status InternalBufferManager::execute_plan(InternalBufferPlanning &buffer_planning,
     std::vector<EdgeLayerKey> &edge_layers_executed, InternalBufferPlanning &buffers_executed)
 {
-    auto execution_status = HAILO_SUCCESS;
-
     // Go over plan and create buffers
     for (auto &buffer_plan : buffer_planning) {
         auto buffer_exp = create_intermediate_buffer(buffer_plan.buffer_type, buffer_plan.buffer_size);
-        if (buffer_exp.status() == HAILO_OUT_OF_HOST_CMA_MEMORY) {
-            execution_status = buffer_exp.status();
-            // If one of the buffer failed due to lack to memory, try to move to next buffer.
+        if (buffer_exp.status() == HAILO_RESOURCE_EXHAUSTED) {
+            // If not enough memory to create buffer, ignore and move on.
             continue;
         }
         TRY(auto buffer, buffer_exp);
@@ -218,7 +206,7 @@ hailo_status InternalBufferManager::execute_plan(InternalBufferPlanning &buffer_
         buffers_executed.emplace_back(buffer_plan);
     }
 
-    return execution_status;
+    return HAILO_SUCCESS;
 }
 
 Expected<EdgeLayerBuffer> InternalBufferManager::get_intermediate_buffer(const EdgeLayerKey &key)

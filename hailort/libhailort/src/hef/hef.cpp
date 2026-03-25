@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -33,7 +33,7 @@
 #include "net_flow/ops/yolov8_post_process.hpp"
 #include "net_flow/ops/yolov8_bbox_only_post_process.hpp"
 #include "hef/hef_internal.hpp"
-#include "vdma/pcie/pcie_device.hpp"
+#include "vdma/legacy_pcie/legacy_pcie_device.hpp"
 #include "vdma/vdma_config_manager.hpp"
 #include "hef/layer_info.hpp"
 #include "device_common/control.hpp"
@@ -1133,8 +1133,6 @@ SupportedFeatures Hef::Impl::get_supported_features(const ProtoHEFHeader &header
     supported_features.batch_register_config = check_hef_extension(ProtoHEFExtensionType::BATCH_REGISTER_CONFIG,
         header, hef_extensions, included_features);
     supported_features.shared_config = check_hef_extension(ProtoHEFExtensionType::SHARED_CONFIG,
-        header, hef_extensions, included_features);
-    supported_features.strict_versioning = check_hef_extension(ProtoHEFExtensionType::STRICT_RUNTIME_VERSIONING,
         header, hef_extensions, included_features);
     supported_features.split_allow_input_action = check_hef_extension(ProtoHEFExtensionType::ENABLE_CONFIG_CHANNELS,
         header, hef_extensions, included_features);
@@ -3587,17 +3585,13 @@ bool Hef::Impl::zero_copy_config_over_descs() const
 
 hailo_status Hef::Impl::validate_hef_version() const
 {
-    if (!m_supported_features.strict_versioning || is_env_variable_on(HAILO_IGNORE_STRICT_VERSION_ENV_VAR)) {
-        return HAILO_SUCCESS;
-    }
-
     hailo_version_t library_version{};
     CHECK_SUCCESS(hailo_get_library_version(&library_version));
 
-    CHECK((m_header.sdk_version().sdk_version_major() == library_version.major) &&
-        (m_header.sdk_version().sdk_version_minor() == library_version.minor), HAILO_INVALID_HEF,
-        "DFC version from which this HEF was created ({}.{}.{}) is different from library version ({}.{}.{}), which is not allowed for this model.",
-            m_header.sdk_version().sdk_version_major(), m_header.sdk_version().sdk_version_minor(), m_header.sdk_version().sdk_version_revision(),
+    CHECK((m_header.strict_runtime_min_version().runtime_min_version_major() <= library_version.major) &&
+        (m_header.strict_runtime_min_version().runtime_min_version_minor() <= library_version.minor), HAILO_INVALID_HEF,
+        "Minimum runtime version for which this HEF was compiled for ({}.{}.{}) is higher than library version ({}.{}.{}), which is not allowed for this model.",
+            m_header.strict_runtime_min_version().runtime_min_version_major(), m_header.strict_runtime_min_version().runtime_min_version_minor(), m_header.strict_runtime_min_version().runtime_min_version_patch(),
             library_version.major, library_version.minor, library_version.revision);
 
     return HAILO_SUCCESS;

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -9,6 +9,10 @@
 
 #include "common/event_internal.hpp"
 #include "common/utils.hpp"
+
+#include <synchapi.h>        // WaitForMultipleObjects
+#include <winbase.h>         // WAIT_OBJECT_0, WAIT_TIMEOUT, INFINITE
+#include <errhandlingapi.h>  // GetLastError
 
 namespace hailort
 {

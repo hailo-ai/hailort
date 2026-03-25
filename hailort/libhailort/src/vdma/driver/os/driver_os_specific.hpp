@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -21,10 +21,12 @@
 namespace hailort
 {
 
+using DeviceInfo = HailoRTDriver::DeviceInfo;
+using DeviceType = HailoRTDriver::DeviceType;
+
 Expected<FileDescriptor> open_device_file(const std::string &path);
-Expected<HailoRTDriver::DeviceInfo> query_device_info(const std::string &device_name);
-Expected<std::vector<HailoRTDriver::DeviceInfo>> scan_nnc_devices();
-Expected<std::vector<HailoRTDriver::DeviceInfo>> scan_soc_devices();
+Expected<DeviceInfo> query_device(DeviceType device_type, const std::string &device_name);
+Expected<std::vector<DeviceInfo>> scan_devices_by_type(DeviceType device_type);
 
 hailo_status convert_errno_to_hailo_status(int err, const char* ioctl_name);
 

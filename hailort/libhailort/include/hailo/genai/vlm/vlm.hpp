@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -33,7 +33,7 @@ public:
      * @param[in] hef_path                   The path of the Hef file.
      * @param[in] optimize_memory_on_device  Whether to optimize memory usage on device by enabling client-side tokenization.
      *                                       When true, tokenization is performed on the host, reducing device memory usage.
-     *                                       Requires libhailort to be compiled with HAILO_BUILD_CLIENT_TOKENIZER=ON.
+     *                                       Requires libhailort to be compiled with HAILO_BUILD_CLIENT_TOKENIZER=ON (default).
      *                                       Default is false.
      */
     VLMParams(const std::string &hef_path, bool optimize_memory_on_device = false) : m_hef_path(hef_path), m_optimize_memory_on_device(optimize_memory_on_device) {}
@@ -62,7 +62,7 @@ public:
      *
      * @param[in] optimize_memory_on_device  Whether to enable client-side tokenization for memory optimization.
      *                                       When true, tokenization is performed on the host, reducing device memory usage.
-     *                                       Requires libhailort to be compiled with HAILO_BUILD_CLIENT_TOKENIZER=ON.
+     *                                       Requires libhailort to be compiled with HAILO_BUILD_CLIENT_TOKENIZER=ON (default).
      */
     void set_optimize_memory_on_device(bool optimize_memory_on_device);
 
@@ -125,6 +125,43 @@ public:
      */
     Expected<LLMGeneratorCompletion> generate(const std::vector<std::string> &messages_json_strings, const std::vector<MemoryView> &input_frames,
         const std::vector<std::vector<MemoryView>> &input_videos = {});
+
+    /**
+     * Initiates generation from the input prompt using pre-computed embeddings instead of raw frames.
+     * Use this when embeddings have been computed externally (e.g., by a separate image encoder).
+     * Returns an LLMGeneratorCompletion, which allows fetching generated tokens incrementally.
+     *
+     * @param[in] prompt            The prompt to be processed by the VLM model. The prompt is written as-is without any template formatting.
+     * @param[in] image_embeddings  The embeddings for standalone images, one buffer per image. Each buffer contains the vision encoder output for that image, Can be empty.
+     * @param[in] video_embeddings  The embeddings for videos, can be empty. Each inner vector represents one video's frame embeddings.
+     *
+     * @return Upon success, returns Expected of LLMGeneratorCompletion. Otherwise, returns Unexpected of ::hailo_status error.
+     * @note The model must support raw embeddings input for this method to work.
+     * @note Calling this function while the model is already generating may lead to undefined behavior.
+     * @note Only one `LLMGeneratorCompletion` instance should exist at a time. Creating multiple instances concurrently may lead to undefined behavior.
+     *       A subsequent LLMGeneratorCompletion must only be created once the previous one has been fully destructed.
+     */
+    Expected<LLMGeneratorCompletion> generate_from_embeddings(const std::string &prompt, const std::vector<MemoryView> &image_embeddings,
+        const std::vector<std::vector<MemoryView>> &video_embeddings = {});
+
+    /**
+     * Initiates generation from structured messages in JSON format using pre-computed embeddings instead of raw frames.
+     * Use this when embeddings have been computed externally (e.g., by a separate image encoder).
+     * Returns an LLMGeneratorCompletion, which allows fetching generated tokens incrementally.
+     *
+     * @param[in] messages_json_strings A vector of JSON strings representing structured messages.
+     * @param[in] image_embeddings      The embeddings for standalone images, one buffer per image. Each buffer contains the vision encoder output for that image, Can be empty.
+     * @param[in] video_embeddings      The embeddings for videos, can be empty. Each inner vector represents one video's frame embeddings.
+     *
+     * @return Upon success, returns Expected of LLMGeneratorCompletion. Otherwise, returns Unexpected of ::hailo_status error.
+     * @note The model must support raw embeddings input for this method to work.
+     * @note The number of image_embeddings must equal the total number of image entries across all messages; the same requirement applies to video_embeddings.
+     * @note Calling this function while the model is already generating may lead to undefined behavior.
+     * @note Only one `LLMGeneratorCompletion` instance should exist at a time. Creating multiple instances concurrently may lead to undefined behavior.
+     *       A subsequent LLMGeneratorCompletion must only be created once the previous one has been fully destructed.
+     */
+    Expected<LLMGeneratorCompletion> generate_from_embeddings(const std::vector<std::string> &messages_json_strings,
+        const std::vector<MemoryView> &image_embeddings, const std::vector<std::vector<MemoryView>> &video_embeddings = {});
 
     class Impl;
     VLMGenerator(std::shared_ptr<Impl> pimpl);
@@ -351,6 +388,13 @@ public:
      */
     const hailo_format_order_t& input_frame_format_order() const;
 
+
+    Expected<LLMGeneratorCompletion> generate_from_embeddings(const std::vector<std::string> &messages_json_strings,
+        const std::vector<MemoryView> &image_embeddings, const std::vector<std::vector<MemoryView>> &video_embeddings = {});
+
+    Expected<LLMGeneratorCompletion> generate_from_embeddings(const LLMGeneratorParams &params,
+        const std::vector<std::string> &messages_json_strings, const std::vector<MemoryView> &image_embeddings,
+        const std::vector<std::vector<MemoryView>> &video_embeddings = {});
 
     VLM(VLM &&);
     VLM &operator=(VLM &&) = delete;

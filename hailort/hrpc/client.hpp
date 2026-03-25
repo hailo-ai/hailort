@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -38,10 +38,11 @@ struct reply_data_t
 class Client
 {
 public:
-    Client(const std::string &device_id) : m_device_id(device_id), m_is_running(true), m_messages_sent(0) {}
+    static Expected<std::shared_ptr<Client>> created_connected(const std::string &device_id);
+    Client(const std::string &device_id)
+        : m_device_id(device_id), m_is_running(true), m_messages_sent(0) {}
     ~Client();
 
-    hailo_status connect(bool is_localhost = false);
     Expected<rpc_message_t> execute_request(uint32_t action_id, const MemoryView &request,
         std::vector<TransferBuffer> &&write_buffers = {}, std::vector<TransferBuffer> &&read_buffers = {},
         std::chrono::milliseconds timeout = REQUEST_TIMEOUT);
@@ -52,10 +53,12 @@ public:
     void set_notification_callback(std::function<hailo_status(const MemoryView&)> callback);
     std::shared_ptr<HailoRTDriver> get_driver() { return m_conn_context->get_driver(); };
     const std::string &device_id() const { return m_device_id; }
+    Device::Type device_type() const { return m_conn_context->device_type(); }
     Expected<BufferPtr> allocate_request_buffer();
     std::shared_ptr<ClientCallbackDispatcherManager> callback_dispatcher_manager();
 
 private:
+    hailo_status connect();
     Expected<message_id_t> execute_request_async_impl(uint32_t action_id, const MemoryView &request,
         HrpcCallback reply_received_callback, std::vector<TransferBuffer> &&write_buffers,
         std::vector<TransferBuffer> &&read_buffers);

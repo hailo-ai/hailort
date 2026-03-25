@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -12,6 +12,7 @@
 
 #include "hailo/platform.h"
 #include <limits.h>
+#include <cstdint>
 
 
 #define HAILO_MAX_ENUM (INT_MAX)

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -19,7 +19,7 @@
 #include "vdevice/vdevice_core_op.hpp"
 #include "vdevice/vdevice_hrpc_client.hpp"
 
-#include "vdma/pcie/pcie_device.hpp"
+#include "vdma/legacy_pcie/legacy_pcie_device.hpp"
 #include "vdma/integrated/integrated_device.hpp"
 #include "utils/shared_resource_manager.hpp"
 #include "network_group/network_group_internal.hpp"
@@ -28,6 +28,7 @@
 #include "hef/hef_internal.hpp"
 
 #include "common/utils.hpp"
+#include "device_common/usb/usb_utils.hpp"
 
 namespace hailort
 {
@@ -236,10 +237,10 @@ Expected<std::unique_ptr<VDevice>> VDevice::create(const hailo_vdevice_params_t 
     if (params.multi_process_service || do_device_ids_contain_eth) {
         TRY(vdevice, VDeviceHrpcClient::create(params));
     } else {
-        auto acc_type = HailoRTDriver::AcceleratorType::ACC_TYPE_MAX_VALUE;
-        TRY(acc_type, VDeviceBase::get_accelerator_type(params.device_ids, params.device_count));
+        auto acc_type = HailoRTDriver::DeviceType::DEV_TYPE_MAX_VALUE;
+        TRY(acc_type, VDeviceBase::get_device_type(params.device_ids, params.device_count));
 
-        if (acc_type == HailoRTDriver::AcceleratorType::SOC_ACCELERATOR) {
+        if (acc_type == HailoRTDriver::DeviceType::DISCRETE) {
             TRY(vdevice, VDeviceHrpcClient::create(params));
         } else {
             TRY(vdevice, VDeviceHandle::create(params));
@@ -287,9 +288,9 @@ Expected<std::shared_ptr<VDevice>> VDevice::create_shared(const std::vector<std:
     return vdevice;
 }
 
-Expected<HailoRTDriver::AcceleratorType> VDeviceBase::get_accelerator_type(hailo_device_id_t *device_ids, size_t device_count)
+Expected<HailoRTDriver::DeviceType> VDeviceBase::get_device_type(hailo_device_id_t *device_ids, size_t device_count)
 {
-    auto acc_type = HailoRTDriver::AcceleratorType::ACC_TYPE_MAX_VALUE;
+    auto acc_type = HailoRTDriver::DeviceType::DEV_TYPE_MAX_VALUE;
     TRY(auto device_infos, HailoRTDriver::scan_devices());
     if (nullptr != device_ids) {
         // device_ids are provided - check that all ids are of the same type + that the id exists in the scan from device_infos
@@ -300,16 +301,23 @@ Expected<HailoRTDriver::AcceleratorType> VDeviceBase::get_accelerator_type(hailo
             });
             CHECK(device_info != device_infos.end(), HAILO_INVALID_ARGUMENT,
                 "VDevice creation failed. device_id {} not found", id);
-            CHECK(acc_type == HailoRTDriver::AcceleratorType::ACC_TYPE_MAX_VALUE || acc_type == device_info->accelerator_type, HAILO_INVALID_ARGUMENT,
+            CHECK(acc_type == HailoRTDriver::DeviceType::DEV_TYPE_MAX_VALUE || acc_type == device_info->device_type, HAILO_INVALID_ARGUMENT,
                 "VDevice creation failed. device_ids of devices with different types are provided (e.g. Hailo8 and Hailo10). Please provide device_ids of the same device types");
-            acc_type = device_info->accelerator_type;
+            acc_type = device_info->device_type;
         }
     } else {
+        if (device_infos.size() == 0) {
+            TRY(auto usb_device_infos, UsbUtils::scan());
+            if (usb_device_infos.size() > 0) {
+                return HailoRTDriver::DeviceType::DISCRETE;
+            }
+        }
+
         // No device_id is provided - check that all devices are of the same type
         for (const auto &device_info : device_infos) {
-            CHECK(acc_type == HailoRTDriver::AcceleratorType::ACC_TYPE_MAX_VALUE || acc_type == device_info.accelerator_type, HAILO_INVALID_ARGUMENT,
+            CHECK(acc_type == HailoRTDriver::DeviceType::DEV_TYPE_MAX_VALUE || acc_type == device_info.device_type, HAILO_INVALID_ARGUMENT,
                 "VDevice creation failed. Devices of different types are found and no device_id is provided. Please provide device_ids");
-            acc_type = device_info.accelerator_type;
+            acc_type = device_info.device_type;
         }
     }
     return acc_type;
@@ -320,16 +328,16 @@ hailo_status VDeviceBase::validate_params(const hailo_vdevice_params_t &params)
     CHECK(0 != params.device_count, HAILO_INVALID_ARGUMENT,
         "VDevice creation failed. Invalid device_count ({}).", params.device_count);
 
-    TRY(auto do_device_ids_contain_eth, do_device_ids_contain_eth(params));
-    CHECK(!(do_device_ids_contain_eth && (1 != params.device_count)), HAILO_INVALID_ARGUMENT,
-        "VDevice over ETH is supported for one device only. Passed device_count: {}", params.device_count);
-    CHECK(!(do_device_ids_contain_eth && params.multi_process_service), HAILO_INVALID_ARGUMENT,
+    TRY(auto do_device_ids_contain_remote, do_device_ids_contain_eth(params));
+    CHECK(!(do_device_ids_contain_remote && (1 != params.device_count)), HAILO_INVALID_ARGUMENT,
+        "VDevice over ETH/USB is supported for one device only. Passed device_count: {}", params.device_count);
+    CHECK(!(do_device_ids_contain_remote && params.multi_process_service), HAILO_INVALID_ARGUMENT,
         "Multi process service is only supported with locally connected devices");
 
     if (params.multi_process_service) {
-        auto acc_type = HailoRTDriver::AcceleratorType::ACC_TYPE_MAX_VALUE;
-        TRY(acc_type, get_accelerator_type(params.device_ids, params.device_count));
-        CHECK(acc_type != HailoRTDriver::AcceleratorType::SOC_ACCELERATOR, HAILO_INVALID_OPERATION,
+        auto acc_type = HailoRTDriver::DeviceType::DEV_TYPE_MAX_VALUE;
+        TRY(acc_type, get_device_type(params.device_ids, params.device_count));
+        CHECK(acc_type != HailoRTDriver::DeviceType::DISCRETE, HAILO_INVALID_OPERATION,
             "Using the Multi Process Service is needed only on Hailo-8 and Hailo-15 devices. "
             "Hailo-10H supports multi-process functionality without requiring a service");
     }
@@ -490,6 +498,13 @@ Expected<std::shared_ptr<InferModel>> VDevice::create_infer_model(Hef hef, const
 {
     TRY(auto infer_model_base, InferModelBase::create(*this, hef, name));
     return std::shared_ptr<InferModel>(std::move(infer_model_base));
+}
+
+Expected<std::shared_ptr<Session>> VDevice::create_session(uint16_t connection_port) const
+{
+    (void)connection_port;
+    LOGGER__ERROR("Using VDevice::create_session is not supported."); // Only supported on VDeviceHrpcClient
+    return make_unexpected(HAILO_NOT_SUPPORTED);
 }
 
 Expected<hailo_stream_interface_t> VDeviceBase::get_default_streams_interface() const
@@ -683,12 +698,13 @@ Expected<bool> VDeviceBase::do_device_ids_contain_eth(const hailo_vdevice_params
     if (params.device_ids != nullptr) {
         for (uint32_t i = 0; i < params.device_count; i++) {
             TRY(auto dev_type, Device::get_device_type(params.device_ids[i].id));
-            if (Device::Type::ETH == dev_type) {
+            // ETH and USB devices need HRPC client
+            if ((Device::Type::ETH == dev_type) || (Device::Type::USB == dev_type)) {
                 return true;
             }
         }
     }
-    return false; // in case no device_ids were provided, we assume there's no ETH device
+    return false; // in case no device_ids were provided, we assume there's no ETH/USB device
 }
 
 } /* namespace hailort */

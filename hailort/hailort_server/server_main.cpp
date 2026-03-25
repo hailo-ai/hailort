@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -30,7 +30,7 @@ using namespace hailort;
 
 #define LOGGER_PATTERN ("[%Y-%m-%d %X.%e] [%P] [%t] [%n] [%^%l%$] [%s:%#] [%!] %v")
 
-void init_logger(const std::string &name)
+static void init_logger(const std::string &name)
 {
     auto console_sink = hailort::make_shared_nothrow<spdlog::sinks::stderr_color_sink_mt>();
     if (nullptr == console_sink) {
@@ -74,16 +74,14 @@ int main(int argc, char* argv[])
 {
     init_logger("HailoRT-Server");
 
-    std::string ip_addr = "";
-    if (argc > 1) {
-        ip_addr = argv[1];
-        LOGGER__INFO("Using IP address: {}", ip_addr);
-    } else {
-        LOGGER__INFO("Using PCIe");
+    if (2 != argc) {
+        LOGGER__ERROR("Usage: {} <pcie/usb/<ip_address>>", argv[0]);
+        return 1;
     }
 
     // Create classic HailoRT-server
-    TRY(auto server, HailoRTServer::create_unique(ip_addr));
+    const std::string device_id = argv[1];
+    TRY(auto server, HailoRTServer::create_unique(device_id));
     TRY(auto dispatcher, server->create_dispatcher());
     server->set_dispatcher(dispatcher);
     auto hailort_server_th = std::thread([&server]() {
@@ -95,8 +93,8 @@ int main(int argc, char* argv[])
 
 #ifdef HAILO_GENAI_SERVER
     // Create GenAI server
-    auto llm_thread = std::thread([ip_addr, &server]() {
-        TRY(auto server_connection, SessionListener::create_shared(genai::DEFAULT_LLM_CONNECTION_PORT, ip_addr));
+    auto llm_thread = std::thread([device_id, &server]() {
+        TRY(auto server_connection, SessionListener::create_shared(genai::DEFAULT_LLM_CONNECTION_PORT, device_id));
         while (true) {
             TRY(auto session, server_connection->accept());
             auto th = std::thread([session, &server]() {
@@ -112,8 +110,8 @@ int main(int argc, char* argv[])
     });
     llm_thread.detach();
 
-    auto vlm_thread = std::thread([ip_addr, &server]() {
-        TRY(auto server_connection, SessionListener::create_shared(genai::DEFAULT_VLM_CONNECTION_PORT, ip_addr));
+    auto vlm_thread = std::thread([device_id, &server]() {
+        TRY(auto server_connection, SessionListener::create_shared(genai::DEFAULT_VLM_CONNECTION_PORT, device_id));
         while (true) {
             TRY(auto session, server_connection->accept());
             auto th = std::thread([session, &server]() {
@@ -129,8 +127,8 @@ int main(int argc, char* argv[])
     });
     vlm_thread.detach();
 
-    auto speech2text_thread = std::thread([ip_addr, &server]() {
-        TRY(auto server_connection, SessionListener::create_shared(genai::DEFAULT_SPEECH2TEXT_CONNECTION_PORT, ip_addr));
+    auto speech2text_thread = std::thread([device_id, &server]() {
+        TRY(auto server_connection, SessionListener::create_shared(genai::DEFAULT_SPEECH2TEXT_CONNECTION_PORT, device_id));
         while (true) {
             TRY(auto session, server_connection->accept());
             auto th = std::thread([session, &server]() {

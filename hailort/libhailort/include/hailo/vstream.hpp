@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -369,6 +369,15 @@ public:
      * This function will fail in cases where the output vstream has no NMS operations on the CPU.
      */
     hailo_status set_nms_max_accumulated_mask_size(uint32_t max_accumulated_mask_size);
+
+    /**
+     * Set mask for filtering classes
+     *
+     * @param[in] classes_filter_mask   Bit mask for filtering classes. If bit at index i is false, class i is filtered.
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     * @note This function will fail in cases where the output vstream has no NMS operations on the CPU.
+     */
+    hailo_status set_nms_classes_filter_mask(const std::vector<bool> &classes_filter_mask);
 
 
     bool is_aborted();

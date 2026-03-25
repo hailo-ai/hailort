@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -17,8 +17,6 @@
 
 #include <vector>
 #include <memory>
-#include <chrono>
-
 
 /** hailort namespace */
 namespace hailort
@@ -38,12 +36,14 @@ using NotificationCallback = std::function<void(Device &device, const hailo_noti
 class HAILORTAPI Device
 {
 public:
+    static constexpr std::chrono::milliseconds DEFAULT_SAMPLING_PERIOD = std::chrono::milliseconds(100);
 
     /** The device type */
     enum class Type {
         PCIE = 0,
         ETH,
-        INTEGRATED
+        INTEGRATED,
+        USB
     };
 
     /** The device supported capabilities */
@@ -351,11 +351,11 @@ public:
      * @param[in]   dvm                Which DVM will be measured. Default (::HAILO_DVM_OPTIONS_AUTO) will be different according to the board: <br>
      *                                 - Default (::HAILO_DVM_OPTIONS_AUTO) for EVB is an approximation to the total power consumption of the chip in PCIe setups.
      *                                 It sums ::HAILO_DVM_OPTIONS_VDD_CORE, ::HAILO_DVM_OPTIONS_MIPI_AVDD and ::HAILO_DVM_OPTIONS_AVDD_H.
-     *                                 Only ::HAILO_POWER_MEASUREMENT_TYPES__POWER can measured with this option.
+     *                                 Only ::HAILO_POWER_MEASUREMENT_TYPES__POWER can be measured with this option.
      *                                 - Default (::HAILO_DVM_OPTIONS_AUTO) for platforms supporting current monitoring (such as M.2 and mPCIe): OVERCURRENT_PROTECTION.
      * @param[in]   measurement_type   The type of the measurement. Choosing ::HAILO_POWER_MEASUREMENT_TYPES__AUTO
      *                                 will select the default value according to the supported features.
-     * @return Upon success, returns @a uint32_t mesuremenet. Measured units are determined due to ::hailo_power_measurement_types_t.
+     * @return Upon success, returns @a float32_t measurement. Measured units are determined due to ::hailo_power_measurement_types_t.
      *         Otherwise, returns a ::hailo_status error.
      */
     virtual Expected<float32_t> power_measurement(hailo_dvm_options_t dvm, hailo_power_measurement_types_t measurement_type);
@@ -431,11 +431,14 @@ public:
     /**
      * Gets performance stats of the Hailo device, and of the system it is connected to.
      *
+     * @param[in] sampling_period   The time window duration in milliseconds for measuring performance stats.
+     *                              Default is 100ms.
+     *
      * @return Upon success, returns @a hailo_performance_stats_t, containing performance information.
      *         Otherwise, returns a ::hailo_status error.
      * @note Supported only on Hailo-10/Hailo-15 devices running on Linux.
      */
-    virtual Expected<hailo_performance_stats_t> query_performance_stats();
+    virtual Expected<hailo_performance_stats_t> query_performance_stats(std::chrono::milliseconds sampling_period = DEFAULT_SAMPLING_PERIOD);
 
     /**
      * Reset device.
@@ -486,119 +489,6 @@ public:
     hailo_status set_sleep_state(hailo_sleep_state_t sleep_state);
 
     /**
-     *  Update the firmware of a Hailo device.
-     * 
-     * @param[in] firmware_binary       The firmware code to be updated to the device.
-     * @param[in] should_reset          Bool indicating whether to reset the device after updating.
-     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     * @note Calling this function while running other operations on the device (including inference) will
-     * lead to unexpected results!
-     * @note The object used to call this function is not to be used after calling this function!
-     * A new instance should be created.
-     */
-    virtual hailo_status firmware_update(const MemoryView &firmware_binary, bool should_reset) = 0;
-
-    /**
-     *  Update the second stage binary.
-     * 
-     * @param[in] second_stage_binary           The SSB code to be updated to the device.
-     * @param[in] second_stage_binary_length    The length of the SSB to be updated.
-     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     * @note Calling this function while running other operations on the device (including inference) will
-     * lead to unexpected results!
-     * @note The object used to call this function is not to be used after calling this function!
-     * A new instance should be created.
-     */
-    virtual hailo_status second_stage_update(uint8_t *second_stage_binary, uint32_t second_stage_binary_length) = 0;
-
-    /**
-     * Store sensor configuration to Hailo chip flash memory.
-     *
-     * @param[in] section_index         Flash section index to write to. [0-6]
-     * @param[in] sensor_type           Sensor type.
-     * @param[in] reset_config_size     Size of reset configuration.
-     * @param[in] config_height         Configuration resolution height.
-     * @param[in] config_width          Configuration resolution width.
-     * @param[in] config_fps            Configuration FPS.
-     * @param[in] config_file_path      Sensor configuration file path.
-     * @param[in] config_name           Sensor configuration name.
-     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     */
-    virtual hailo_status store_sensor_config(uint32_t section_index, hailo_sensor_types_t sensor_type,
-        uint32_t reset_config_size, uint16_t config_height, uint16_t config_width, uint16_t config_fps,
-        const std::string &config_file_path, const std::string &config_name) = 0;
-    
-    /**
-     * Store sensor ISP configuration to Hailo chip flash memory.
-     *
-     * @param[in] reset_config_size                 Size of reset configuration.
-     * @param[in] config_height                     Configuration resolution height.
-     * @param[in] config_width                      Configuration resolution width.
-     * @param[in] config_fps                        Configuration FPS.
-     * @param[in] isp_static_config_file_path       ISP static configuration file path.
-     * @param[in] isp_runtime_config_file_path      ISP runtime configuration file path.
-     * @param[in] config_name                       Sensor configuration name.
-     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     */
-    virtual hailo_status store_isp_config(uint32_t reset_config_size, uint16_t config_height, uint16_t config_width, uint16_t config_fps,
-        const std::string &isp_static_config_file_path, const std::string &isp_runtime_config_file_path, const std::string &config_name) = 0;
-    
-    /**
-     * Gets the sections information of the sensor.
-     *
-     * @return Upon success, returns Expected of a buffer containing the sensor's sections information.
-     *         Otherwise, returns Unexpected of ::hailo_status error.
-     */
-    virtual Expected<Buffer> sensor_get_sections_info() = 0;
-
-    /**
-     * Dump config of given section index into a csv file.
-     *
-     * @param[in] section_index         Flash section index to load config from. [0-7]
-     * @param[in] config_file_path      File path to dump section configuration into.
-     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     */
-    virtual hailo_status sensor_dump_config(uint32_t section_index, const std::string &config_file_path) = 0;
-
-    /**
-     * Set the I2C bus to which the sensor of the specified type is connected.
-     *
-     * @param[in] sensor_type           The sensor type.
-     * @param[in] bus_index             The I2C bus index of the sensor.
-     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     */
-    virtual hailo_status sensor_set_i2c_bus_index(hailo_sensor_types_t sensor_type, uint32_t bus_index) = 0;
-
-    /**
-     * Load the configuration with I2C in the section index.
-     *
-     * @param[in] section_index         Flash section index to load config from. [0-6]
-     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     */
-    virtual hailo_status sensor_load_and_start_config(uint32_t section_index) = 0;
-
-    /**
-     * Reset the sensor that is related to the section index config.
-     *
-     * @param[in] section_index         Flash section index to load config from. [0-6]
-     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     */
-    virtual hailo_status sensor_reset(uint32_t section_index) = 0;
-
-    /**
-     * Set a generic I2C slave for sensor usage.
-     *
-     * @param[in] slave_address         The address of the i2c slave.
-     * @param[in] offset_size           Slave offset size (in bytes).
-     * @param[in] bus_index             The bus number the i2c slave is connected to.
-     * @param[in] should_hold_bus       Should hold the bus during the read.
-     * @param[in] slave_endianness      BIG_ENDIAN or LITTEL_ENDIAN.
-     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     */
-    virtual hailo_status sensor_set_generic_i2c_slave(uint16_t slave_address, uint8_t offset_size, uint8_t bus_index,
-        uint8_t should_hold_bus, uint8_t slave_endianness) = 0;
-
-    /**
      * Reads board configuration from device.
      * 
      * @return Upon success, returns Expected of a buffer containing the data read.
@@ -613,37 +503,6 @@ public:
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      */  
     virtual hailo_status write_board_config(const MemoryView &buffer) = 0;
-
-    /**
-     * Gets firmware user configuration information from device.
-     * 
-     * @return Upon success, returns Expected of ::hailo_fw_user_config_information_t.
-     *         Otherwise, returns Unexpected of ::hailo_status error.
-     */  
-    virtual Expected<hailo_fw_user_config_information_t> examine_user_config() = 0;
-
-    /**
-     * Reads firmware user configuration from device.
-     * 
-     * @return Upon success, returns Expected of a buffer containing the data read.
-     *         Otherwise, returns Unexpected of ::hailo_status error.
-     */
-    virtual Expected<Buffer> read_user_config() = 0;
-
-    /**
-     * Write firmware user configuration to device.
-     * 
-     * @param[in] buffer        A buffer that contains the data to be written .
-     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     */  
-    virtual hailo_status write_user_config(const MemoryView &buffer) = 0;
-
-    /**
-     * Erase firmware user configuration from the device.
-     * 
-     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
-     */
-    virtual hailo_status erase_user_config() = 0;
 
     /**
      * Gets the device architecture.
@@ -764,6 +623,14 @@ public:
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
     Expected<Capabilities> get_capabilities();
+
+    /**
+     * Gets the host current supply limit for a USB device
+     *
+     * @return Upon success, returns the host current supply limit in milli Amperes.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    virtual Expected<uint32_t> get_current_limit();
 
     hailo_status set_overcurrent_state(bool should_activate);
     Expected<bool> get_overcurrent_state();

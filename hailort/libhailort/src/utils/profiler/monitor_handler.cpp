@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -279,9 +279,16 @@ void MonitorHandler::write_utilization_to_file(const double utilization_percenta
         }
     }
 
-    auto locked_file = LockedFile::create(m_nnc_utilization_tmp_output->name(), "w");
+    auto const tmp_output_path = m_nnc_utilization_tmp_output->path();
+    auto locked_file = LockedFile::create(tmp_output_path, "w");
     if (locked_file.status() != HAILO_SUCCESS) {
-        LOGGER__ERROR("Failed to open and lock file {}, with status: {}", m_nnc_utilization_tmp_output->name(), locked_file.status());
+        LOGGER__ERROR("Failed to open and lock file {}, with status: {}", tmp_output_path, locked_file.status());
+        return;
+    }
+
+    auto status = locked_file->lock();
+    if (HAILO_SUCCESS != status) {
+        LOGGER__ERROR("Failed to lock file {}, with status: {}", tmp_output_path, status);
         return;
     }
 
@@ -313,10 +320,16 @@ void MonitorHandler::dump_state()
         }
     }
 
-    std::string tmp_path = m_mon_tmp_output->name() + ".tmp";
+    std::string tmp_path = m_mon_tmp_output->path() + ".tmp";
     auto tmp_file = LockedFile::create(tmp_path, "w");
     if (HAILO_SUCCESS != tmp_file.status()) {
         LOGGER__ERROR("Failed to open and lock tmp file {}, status: {}", tmp_path, tmp_file.status());
+        return;
+    }
+
+    auto status = tmp_file->lock();
+    if (HAILO_SUCCESS != status) {
+        LOGGER__ERROR("Failed to lock tmp file {}, with status: {}", tmp_path, status);
         return;
     }
 
@@ -334,7 +347,7 @@ void MonitorHandler::dump_state()
         return;
     }
 
-    if (std::rename(tmp_path.c_str(), m_mon_tmp_output->name().c_str()) != 0) {
+    if (std::rename(tmp_path.c_str(), m_mon_tmp_output->path().c_str()) != 0) {
         LOGGER__ERROR("Failed to rename tmp file to monitor file: errno = {}", errno);
     }
 }

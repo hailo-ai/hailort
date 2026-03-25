@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -70,7 +70,11 @@ void hailo_atomic_store(hailo_atomic_int *atomic, int value)
 
 #elif defined _MSC_VER // __unix__ || __QNX__
 
-#include <windows.h>
+#include <winnt.h>              // HANDLE, DWORD, LONG, INFINITE
+#include <synchapi.h>           // WaitForSingleObject
+#include <processthreadsapi.h>  // CreateThread, GetExitCodeThread
+#include <handleapi.h>          // CloseHandle
+#include <winbase.h>            // Interlocked* APIs
 typedef HANDLE hailo_thread;
 typedef DWORD thread_return_type;
 typedef LONG hailo_atomic_int;

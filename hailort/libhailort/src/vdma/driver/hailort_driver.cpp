@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -34,18 +34,10 @@ static_assert(VDMA_CHANNELS_PER_ENGINE <= MAX_VDMA_CHANNELS_PER_ENGINE, "Driver 
 static_assert(MAX_VDMA_ENGINES == MAX_VDMA_ENGINES_COUNT, "Driver and libhailort parameters mismatch");
 static_assert(MIN_D2H_CHANNEL_INDEX == VDMA_DEST_CHANNELS_START, "Driver and libhailort parameters mismatch");
 static_assert(ONGOING_TRANSFERS_SIZE == HAILO_VDMA_MAX_ONGOING_TRANSFERS, "Driver and libhailort parameters mismatch");
-static_assert(MAX_IRQ_TIMESTAMPS_SIZE == CHANNEL_IRQ_TIMESTAMPS_SIZE, "Driver and libhailort parameters mismatch");
 
-static_assert(MAX_TRANSFER_BUFFERS_IN_REQUEST == HAILO_MAX_BUFFERS_PER_SINGLE_TRANSFER, "Driver and libhailort parameters mismatch");
+static_assert(MAX_BUFFERS_IN_REQUEST == HAILO_MAX_BUFFERS_PER_SINGLE_TRANSFER, "Driver and libhailort parameters mismatch");
 
-static_assert(static_cast<int>(InterruptsDomain::NONE) == HAILO_VDMA_INTERRUPTS_DOMAIN_NONE, "Driver and libhailort parameters mismatch");
-static_assert(static_cast<int>(InterruptsDomain::HOST) == HAILO_VDMA_INTERRUPTS_DOMAIN_HOST, "Driver and libhailort parameters mismatch");
-static_assert(static_cast<int>(InterruptsDomain::DEVICE) == HAILO_VDMA_INTERRUPTS_DOMAIN_DEVICE, "Driver and libhailort parameters mismatch");
-static_assert(static_cast<int>(InterruptsDomain::BOTH) ==
-    (HAILO_VDMA_INTERRUPTS_DOMAIN_DEVICE | HAILO_VDMA_INTERRUPTS_DOMAIN_HOST), "Driver and libhailort parameters mismatch");
-
-
-static const std::string INTEGRATED_NNC_DRIVER_PATH = "/dev/hailo_integrated_nnc";
+static const std::string INTEGRATED_NNC_DRIVER_PATH = "/dev/h1x";
 static const std::string PCIE_EP_DRIVER_PATH = "/dev/hailo_pci_ep";
 
 
@@ -267,12 +259,12 @@ Expected<std::vector<HailoRTDriver::DeviceInfo>> scan_all_devices()
 {
     std::vector<HailoRTDriver::DeviceInfo> devices_info;
 
-    TRY(auto nnc_devices, scan_nnc_devices());
+    TRY(auto nnc_devices, scan_devices_by_type(HailoRTDriver::DeviceType::INTEGRATED));
     if (!nnc_devices.empty()) {
         devices_info.insert(devices_info.end(), nnc_devices.begin(), nnc_devices.end());
     }
 
-    TRY(auto soc_devices, scan_soc_devices());
+    TRY(auto soc_devices, scan_devices_by_type(HailoRTDriver::DeviceType::DISCRETE));
     if (!soc_devices.empty()) {
         devices_info.insert(devices_info.end(), soc_devices.begin(), soc_devices.end());
     }
@@ -285,27 +277,18 @@ Expected<std::vector<HailoRTDriver::DeviceInfo>> HailoRTDriver::scan_devices()
     return scan_all_devices();
 }
 
-Expected<std::vector<HailoRTDriver::DeviceInfo>> HailoRTDriver::scan_devices(AcceleratorType acc_type)
+Expected<std::vector<HailoRTDriver::DeviceInfo>> HailoRTDriver::scan_devices(DeviceType dev_type)
 {
-    std::vector<HailoRTDriver::DeviceInfo> devices_info;
-
-    if (AcceleratorType::SOC_ACCELERATOR == acc_type) {
-        TRY(devices_info, scan_soc_devices());
-    } else if (AcceleratorType::NNC_ACCELERATOR == acc_type) {
-        TRY(devices_info, scan_nnc_devices());
-    }
-
-    return devices_info;
+    return scan_devices_by_type(dev_type);
 }
 
 
 
-hailo_status HailoRTDriver::vdma_enable_channels(const ChannelsBitmap &channels_bitmap, bool enable_timestamps_measure)
+hailo_status HailoRTDriver::vdma_enable_channels(const ChannelsBitmap &channels_bitmap)
 {
     CHECK(is_valid_channels_bitmap(channels_bitmap), HAILO_INVALID_ARGUMENT, "Invalid channel bitmap given");
     hailo_vdma_enable_channels_params params{};
     std::copy(channels_bitmap.begin(), channels_bitmap.end(), params.channels_bitmap_per_engine);
-    params.enable_timestamps_measure = enable_timestamps_measure;
 
     RUN_AND_CHECK_IOCTL_RESULT(HAILO_VDMA_ENABLE_CHANNELS, &params, "Failed to enable vdma channels");
     return HAILO_SUCCESS;
@@ -319,21 +302,6 @@ hailo_status HailoRTDriver::vdma_disable_channels(const ChannelsBitmap &channels
 
     RUN_AND_CHECK_IOCTL_RESULT(HAILO_VDMA_DISABLE_CHANNELS, &params, "Failed to disable vdma channels");
     return HAILO_SUCCESS;
-}
-
-static Expected<ChannelInterruptTimestampList> create_interrupt_timestamp_list(
-    hailo_vdma_interrupts_read_timestamp_params &inter_data)
-{
-    CHECK_AS_EXPECTED(inter_data.timestamps_count <= MAX_IRQ_TIMESTAMPS_SIZE, HAILO_DRIVER_INVALID_RESPONSE,
-        "Invalid channel interrupts timestamps count returned {}", inter_data.timestamps_count);
-    ChannelInterruptTimestampList timestamp_list{};
-
-    timestamp_list.count = inter_data.timestamps_count;
-    for (size_t i = 0; i < timestamp_list.count; i++) {
-        timestamp_list.timestamp_list[i].timestamp = std::chrono::nanoseconds(inter_data.timestamps[i].timestamp_ns);
-        timestamp_list.timestamp_list[i].desc_num_processed = inter_data.timestamps[i].desc_num_processed;
-    }
-    return timestamp_list;
 }
 
 static Expected<IrqData> to_irq_data(const hailo_vdma_interrupts_wait_params& params,
@@ -378,17 +346,6 @@ Expected<IrqData> HailoRTDriver::vdma_interrupts_wait(const ChannelsBitmap &chan
     RUN_AND_CHECK_IOCTL_RESULT(HAILO_VDMA_INTERRUPTS_WAIT, &params, "Failed wait vdma interrupts");
 
     return to_irq_data(params, static_cast<uint8_t>(m_dma_engines_count));
-}
-
-Expected<ChannelInterruptTimestampList> HailoRTDriver::vdma_interrupts_read_timestamps(vdma::ChannelId channel_id)
-{
-    hailo_vdma_interrupts_read_timestamp_params params{};
-    params.engine_index = channel_id.engine_index;
-    params.channel_index = channel_id.channel_index;
-
-    RUN_AND_CHECK_IOCTL_RESULT(HAILO_VDMA_INTERRUPTS_READ_TIMESTAMPS, &params, "Failed read vdma interrupts timestamps");
-
-    return create_interrupt_timestamp_list(params);
 }
 
 Expected<std::vector<uint8_t>> HailoRTDriver::read_notification()
@@ -535,9 +492,7 @@ hailo_status HailoRTDriver::vdma_buffer_sync(VdmaBufferHandle handle, DmaSyncDir
 }
 
 hailo_status HailoRTDriver::descriptors_list_program(uintptr_t desc_handle, VdmaBufferHandle buffer_handle,
-    size_t buffer_offset, size_t transfer_size, uint32_t transfers_count, uint8_t channel_index,
-    uint32_t starting_desc,
-    InterruptsDomain last_desc_interrupts)
+    size_t buffer_offset, size_t transfer_size, uint32_t transfers_count, uint8_t channel_index, uint32_t starting_desc)
 {
     hailo_desc_list_program_params params{};
     params.buffer_handle = buffer_handle;
@@ -547,8 +502,6 @@ hailo_status HailoRTDriver::descriptors_list_program(uintptr_t desc_handle, Vdma
     params.desc_handle = desc_handle;
     params.channel_index = channel_index;
     params.starting_desc = starting_desc;
-
-    params.last_interrupts_domain = (hailo_vdma_interrupts_domain)last_desc_interrupts;
 
 #ifdef NDEBUG
     params.is_debug = false;
@@ -560,12 +513,8 @@ hailo_status HailoRTDriver::descriptors_list_program(uintptr_t desc_handle, Vdma
     return HAILO_SUCCESS;
 }
 
-static Expected<hailo_vdma_prepare_transfer_params> fill_prepare_transfer_params(
-    vdma::ChannelId channel_id,
-    uintptr_t desc_handle,
-    const std::vector<TransferBuffer> &transfer_buffers,
-    InterruptsDomain first_interrupts_domain,
-    InterruptsDomain last_interrupts_domain)
+static Expected<hailo_vdma_prepare_transfer_params> fill_prepare_transfer_params(vdma::ChannelId channel_id,
+    uintptr_t desc_handle, const std::vector<TransferBuffer> &transfer_buffers)
 {
     hailo_vdma_prepare_transfer_params params{};
     if (transfer_buffers.size() > ARRAY_ENTRIES(params.buffers)) {
@@ -584,9 +533,6 @@ static Expected<hailo_vdma_prepare_transfer_params> fill_prepare_transfer_params
         params.buffers[i].size = static_cast<uint32_t>(transfer_buffers[i].size());
     }
 
-    params.first_interrupts_domain = static_cast<hailo_vdma_interrupts_domain>(first_interrupts_domain);
-    params.last_interrupts_domain = static_cast<hailo_vdma_interrupts_domain>(last_interrupts_domain);
-
 #ifdef NDEBUG
     params.is_debug = false;
 #else
@@ -597,22 +543,19 @@ static Expected<hailo_vdma_prepare_transfer_params> fill_prepare_transfer_params
 }
 
 hailo_status HailoRTDriver::hailo_vdma_prepare_transfer(vdma::ChannelId channel_id, uintptr_t desc_handle,
-    const std::vector<TransferBuffer> &transfer_buffers,  InterruptsDomain first_interrupts_domain,
-    InterruptsDomain last_desc_interrupts)
+    const std::vector<TransferBuffer> &transfer_buffers)
 {
     if (!is_valid_channel_id(channel_id)) {
         LOGGER__ERROR("Invalid channel id {}", channel_id);
         return HAILO_INVALID_ARGUMENT;
     }
-    TRY(hailo_vdma_prepare_transfer_params params, fill_prepare_transfer_params(channel_id, desc_handle,
-        transfer_buffers, first_interrupts_domain, last_desc_interrupts));
+    TRY(auto params, fill_prepare_transfer_params(channel_id, desc_handle, transfer_buffers));
     RUN_AND_CHECK_IOCTL_RESULT(HAILO_VDMA_PREPARE_TRANSFER, &params, "Failed launch transfer");
     return HAILO_SUCCESS;
 }
 
 hailo_status HailoRTDriver::launch_transfer(vdma::ChannelId channel_id, uintptr_t desc_handle,
-    const std::vector<TransferBuffer> &transfer_buffers, bool is_cyclic,
-    InterruptsDomain first_desc_interrupts, InterruptsDomain last_desc_interrupts)
+    const std::vector<TransferBuffer> &transfer_buffers, bool is_cyclic)
 {
     hailo_vdma_launch_transfer_params params{};
     params.engine_index = channel_id.engine_index;
@@ -620,8 +563,7 @@ hailo_status HailoRTDriver::launch_transfer(vdma::ChannelId channel_id, uintptr_
         LOGGER__ERROR("Invalid channel id {}", channel_id);
         return HAILO_INVALID_ARGUMENT;
     }
-    TRY(params.prepare_transfer_params, fill_prepare_transfer_params(channel_id, desc_handle,
-        transfer_buffers, first_desc_interrupts, last_desc_interrupts));
+    TRY(params.prepare_transfer_params, fill_prepare_transfer_params(channel_id, desc_handle, transfer_buffers));
     params.is_cyclic = is_cyclic;
 
     RUN_AND_CHECK_IOCTL_RESULT(HAILO_VDMA_LAUNCH_TRANSFER, &params, "Failed launch transfer");
@@ -739,15 +681,6 @@ Expected<std::pair<vdma::ChannelId, vdma::ChannelId>> HailoRTDriver::soc_connect
     return std::make_pair(input_channel, output_channel);
 }
 
-hailo_status HailoRTDriver::pci_ep_listen(uint16_t port_number, uint8_t backlog_size)
-{
-    hailo_pci_ep_listen_params params{};
-    params.port_number = port_number;
-    params.backlog_size = backlog_size;
-    RUN_AND_CHECK_IOCTL_RESULT(HAILO_PCI_EP_LISTEN, &params, "Failed pci_ep listen");
-    return HAILO_SUCCESS;
-}
-
 Expected<std::pair<vdma::ChannelId, vdma::ChannelId>> HailoRTDriver::pci_ep_accept(uint16_t port_number,
     uintptr_t input_buffer_desc_handle, uintptr_t output_buffer_desc_handle)
 {
@@ -821,6 +754,18 @@ DescSizesParams HailoRTDriver::get_continuous_desc_params() const
     return desc_sizes_params;
 }
 
+DescSizesParams HailoRTDriver::get_sram_desc_params() const
+{
+    DescSizesParams desc_sizes_params{};
+    desc_sizes_params.default_page_size = SRAM_BUFFER_PAGE_SIZE;
+    desc_sizes_params.min_page_size = SRAM_BUFFER_PAGE_SIZE;
+    desc_sizes_params.max_page_size = SRAM_BUFFER_PAGE_SIZE;
+    desc_sizes_params.min_descs_count = SRAM_BUFFER_MIN_DESCRIPTORS;
+    desc_sizes_params.max_descs_count = SRAM_BUFFER_MAX_DESCRIPTORS;
+
+    return desc_sizes_params;
+}
+
 #if defined(__linux__)
 static bool is_blocking_ioctl(unsigned long request)
 {
@@ -890,7 +835,7 @@ Expected<std::pair<uintptr_t, uint64_t>> HailoRTDriver::continous_buffer_alloc_i
     params.dma_address = 0;
 
     auto status = RUN_IOCTL(HAILO_VDMA_CONTINUOUS_BUFFER_ALLOC, &params);
-    if (HAILO_OUT_OF_HOST_CMA_MEMORY == status) {
+    if (HAILO_RESOURCE_EXHAUSTED == status) {
         LOGGER__INFO("Out of CMA memory for continous buffer, size {}", size);
         return make_unexpected(status);
     } else {

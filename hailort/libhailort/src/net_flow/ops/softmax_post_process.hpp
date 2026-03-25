@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -57,7 +57,8 @@ private:
             dst_type *src_col = src_row;
             src_type *dst_col = dst_row;
             for (uint32_t w = 0; w < input_metadata.shape.width; w++) { // W axis - coloums
-                softmax(src_col, dst_col, input_metadata.shape.features);
+                auto status = softmax(src_col, dst_col, input_metadata.shape.features);
+                CHECK_SUCCESS(status);
                 src_col += src_width_size;
                 dst_col += dst_width_size;
             }
@@ -74,7 +75,8 @@ private:
         (void) output_metadata;
         auto src_ptr = (src_type*)inputs.begin()->second.data();
         auto dst_ptr = (dst_type*)outputs.begin()->second.data();
-        softmax(src_ptr, dst_ptr, input_metadata.shape.features);
+        auto status = softmax(src_ptr, dst_ptr, input_metadata.shape.features);
+        CHECK_SUCCESS(status);
         return HAILO_SUCCESS;
     }
 

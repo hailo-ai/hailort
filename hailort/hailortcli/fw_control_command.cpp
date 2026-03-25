@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -134,6 +134,11 @@ static void print_extended_device_information(const hailo_extended_device_inform
             sku_id_str = std::to_string(sku_id);
         }
         std::cout << "Board SKU-ID: " << sku_id_str << std::endl;
+    }
+
+    if(extended_device_information_is_array_not_empty(device_info.chip_serial_number, sizeof(device_info.chip_serial_number))){
+        std::cout << "Chip Serial Number: ";
+        extended_device_information_print_array(device_info.chip_serial_number, sizeof(device_info.chip_serial_number), "");
     }
 }
 

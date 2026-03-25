@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -174,27 +174,6 @@ public:
      */
     static hailo_status idle_time_set_measurement(Device &device, uint8_t measurement_enable);
 
-    /**
-     *  Start firmware update of a Hailo device.
-     * 
-     * @param[in]     device - The Hailo device.
-     * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a static hailo_status error.
-     */
-    static hailo_status start_firmware_update(Device &device);
-    static hailo_status write_firmware_update(Device &device, uint32_t offset, const uint8_t *data, uint32_t data_length);
-    static hailo_status validate_firmware_update(Device &device, MD5_SUM_t *expected_md5, uint32_t firmware_size);
-    static hailo_status finish_firmware_update(Device &device);
-    static hailo_status write_second_stage_to_internal_memory(Device &device, uint32_t offset, uint8_t *data, uint32_t data_length);
-    static hailo_status copy_second_stage_to_flash(Device &device, MD5_SUM_t *expected_md5, uint32_t second_stage_size);
-
-    static hailo_status examine_user_config(Device &device, hailo_fw_user_config_information_t *info);
-
-    static hailo_status read_user_config(Device &device, uint8_t *buffer, uint32_t buffer_length);
-
-    static hailo_status write_user_config(Device &device, const uint8_t *data, uint32_t data_length);
-
-    static hailo_status erase_user_config(Device &device);
-
     static hailo_status read_board_config(Device &device, uint8_t *buffer, uint32_t buffer_length);
 
     static hailo_status write_board_config(Device &device, const uint8_t *data, uint32_t data_length);
@@ -255,14 +234,6 @@ public:
      * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a static hailo_status error.
      */
     static hailo_status latency_measurement_read(Device &device, uint32_t *inbound_to_outbound_latency_nsec);
-    static hailo_status sensor_store_config(Device &device, uint32_t is_first, uint32_t section_index, uint32_t start_offset, uint32_t reset_data_size, uint32_t sensor_type, uint32_t total_data_size,
-                                        uint8_t  *data, uint32_t data_length, uint16_t config_height, uint16_t config_width, uint16_t config_fps, uint32_t config_name_length, uint8_t *config_name);
-    static hailo_status sensor_get_config(Device &device, uint32_t section_index, uint32_t offset, uint32_t data_length, uint8_t *data);
-    static hailo_status sensor_set_i2c_bus_index(Device &device, uint32_t sensor_type, uint32_t bus_index);
-    static hailo_status sensor_load_and_start_config(Device &device, uint32_t section_index);
-    static hailo_status sensor_reset(Device &device, uint32_t section_index);
-    static hailo_status sensor_set_generic_i2c_slave(Device &device, uint16_t slave_address, uint8_t register_address_size, uint8_t bus_index, uint8_t should_hold_bus, uint8_t endianness);
-    static hailo_status sensor_get_sections_info(Device &device, uint8_t *data);
 
     /**
      *  Download generated context switch action list per single context
@@ -398,9 +369,6 @@ public:
 private:
     static hailo_status write_memory_chunk(Device &device, uint32_t address, const uint8_t *data, uint32_t chunk_size);
     static hailo_status read_memory_chunk(Device &device, uint32_t address, uint8_t *data, uint32_t chunk_size);
-    static hailo_status read_user_config_chunk(Device &device, uint32_t read_offset, uint32_t read_length,
-        uint8_t *buffer, uint32_t *actual_read_data_length);
-    static hailo_status write_user_config_chunk(Device &device, uint32_t offset, const uint8_t *data, uint32_t chunk_size);
     static hailo_status download_context_action_list_chunk(Device &device, uint32_t network_group_id,
         CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint16_t context_index, uint16_t action_list_offset,
         size_t action_list_max_size, uint32_t *base_address, uint8_t *action_list, uint16_t *action_list_length,

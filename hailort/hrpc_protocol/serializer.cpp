@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -329,8 +329,8 @@ Expected<size_t> SetSchedulerTimeoutSerializer::serialize_request(rpc_object_han
     return get_serialized_request<ConfiguredInferModel_SetSchedulerTimeout_Request>(request, "SetSchedulerTimeout", buffer);
 }
 
-Expected<std::tuple<rpc_object_handle_t, std::chrono::milliseconds>> SetSchedulerTimeoutSerializer::deserialize_request(
-    const MemoryView &serialized_request)
+Expected<std::tuple<rpc_object_handle_t, std::chrono::milliseconds>>
+    SetSchedulerTimeoutSerializer::deserialize_request(const MemoryView &serialized_request)
 {
     ConfiguredInferModel_SetSchedulerTimeout_Request request;
 
@@ -1133,6 +1133,11 @@ Expected<Buffer> ExtendedDeviceInfoSerializer::serialize_reply(const hailo_exten
 
     reply.set_gpio_mask(extended_info.gpio_mask);
 
+    auto chip_serial_number = reply.mutable_chip_serial_number();
+    for (auto i = 0; i < HAILO_CHIP_SERIAL_NUMBER_BYTES_LENGTH; i++) {
+        chip_serial_number->Add(extended_info.chip_serial_number[i]);
+    }
+
     return get_serialized_reply<Device_ExtendedInfo_Reply>(reply, "ExtendedDeviceInfo");
 }
 
@@ -1173,6 +1178,10 @@ Expected<hailo_extended_device_information_t> ExtendedDeviceInfoSerializer::dese
     assert(reply.soc_pm_values().size() == HAILO_SOC_PM_VALUES_BYTES_LENGTH);
     std::transform(reply.soc_pm_values().begin(), reply.soc_pm_values().begin() + HAILO_SOC_PM_VALUES_BYTES_LENGTH, 
         extended_info.soc_pm_values, [](uint32_t val) { return static_cast<uint8_t>(val); });
+
+    assert(reply.chip_serial_number().size() == HAILO_CHIP_SERIAL_NUMBER_BYTES_LENGTH);
+    std::transform(reply.chip_serial_number().begin(), reply.chip_serial_number().begin() + HAILO_CHIP_SERIAL_NUMBER_BYTES_LENGTH,
+        extended_info.chip_serial_number, [](uint32_t val) { return static_cast<uint8_t>(val); });
 
     return extended_info;
 }
@@ -1254,19 +1263,27 @@ Expected<hailo_health_stats_t> QueryHealthStatsSerializer::deserialize_reply(con
     return info;
 }
 
-Expected<size_t> QueryPerformanceStatsSerializer::serialize_request(rpc_object_handle_t device_handle, MemoryView buffer)
+Expected<size_t> QueryPerformanceStatsSerializer::serialize_request(
+    rpc_object_handle_t device_handle, std::chrono::milliseconds sampling_period, MemoryView buffer)
 {
     Device_QueryPerformanceStats_Request request;
 
     auto proto_device_handle = request.mutable_device_handle();
     proto_device_handle->set_id(device_handle);
+    request.set_sampling_period_ms(static_cast<uint32_t>(sampling_period.count()));
 
     return get_serialized_request<Device_QueryPerformanceStats_Request>(request, "QueryPerformanceStats", buffer);
 }
 
-Expected<rpc_object_handle_t> QueryPerformanceStatsSerializer::deserialize_request(const MemoryView &serialized_request)
+Expected<std::tuple<rpc_object_handle_t, std::chrono::milliseconds>> QueryPerformanceStatsSerializer::deserialize_request(const MemoryView &serialized_request)
 {
-    return get_deserialized_request<Device_QueryPerformanceStats_Request>(serialized_request, "QueryPerformanceStats");
+    Device_QueryPerformanceStats_Request request;
+    CHECK(request.ParseFromArray(serialized_request.data(), static_cast<int>(serialized_request.size())),
+        HAILO_RPC_FAILED, "Failed to de-serialize '{}'", "QueryPerformanceStats");
+
+    auto device_handle_id = request.device_handle().id();
+    auto sampling_period = std::chrono::milliseconds(request.sampling_period_ms());
+    return std::make_tuple(device_handle_id, sampling_period);
 }
 
 Expected<Buffer> QueryPerformanceStatsSerializer::serialize_reply(const hailo_performance_stats_t &info)
@@ -1649,6 +1666,34 @@ Expected<uint32_t> EchoBufferSerializer::deserialize_request(const MemoryView &s
 Expected<Buffer> EchoBufferSerializer::serialize_reply()
 {
     return Buffer();
+}
+
+Expected<size_t> GetCurrentLimitSerializer::serialize_request(rpc_object_handle_t device_handle, MemoryView buffer)
+{
+    Device_GetCurrentLimit_Request request;
+    auto proto_device_handle = request.mutable_device_handle();
+    proto_device_handle->set_id(device_handle);
+    return get_serialized_request<Device_GetCurrentLimit_Request>(request, "GetCurrentLimit", buffer);
+}
+
+Expected<rpc_object_handle_t> GetCurrentLimitSerializer::deserialize_request(const MemoryView &serialized_request)
+{
+    return get_deserialized_request<Device_GetCurrentLimit_Request>(serialized_request, "GetCurrentLimit");
+}
+
+Expected<Buffer> GetCurrentLimitSerializer::serialize_reply(const uint32_t current_limit_mA)
+{
+    Device_GetCurrentLimit_Reply reply;
+    reply.set_current_limit_ma(current_limit_mA);
+    return get_serialized_reply<Device_GetCurrentLimit_Reply>(reply, "GetCurrentLimit");
+}
+
+Expected<uint32_t> GetCurrentLimitSerializer::deserialize_reply(const MemoryView &serialized_reply)
+{
+    Device_GetCurrentLimit_Reply reply;
+    CHECK_AS_EXPECTED(reply.ParseFromArray(serialized_reply.data(), static_cast<int>(serialized_reply.size())),
+        HAILO_RPC_FAILED, "Failed to de-serialize '{}'", "GetCurrentLimit");
+    return reply.current_limit_ma();
 }
 
 } /* namespace hailort */

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -18,7 +18,6 @@
 #include <mutex>
 #include <shared_mutex>
 #include <unordered_set>
-#include <malloc.h>
 
 namespace hailort
 {
@@ -114,11 +113,6 @@ public:
                 res = resource->resource;
                 m_resources.erase(handle);
 
-#if defined(__linux__) && !defined(__ANDROID__)
-                if (std::is_same_v<T, VDevice>) {
-                    malloc_trim(0); // Fixes out of memory issue by releasing already freed memory back to the system
-                }
-#endif
             }
         }
         if (release_resource) {
@@ -143,11 +137,6 @@ public:
                         release_resource = true;
                         res.push_back(iter->second->resource);
                         iter = m_resources.erase(iter);
-#if defined(__linux__) && !defined(__ANDROID__)
-                        if (std::is_same_v<T, VDevice>) {
-                            malloc_trim(0); // Fixes out of memory issue by releasing already freed memory back to the system
-                        }
-#endif
                     }
                 }
             }

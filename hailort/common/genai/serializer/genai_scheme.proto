@@ -4,6 +4,8 @@ option optimize_for = LITE_RUNTIME;
 
 message GenAIRpcRequest {
     oneof request {
+        LLM_Acquire_KV_Cache_Request llm_acquire_kv_cache = 27;
+
         LLM_Create_Request llm_create = 1;
         LLM_Get_Generator_Params_Request llm_get_generator_params = 2;
         LLM_Generator_Create_Request llm_generator_create = 3;
@@ -38,6 +40,8 @@ message GenAIRpcRequest {
 
 message GenAIRpcReply {
     oneof reply {
+        LLM_Acquire_KV_Cache_Reply llm_acquire_kv_cache = 27;
+
         LLM_Create_Reply llm_create = 1;
         LLM_Get_Generator_Params_Reply llm_get_generator_params = 2;
         LLM_Generator_Create_Reply llm_generator_create = 3;
@@ -152,8 +156,7 @@ message TextGenerationOutput {
 }
 
 message LLM_Generator_Read_Request {
-    uint32 timeout_ms = 1;
-    TextGenerationInput generation_input = 2;
+    TextGenerationInput generation_input = 1;
 }
 
 message LLM_Generator_Read_Reply {
@@ -303,6 +306,7 @@ message VLM_Create_Reply {
 message VLM_Generator_Generate_Request {
     uint32 number_of_frames = 1; // Standalone frames
     repeated uint32 video_frames_count_per_video = 3; // Holds a frame-count for each given video
+    bool raw_embeddings = 4; // If true, frames are raw embeddings instead of encoder inputs
 }
 
 message VLM_Generator_Generate_Reply {
@@ -364,4 +368,11 @@ message Speech2Text_Tokenize_Request {
 message Speech2Text_Tokenize_Reply {
     repeated int32 tokens = 1;
     uint32 status = 2;
+}
+
+message LLM_Acquire_KV_Cache_Request {
+}
+
+message LLM_Acquire_KV_Cache_Reply {
+    uint32 status = 1;
 }

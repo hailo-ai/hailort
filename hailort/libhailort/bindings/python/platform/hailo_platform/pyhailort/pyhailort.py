@@ -34,6 +34,10 @@ INPUT_DATAFLOW_BASE_PORT = _pyhailort.HailoRTDefaults.DEVICE_BASE_INPUT_STREAM_P
 OUTPUT_DATAFLOW_BASE_PORT = _pyhailort.HailoRTDefaults.DEVICE_BASE_OUTPUT_STREAM_PORT()
 PCIE_ANY_DOMAIN = _pyhailort.HailoRTDefaults.PCIE_ANY_DOMAIN()
 HAILO_UNIQUE_VDEVICE_GROUP_ID = _pyhailort.HailoRTDefaults.HAILO_UNIQUE_VDEVICE_GROUP_ID()
+HAILO_CURRENT_LIMIT_NA = _pyhailort.HailoRTDefaults.HAILO_CURRENT_LIMIT_NA()
+HAILO_CURRENT_LIMIT_900_MA = _pyhailort.HailoRTDefaults.HAILO_CURRENT_LIMIT_900_MA()
+HAILO_CURRENT_LIMIT_1500_MA = _pyhailort.HailoRTDefaults.HAILO_CURRENT_LIMIT_1500_MA()
+HAILO_CURRENT_LIMIT_3000_MA = _pyhailort.HailoRTDefaults.HAILO_CURRENT_LIMIT_3000_MA()
 DEFAULT_VSTREAM_TIMEOUT_MS = 10000
 DEFAULT_VSTREAM_QUEUE_SIZE = 2
 BOARD_INFO_NOT_CONFIGURED_ATTR = "<N/A>"
@@ -926,6 +930,17 @@ class InferVStreams(object):
         """
         return self._infer_pipeline.set_nms_score_threshold(threshold)
 
+    def set_nms_classes_filter_mask(self, classes_filter_mask):
+        """Set NMS classes filter mask, used for filtering out classes.
+
+        Args:
+            classes_filter_mask (list of bool): NMS classes filter mask to set.
+
+        Note:
+            This function will fail in cases where there is no output with NMS operations on the CPU.
+        """
+        return self._infer_pipeline.set_nms_classes_filter_mask(classes_filter_mask)
+
     def set_nms_iou_threshold(self, threshold):
         """Set NMS intersection over union overlap Threshold,
             used in the NMS iterative elimination process where potential duplicates of detected items are suppressed.
@@ -1246,9 +1261,11 @@ class HailoRTTransformUtils(object):
                     detection.score, detection.class_id])
             bbox_mask = numpy.array(raw_output_buffer[detection.mask_offset:detection.mask_offset + detection.mask_size])
 
-            y_min = numpy.ceil(bbox[0] * image_height)
-            x_min = numpy.ceil(bbox[1] * image_width)
-            bbox_width = numpy.ceil((bbox[3] - bbox[1]) * image_width)
+            # Match C++ DetectionBbox methods: floor for min, ceil for max
+            y_min = int(max(numpy.floor(bbox[0] * image_height), 0))
+            x_min = int(max(numpy.floor(bbox[1] * image_width), 0))
+            x_max = int(min(numpy.ceil(bbox[3] * image_width), image_width))
+            bbox_width = x_max - x_min
             resized_mask = numpy.zeros(image_height*image_width, dtype="uint8")
 
             for i in range(bbox_mask.size):
@@ -1396,7 +1413,7 @@ class HailoFormatFlags(_pyhailort.FormatFlags):
 
 SUPPORTED_PROTOCOL_VERSION = 2
 SUPPORTED_FW_MAJOR = 5
-SUPPORTED_FW_MINOR = 2
+SUPPORTED_FW_MINOR = 3
 SUPPORTED_FW_REVISION = 0
 
 MEGA_MULTIPLIER = 1000.0 * 1000.0
@@ -1571,7 +1588,7 @@ class HealthInformation(object):
                        self.current_temperature_zone, self.current_temperature_throttling_level, temperature_throttling_levels_str)
 
 class ExtendedDeviceInformation(object):
-    def __init__(self, neural_network_core_clock_rate, supported_features, boot_source, lcs, soc_id, eth_mac_address, unit_level_tracking_id, soc_pm_values, gpio_mask):
+    def __init__(self, neural_network_core_clock_rate, supported_features, boot_source, lcs, soc_id, eth_mac_address, unit_level_tracking_id, soc_pm_values, gpio_mask, chip_serial_number):
         self.neural_network_core_clock_rate = neural_network_core_clock_rate
         self.supported_features = SupportedFeatures(supported_features)
         self.boot_source = boot_source
@@ -1581,6 +1598,7 @@ class ExtendedDeviceInformation(object):
         self.unit_level_tracking_id = unit_level_tracking_id
         self.soc_pm_values = soc_pm_values
         self.gpio_mask = gpio_mask
+        self.chip_serial_number = chip_serial_number
 
     def __str__(self):
         """Returns:
@@ -1609,6 +1627,9 @@ class ExtendedDeviceInformation(object):
 
         if 0 != self.gpio_mask:
             string += '\nGPIO Mask: ' + f'{self.gpio_mask:04x}'
+
+        if any(self.chip_serial_number):
+            string += '\nChip Serial Number: ' + (self.chip_serial_number.hex())
 
         return string
 
@@ -1914,32 +1935,6 @@ class Control:
         with ExceptionWrapper():
             return self._device.get_power_measurement(buffer_index, should_clear)
 
-    def _examine_user_config(self):
-        with ExceptionWrapper():
-            return self._device.examine_user_config()
-
-    def read_user_config(self):
-        """Read the user configuration section as binary data.
-
-        Returns:
-            str: User config as a binary buffer.
-        """
-        with ExceptionWrapper():
-            return self._device.read_user_config()
-
-    def write_user_config(self, configuration):
-        """Write the user configuration.
-
-        Args:
-            configuration (str): A binary representation of a Hailo device configuration.
-        """
-        with ExceptionWrapper():
-            return self._device.write_user_config(configuration)
-
-    def _erase_user_config(self):
-        with ExceptionWrapper():
-            return self._device.erase_user_config()
-
     def read_board_config(self):
         """Read the board configuration section as binary data.
 
@@ -2068,119 +2063,6 @@ class Control:
         register_value &= ~(1 << bit_index)
         self.write_memory(address, struct.pack('!I', register_value))
 
-    def firmware_update(self, firmware_binary, should_reset=True):
-        """Update firmware binary on the flash. 
-        
-        Args:
-            firmware_binary (bytes): firmware binary stream.
-            should_reset (bool): Should a reset be performed after the update (to load the new firmware)
-        """
-        with ExceptionWrapper():
-            return self._device.firmware_update(firmware_binary, len(firmware_binary), should_reset)
-
-    def second_stage_update(self, second_stage_binary):
-        """Update second stage binary on the flash
-        
-        Args:
-            second_stage_binary (bytes): second stage binary stream.
-        """
-        with ExceptionWrapper():
-            return self._device.second_stage_update(second_stage_binary, len(second_stage_binary))
-
-    def store_sensor_config(self, section_index, reset_data_size, sensor_type, config_file_path,
-                            config_height=0, config_width=0, config_fps=0, config_name=None):
-            
-        """Store sensor configuration to Hailo chip flash memory.
-        
-        Args:
-            section_index (int): Flash section index to write to. [0-6]
-            reset_data_size (int): Size of reset configuration.
-            sensor_type (:class:`~hailo_platform.pyhailort.pyhailort.SensorConfigTypes`): Sensor type.
-            config_file_path (str): Sensor configuration file path.
-            config_height (int): Configuration resolution height.
-            config_width (int): Configuration resolution width.
-            config_fps (int): Configuration FPS.
-            config_name (str): Sensor configuration name.
-        """
-        if config_name is None:
-            config_name = "UNINITIALIZED"
-
-        with ExceptionWrapper():
-            return self._device.sensor_store_config(section_index, reset_data_size, sensor_type, config_file_path,
-            config_height, config_width, config_fps, config_name)
-
-    def store_isp_config(self, reset_config_size, isp_static_config_file_path, isp_runtime_config_file_path,
-                         config_height=0, config_width=0, config_fps=0, config_name=None):
-        """Store sensor isp configuration to Hailo chip flash memory.
-
-        Args:
-            reset_config_size (int): Size of reset configuration.
-            isp_static_config_file_path (str): Sensor isp static configuration file path.
-            isp_runtime_config_file_path (str): Sensor isp runtime configuration file path.
-            config_height (int): Configuration resolution height.
-            config_width (int): Configuration resolution width.
-            config_fps (int): Configuration FPS.
-            config_name (str): Sensor configuration name.
-        """
-        if config_name is None:
-            config_name = "UNINITIALIZED"
-
-        with ExceptionWrapper():
-            return self._device.store_isp_config(reset_config_size, config_height, config_width, 
-            config_fps, isp_static_config_file_path, isp_runtime_config_file_path, config_name)
-
-    def get_sensor_sections_info(self):
-        """Get sensor sections info from Hailo chip flash memory.
-
-        Returns:
-            Sensor sections info read from the chip flash memory.
-        """
-        with ExceptionWrapper():
-            return self._device.sensor_get_sections_info()
-
-    def sensor_set_generic_i2c_slave(self, slave_address, register_address_size, bus_index, should_hold_bus, endianness):
-        """Set a generic I2C slave for sensor usage.
-
-        Args:
-            sequence (int): Request/response sequence.
-            slave_address (int): The address of the I2C slave.
-            register_address_size (int): The size of the offset (in bytes).
-            bus_index (int): The number of the bus the I2C slave is behind.
-            should_hold_bus (bool): Hold the bus during the read.
-            endianness (:class:`~hailo_platform.pyhailort.pyhailort.Endianness`):
-                Big or little endian.
-        """
-        with ExceptionWrapper():
-            return self._device.sensor_set_generic_i2c_slave(slave_address, register_address_size, bus_index, should_hold_bus, endianness)
-
-    def set_sensor_i2c_bus_index(self, sensor_type, i2c_bus_index):
-        """Set the I2C bus to which the sensor of the specified type is connected.
-  
-        Args:
-            sensor_type (:class:`~hailo_platform.pyhailort.pyhailort.SensorConfigTypes`): The sensor type.
-            i2c_bus_index (int): The I2C bus index of the sensor.
-        """
-        with ExceptionWrapper():
-            return self._device.sensor_set_i2c_bus_index(sensor_type, i2c_bus_index)
-
-    def load_and_start_sensor(self, section_index):
-        """Load the configuration with I2C in the section index.
-  
-        Args:
-            section_index (int): Flash section index to load config from. [0-6]
-        """
-        with ExceptionWrapper():
-            return self._device.sensor_load_and_start_config(section_index)
-
-    def reset_sensor(self, section_index):
-        """Reset the sensor that is related to the section index config.
-
-        Args:
-            section_index (int): Flash section index to reset. [0-6]
-        """
-        with ExceptionWrapper():
-            return self._device.sensor_reset(section_index)
-
     def wd_enable(self, cpu_id):
         """Enable firmware watchdog.
 
@@ -2230,6 +2112,37 @@ class Control:
         with ExceptionWrapper():
             return self._device.get_chip_temperature()
 
+    def query_performance_stats(self, sampling_period_ms=100):
+        """Returns performance statistics from the device.
+
+        Args:
+            sampling_period_ms (int): Sampling period in milliseconds.
+                Default is 100ms.
+
+        Returns:
+            PerformanceStats: Performance statistics containing
+                cpu_utilization (float), ram_size_total (int, KiB),
+                ram_size_used (int, KiB), nnc_utilization (float),
+                ddr_noc_total_transactions (int),
+                dsp_utilization (int). A value of -1 in any field
+                indicates an error retrieving that specific stat.
+
+        Note:
+            Supported only on Hailo-10/Hailo-15 devices running on
+            Linux.
+        """
+        with ExceptionWrapper():
+            return self._device.query_performance_stats(sampling_period_ms)
+
+    def get_current_limit(self):
+        """Returns the host current supply limit for a USB device.
+
+        Returns:
+            int: The host current supply limit in milli Amperes.
+        """
+        with ExceptionWrapper():
+            return self._device.get_current_limit()
+
     def get_extended_device_information(self):
         """Returns extended information about the device
 
@@ -2241,7 +2154,7 @@ class Control:
             response = self._device.get_extended_device_information()
         device_information = ExtendedDeviceInformation(response.neural_network_core_clock_rate,
             response.supported_features, response.boot_source, response.lcs, response.soc_id,
-            response.eth_mac_address, response.unit_level_tracking_id, response.soc_pm_values, response.gpio_mask)
+            response.eth_mac_address, response.unit_level_tracking_id, response.soc_pm_values, response.gpio_mask, response.chip_serial_number)
         return device_information
 
     def _get_health_information(self):
@@ -2278,7 +2191,7 @@ class Control:
             callback_func (function): Callback function with the parameters (device, notification, opaque).
                 Note that throwing exceptions is not supported and will cause the program to terminate with an error!
             notification_id (NotificationId): Notification ID to register the callback to.
-            opauqe (object): User defined data.
+            opaque (object): User defined data.
 
         Note:
             The notifications thread is started and closed in the use_device() context, so
@@ -2561,6 +2474,20 @@ class InferModel:
             with ExceptionWrapper():
                 self._infer_stream.set_nms_max_accumulated_mask_size(max_accumulated_mask_size)
 
+        def set_nms_classes_filter_mask(self, classes_filter_mask):
+            """
+            Set NMS classes filter mask, used for filtering out classes.
+
+            Args:
+                classes_filter_mask (list of bool): NMS classes filter mask to set.
+
+            Note:
+                This function is invalid in cases where the edge has no NMS operations on the CPU. It will not fail,
+                but make the :func:`~hailo_platform.pyhailort.pyhailort.pyhailort.InferModel.configure()` function fail.
+            """
+            with ExceptionWrapper():
+                self._infer_stream.set_nms_classes_filter_mask(classes_filter_mask)
+
 
     def __init__(self, infer_model, hef_path):
         #"""
@@ -2841,7 +2768,7 @@ class ConfiguredInferModel:
                                 dtype=nms_info.output_dtype,
                             )
 
-                            buffer = HailoRTTransformUtils._output_raw_buffer_to_nms_with_byte_mask_tf_format_single_frame(
+                            HailoRTTransformUtils._output_raw_buffer_to_nms_with_byte_mask_tf_format_single_frame(
                                 self._buffer,
                                 converted_output_buffer,
                                 nms_info.number_of_classes,
@@ -2849,6 +2776,7 @@ class ConfiguredInferModel:
                                 nms_info.input_height,
                                 nms_info.input_width,
                             )
+                            buffer = converted_output_buffer
                         else:
                             buffer = HailoRTTransformUtils._output_raw_buffer_to_nms_with_byte_mask_hailo_format_single_frame(self._buffer)
                     elif nms_info.format_order in [FormatOrder.HAILO_NMS_BY_CLASS]:
@@ -2926,7 +2854,7 @@ class ConfiguredInferModel:
             Gets an output's InferStream object.
 
             Args:
-                name (str, optional): the name of the output stream. Required in cae of multiple outputs.
+                name (str, optional): the name of the output stream. Required in case of multiple outputs.
 
             Returns:
                 :class:`ConfiguredInferModel.Bindings.InferStream` - the output infer stream of the configured infer model.
@@ -3543,7 +3471,7 @@ class OutputVStreamParams(object):
     @staticmethod
     def make_groups(configured_network, quantized=None, format_type=None, timeout_ms=None, queue_size=None):
         """Create output virtual stream params from a configured network group. These params determine the format of the
-        data that will be returned from the network group. The params groups are splitted with respect to their underlying streams for multi process usges.
+        data that will be returned from the network group. The params groups are split with respect to their underlying streams for multi process usages.
 
         Args:
             configured_network (:class:`ConfiguredNetwork`): The configured network group for which
@@ -3560,7 +3488,7 @@ class OutputVStreamParams(object):
 
         Returns:
             list of dicts: Each element in the list represent a group of params, where the keys are the vstreams names, and the values are the
-            params. The params groups are splitted with respect to their underlying streams for multi process usges.
+            params. The params groups are split with respect to their underlying streams for multi process usages.
         """
         all_params = OutputVStreamParams.make(configured_network=configured_network, format_type=format_type, timeout_ms=timeout_ms, queue_size=queue_size)
         low_level_streams_names = [stream_info.name for stream_info in configured_network.get_output_stream_infos()]
@@ -3816,7 +3744,7 @@ class OutputVStream(object):
                     dtype=self._output_dtype,
                 )
 
-                res = HailoRTTransformUtils._output_raw_buffer_to_nms_with_byte_mask_tf_format_single_frame(
+                HailoRTTransformUtils._output_raw_buffer_to_nms_with_byte_mask_tf_format_single_frame(
                     result_array,
                     converted_output_buffer,
                     nms_shape.number_of_classes,
@@ -3824,6 +3752,7 @@ class OutputVStream(object):
                     input_height,
                     input_width,
                 )
+                res = converted_output_buffer
             else:
                 res = HailoRTTransformUtils._output_raw_buffer_to_nms_with_byte_mask_hailo_format_single_frame(result_array)
             return res
@@ -3896,6 +3825,17 @@ class OutputVStream(object):
             This function will fail in cases where there is no output with NMS operations on the CPU.
         """
         return self._recv_object.set_nms_max_accumulated_mask_size(max_accumulated_mask_size)
+
+    def set_nms_classes_filter_mask(self, classes_filter_mask):
+        """Set NMS classes filter mask, used for filtering out classes.
+
+        Args:
+            classes_filter_mask (list of bool): NMS classes filter mask to set.
+
+        Note:
+            This function will fail in cases where there is no output with NMS operations on the CPU.
+        """
+        return self._recv_object.set_nms_classes_filter_mask(classes_filter_mask)
 
 
 class OutputVStreams(object):
@@ -4063,14 +4003,14 @@ class LLMGeneratorCompletion:
         with ExceptionWrapper():
             return self._generator_completion.read(timeout_ms)
 
-    def read_all(self, timeout_ms=10000):
+    def read_all(self, timeout_ms):
         """
         Read all remaining tokens and return complete response.
 
         This method blocks until generation is complete or timeout occurs.
 
         Args:
-            timeout_ms (int, optional): Timeout in milliseconds. Defaults to 10000.
+            timeout_ms (int, optional): Timeout in milliseconds.
 
         Returns:
             str: Complete generated response as a single string.
@@ -5238,7 +5178,7 @@ class Speech2Text:
             gen_params.set_repetition_penalty(repetition_penalty)
         return gen_params
 
-    def generate_all_text(self, audio_data, task=Speech2TextTask.TRANSCRIBE, language=None, repetition_penalty=1.0, timeout_ms=10000):
+    def generate_all_text(self, audio_data, task=Speech2TextTask.TRANSCRIBE, language=None, repetition_penalty=1.0, timeout_ms=600000):
         """
         Generate complete transcription as a single string.
 
@@ -5247,7 +5187,7 @@ class Speech2Text:
             task (Speech2TextTask, optional): Task to perform (transcribe or translate). Defaults to TRANSCRIBE.
             language (str, optional): Language to use for translation, in the format of ISO-639-1 two-letter code, for example: "en", "fr", etc. Defaults to None, which means that the model will automatically detect the language.
             repetition_penalty (float, optional): Repetition penalty to use for the generation process. Defaults to 1.0, which means that the model will not apply any repetition penalty.
-            timeout_ms (int, optional): Timeout in milliseconds. Defaults to 10000.
+            timeout_ms (int, optional): Timeout in milliseconds. Defaults to 600000.
 
         Returns:
             str: Complete transcription as a single string.
@@ -5262,7 +5202,7 @@ class Speech2Text:
             generation_params = Speech2Text._fill_generator_params(generation_params, task.value, language, repetition_penalty)
             return self._speech2text.generate_all_text(audio_data, generation_params, timeout_ms)
 
-    def generate_all_segments(self, audio_data, task=Speech2TextTask.TRANSCRIBE, language=None, repetition_penalty=1.0, timeout_ms=10000):
+    def generate_all_segments(self, audio_data, task=Speech2TextTask.TRANSCRIBE, language=None, repetition_penalty=1.0, timeout_ms=600000):
         """
         Generate transcription with timestamped segments.
 
@@ -5271,7 +5211,7 @@ class Speech2Text:
             task (Speech2TextTask, optional): Task to perform (transcribe or translate). Defaults to TRANSCRIBE.
             language (str, optional): Language to use for translation, in the format of ISO-639-1 two-letter code, for example: "en", "fr", etc. Defaults to None, which means that the model will automatically detect the language.
             repetition_penalty (float, optional): Repetition penalty to use for the generation process. Defaults to 1.0, which means that the model will not apply any repetition penalty.
-            timeout_ms (int, optional): Timeout in milliseconds. Defaults to 10000.
+            timeout_ms (int, optional): Timeout in milliseconds. Defaults to 600000.
 
         Returns:
             list[SegmentInfo]: List of SegmentInfo objects containing start/end timestamps and transcribed text.

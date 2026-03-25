@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -11,8 +11,6 @@
 #include "../infer_stats_printer.hpp"
 
 #include <spdlog/fmt/fmt.h>
-#include <sstream>
-#include <iomanip>
 
 size_t NetworkLiveTrack::max_ng_name = 0;
 std::mutex NetworkLiveTrack::mutex;
@@ -44,6 +42,14 @@ hailo_status NetworkLiveTrack::start_impl()
     return HAILO_SUCCESS;
 }
 
+void NetworkLiveTrack::measure()
+{
+    if (m_measure_fps) {
+        m_fps = get_fps();
+        m_ops_value = static_cast<double>(m_computational_ops) * m_fps;
+    }
+}
+
 double NetworkLiveTrack::get_fps()
 {
     auto elapsed_time = std::chrono::steady_clock::now() - m_last_get_time;
@@ -58,26 +64,26 @@ Expected<double> NetworkLiveTrack::get_last_measured_fps()
     return Expected<double>(m_last_measured_fps);
 }
 
-std::string NetworkLiveTrack::prettify_ops(double ops)
+std::string NetworkLiveTrack::prettify_ops(double ops) const
 {
     static constexpr double GIGA = 1e9;
     static constexpr double TERA = 1e12;
-    std::ostringstream out;
-    out << std::fixed << std::setprecision(2);
+    std::string out;
     if (ops >= TERA) {
-        out << (ops / TERA) << " TOPS";
+        out = fmt::format("{:.2f} TOPS", ops / TERA);
     } else if (ops >= GIGA) {
-        out << (ops / GIGA) << " GOPS";
+        out = fmt::format("{:.2f} GOPS", ops / GIGA);
     } else {
-        out << ops << " OPS";
+        out = fmt::format("{} OPS", ops);
     }
-    return out.str();
+    return out;
 }
 
-uint32_t NetworkLiveTrack::push_text_impl(std::stringstream &ss)
+std::string NetworkLiveTrack::get_text_impl() const
 {
-    ss << fmt::format("{}:", m_name);
-    ss << std::string(max_ng_name - m_name.size(), ' ');
+    std::string s;
+    s += fmt::format("{}:", m_name);
+    s += std::string(max_ng_name - m_name.size(), ' ');
 
     bool first = true;
     auto get_separator = [&first] () {
@@ -87,16 +93,14 @@ uint32_t NetworkLiveTrack::push_text_impl(std::stringstream &ss)
     };
 
     if (m_measure_fps) {
-        auto fps = get_fps();
-        ss << fmt::format("{}fps: {:.2f}", get_separator(), fps);
-        
+        s += fmt::format("{}fps: {:.2f}", get_separator(), m_fps);
+
         if (m_should_print_ops) {
-            const double ops_value = static_cast<double>(m_computational_ops) * fps;
-            if (0.0 == ops_value) {
+            if (0.0 == m_ops_value) {
                 // In old Hefs we don't have computational ops, so we print N/A
-                ss << fmt::format("{} OPS: N/A", get_separator());
+                s += fmt::format("{} OPS: N/A", get_separator());
             } else {
-                ss << fmt::format("{}{}", get_separator(), prettify_ops(ops_value));
+                s += fmt::format("{}{}", get_separator(), prettify_ops(m_ops_value));
             }
         }
     }
@@ -104,33 +108,33 @@ uint32_t NetworkLiveTrack::push_text_impl(std::stringstream &ss)
     if (m_cng) {
         auto hw_latency_measurement = m_cng->get_latency_measurement();
         if (hw_latency_measurement) {
-            ss << fmt::format("{}hw latency: {:.2f} ms", get_separator(), InferStatsPrinter::latency_result_to_ms(hw_latency_measurement->avg_hw_latency));
+            s += fmt::format("{}hw latency: {:.2f} ms", get_separator(), InferStatsPrinter::latency_result_to_ms(hw_latency_measurement->avg_hw_latency));
         } else if (HAILO_NOT_AVAILABLE != hw_latency_measurement.status()) { // HAILO_NOT_AVAILABLE is a valid error, we ignore it
-            ss << fmt::format("{}hw latency: NaN (err)", get_separator());
+            s += fmt::format("{}hw latency: NaN (err)", get_separator());
         }
     }
     else {
         auto hw_latency_measurement = m_configured_infer_model->get_hw_latency_measurement();
         if (hw_latency_measurement) {
-            ss << fmt::format("{}hw latency: {:.2f} ms", get_separator(), InferStatsPrinter::latency_result_to_ms(hw_latency_measurement->avg_hw_latency));
+            s += fmt::format("{}hw latency: {:.2f} ms", get_separator(), InferStatsPrinter::latency_result_to_ms(hw_latency_measurement->avg_hw_latency));
         }
         else if (HAILO_NOT_AVAILABLE != hw_latency_measurement.status()) { // HAILO_NOT_AVAILABLE is a valid error, we ignore it
-            ss << fmt::format("{}hw latency: NaN (err)", get_separator());
+            s += fmt::format("{}hw latency: NaN (err)", get_separator());
         }
     }
 
     if (m_overall_latency_meter) {
         auto overall_latency_measurement = m_overall_latency_meter->get_latency(false);
         if (overall_latency_measurement) {
-            ss << fmt::format("{}overall latency: {:.2f} ms", get_separator(), InferStatsPrinter::latency_result_to_ms(*overall_latency_measurement));
+            s += fmt::format("{}overall latency: {:.2f} ms", get_separator(), InferStatsPrinter::latency_result_to_ms(*overall_latency_measurement));
         }
         else if (HAILO_NOT_AVAILABLE != overall_latency_measurement.status()) { // HAILO_NOT_AVAILABLE is a valid error, we ignore it
-            ss << fmt::format("{}overall latency: NaN (err)", get_separator());
+            s += fmt::format("{}overall latency: NaN (err)", get_separator());
         }
     }
-    ss << "\n";
+    s += "\n";
 
-    return 1;
+    return s;
 }
 
 void NetworkLiveTrack::push_json_impl(nlohmann::ordered_json &json)

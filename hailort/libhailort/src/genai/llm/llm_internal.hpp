@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -74,7 +74,7 @@ private:
     // Helper functions for token_reader_thread
     hailo_status prepare_client_side_embeddings(LLMGeneratorReadSerializer::TextGenerationInput &input);
     Expected<std::pair<LLMGeneratorReadSerializer::TextGenerationOutput, Status>> send_read_request(
-        const LLMGeneratorReadSerializer::TextGenerationInput &input, std::chrono::milliseconds timeout);
+        const LLMGeneratorReadSerializer::TextGenerationInput &input);
     void prepare_next_iteration(LLMGeneratorReadSerializer::TextGenerationInput &input, int next_token_id);
 
     std::shared_ptr<TextGeneratorBase> m_generator_scope_guard;

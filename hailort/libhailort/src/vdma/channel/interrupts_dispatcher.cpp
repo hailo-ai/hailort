@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -41,8 +41,7 @@ InterruptsDispatcher::~InterruptsDispatcher()
     }
 }
 
-hailo_status InterruptsDispatcher::start(const ChannelsBitmap &channels_bitmap, bool enable_timestamp_measure,
-    const ProcessIrqCallback &process_irq)
+hailo_status InterruptsDispatcher::start(const ChannelsBitmap &channels_bitmap, const ProcessIrqCallback &process_irq)
 {
     {
         std::unique_lock<std::mutex> lock(m_mutex);
@@ -52,7 +51,7 @@ hailo_status InterruptsDispatcher::start(const ChannelsBitmap &channels_bitmap, 
         CHECK_NOT_NULL(wait_context, HAILO_OUT_OF_HOST_MEMORY);
         m_wait_context = std::move(wait_context);
 
-        auto status = m_driver.get().vdma_enable_channels(m_wait_context->bitmap, enable_timestamp_measure);
+        auto status = m_driver.get().vdma_enable_channels(m_wait_context->bitmap);
         CHECK_SUCCESS(status, "Failed to enable vdma channels");
     }
     m_cond.notify_one();
@@ -62,10 +61,10 @@ hailo_status InterruptsDispatcher::start(const ChannelsBitmap &channels_bitmap, 
 
 hailo_status InterruptsDispatcher::start(const ChannelsGroup &channels_group)
 {
-    return start(channels_group.bitmap(), channels_group.should_measure_timestamp(),
-        [channels_group=channels_group](IrqData &&irq_data) mutable {
-            channels_group.process_interrupts(std::move(irq_data));
-        });
+    auto process_irq = [channels_group=channels_group] (IrqData &&irq_data) mutable {
+        channels_group.process_interrupts(std::move(irq_data));
+    };
+    return start(channels_group.bitmap(), process_irq);
 }
 
 hailo_status InterruptsDispatcher::stop()

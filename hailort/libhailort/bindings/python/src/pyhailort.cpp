@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 
@@ -12,6 +12,12 @@
 #include <vector>
 #include <exception>
 using namespace std;
+
+#if defined(_WIN32)
+#include <winsock2.h>
+#else
+#include <netinet/in.h>
+#endif
 
 #include "hailo/hailort.h"
 #include "hailo/hailort_defaults.hpp"
@@ -825,6 +831,15 @@ PYBIND11_MODULE(_pyhailort, m) {
         .def_readonly("requested_temperature_clock_freq", &hailo_health_info_t::requested_temperature_clock_freq)
         ;
 
+    py::class_<hailo_performance_stats_t>(m, "PerformanceStats")
+        .def_readonly("cpu_utilization", &hailo_performance_stats_t::cpu_utilization)
+        .def_readonly("ram_size_total", &hailo_performance_stats_t::ram_size_total)
+        .def_readonly("ram_size_used", &hailo_performance_stats_t::ram_size_used)
+        .def_readonly("nnc_utilization", &hailo_performance_stats_t::nnc_utilization)
+        .def_readonly("ddr_noc_total_transactions", &hailo_performance_stats_t::ddr_noc_total_transactions)
+        .def_readonly("dsp_utilization", &hailo_performance_stats_t::dsp_utilization)
+        ;
+
     py::class_<hailo_extended_device_information_t>(m, "ExtendedDeviceInformation")
         .def_readonly("neural_network_core_clock_rate", &hailo_extended_device_information_t::neural_network_core_clock_rate)
         .def_readonly("supported_features", &hailo_extended_device_information_t::supported_features)
@@ -843,6 +858,9 @@ PYBIND11_MODULE(_pyhailort, m) {
             return std::string((const char*) info.soc_pm_values, sizeof(info.soc_pm_values));
         })
         .def_readonly("gpio_mask", &hailo_extended_device_information_t::gpio_mask)
+        .def_property_readonly("chip_serial_number", [](const hailo_extended_device_information_t& info) -> py::bytes {
+            return std::string((const char*) info.chip_serial_number, sizeof(info.chip_serial_number));
+        })
         ;
 
     py::enum_<hailo_device_boot_source_t>(m, "BootSource")
@@ -898,6 +916,10 @@ PYBIND11_MODULE(_pyhailort, m) {
         .def_static("DEVICE_BASE_OUTPUT_STREAM_PORT", []() { return HailoRTCommon::ETH_OUTPUT_BASE_PORT;} )
         .def_static("PCIE_ANY_DOMAIN", []() { return HAILO_PCIE_ANY_DOMAIN;} )
         .def_static("HAILO_UNIQUE_VDEVICE_GROUP_ID", []() { return std::string(HAILO_UNIQUE_VDEVICE_GROUP_ID); } )
+        .def_static("HAILO_CURRENT_LIMIT_NA", []() { return HAILO_CURRENT_LIMIT_NA;} )
+        .def_static("HAILO_CURRENT_LIMIT_900_MA", []() { return HAILO_CURRENT_LIMIT_900_MA;} )
+        .def_static("HAILO_CURRENT_LIMIT_1500_MA", []() { return HAILO_CURRENT_LIMIT_1500_MA;} )
+        .def_static("HAILO_CURRENT_LIMIT_3000_MA", []() { return HAILO_CURRENT_LIMIT_3000_MA;} )
         ;
 
     py::class_<hailo_network_group_info_t>(m, "NetworkGroupInfo", py::module_local())
@@ -922,7 +944,7 @@ PYBIND11_MODULE(_pyhailort, m) {
             }
         })
         .def_property_readonly("nms_shape", [](const hailo_vstream_info_t &self) {
-            if (!HailoRTCommon::is_nms(self)) {
+            if (!HailoRTCommon::is_non_chip_nms(self)) {
                 throw HailoRTCustomException("nms_shape is availale only on nms order vstreams");
             }
             return self.nms_shape;
@@ -937,7 +959,7 @@ PYBIND11_MODULE(_pyhailort, m) {
         })
         .def(py::pickle(
             [](const hailo_vstream_info_t &vstream_info) { // __getstate__
-                if (HailoRTCommon::is_nms(vstream_info)) {
+                if (HailoRTCommon::is_non_chip_nms(vstream_info)) {
                     return py::make_tuple(
                         vstream_info.name,
                         vstream_info.network_name,
@@ -962,7 +984,7 @@ PYBIND11_MODULE(_pyhailort, m) {
                 strcpy(vstream_info.network_name, t[1].cast<std::string>().c_str());
                 vstream_info.direction = t[2].cast<hailo_stream_direction_t>();
                 vstream_info.format = t[3].cast<hailo_format_t>();
-                if (HailoRTCommon::is_nms(vstream_info)) {
+                if (HailoRTCommon::is_non_chip_nms(vstream_info)) {
                     vstream_info.nms_shape = t[4].cast<hailo_nms_shape_t>();
                 }
                 else {

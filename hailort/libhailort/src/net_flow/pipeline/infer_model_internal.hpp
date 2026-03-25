@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -117,12 +117,14 @@ public:
     bool is_nms() const;
     void set_nms_score_threshold(float32_t threshold);
     void set_nms_iou_threshold(float32_t threshold);
+    void set_nms_classes_filter_mask(const std::vector<bool> &classes_filter_mask);
     void set_nms_max_proposals_per_class(uint32_t max_proposals_per_class);
     void set_nms_max_proposals_total(uint32_t max_proposals_total);
     void set_nms_max_accumulated_mask_size(uint32_t max_accumulated_mask_size);
 
     float32_t nms_score_threshold() const;
     float32_t nms_iou_threshold() const;
+    const std::vector<bool> &nms_classes_filter_mask() const;
     uint32_t nms_max_proposals_per_class() const;
     uint32_t nms_max_proposals_total() const;
     uint32_t nms_max_accumulated_mask_size() const;
@@ -137,6 +139,7 @@ private:
 
     float32_t m_nms_score_threshold;
     float32_t m_nms_iou_threshold;
+    std::vector<bool> m_nms_classes_filter_mask;
     uint32_t m_nms_max_proposals_per_class;
     uint32_t m_nms_max_proposals_total;
     uint32_t m_nms_max_accumulated_mask_size;

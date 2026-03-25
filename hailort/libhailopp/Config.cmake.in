@@ -1,0 +1,15 @@
+@PACKAGE_INIT@
+
+if(TARGET hailopp)
+    if(HailoPP_FIND_VERSION)
+        # Extract major version from requested version
+        string(REGEX REPLACE "^([0-9]+).*" "\\1" FIND_MAJOR_VER "${HailoPP_FIND_VERSION}")
+        # Only create alias if major versions match
+        if("${FIND_MAJOR_VER}" STREQUAL "${HAILO_PP_MAJOR_VERSION}")
+            add_library(HailoPP::hailopp ALIAS hailopp)
+        endif()
+    endif()
+else()
+    include("${CMAKE_CURRENT_LIST_DIR}/HailoPPTargets.cmake")
+    check_required_components(HailoPP)
+endif()

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -352,6 +352,18 @@ bool LLMPreProcess::is_positional_embed_layer(const std::string &name, const Inp
         has_suffix(name, input_layers_names_suffixes.pe_q_sin) ||
         has_suffix(name, input_layers_names_suffixes.pe_k_cos) ||
         has_suffix(name, input_layers_names_suffixes.pe_k_sin))
+    {
+        return true;
+    }
+
+    return false;
+}
+
+bool LLMPreProcess::is_deepstack_layer(const std::string &name, const InputLayersNamesSuffixes &input_layers_names_suffixes)
+{
+    if ((!input_layers_names_suffixes.deepstack_layer1.empty() && has_suffix(name, input_layers_names_suffixes.deepstack_layer1)) ||
+        (!input_layers_names_suffixes.deepstack_layer2.empty() && has_suffix(name, input_layers_names_suffixes.deepstack_layer2)) ||
+        (!input_layers_names_suffixes.deepstack_layer3.empty() && has_suffix(name, input_layers_names_suffixes.deepstack_layer3)))
     {
         return true;
     }

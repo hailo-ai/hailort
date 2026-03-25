@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -294,7 +294,7 @@ public:
     }
 
     /**
-     * @returns the stream's description containing it's name and index.
+     * @returns the stream's description containing its name and index.
      */
     virtual std::string to_string() const;
 
@@ -428,7 +428,7 @@ public:
     }
 
     /**
-     * @returns the stream's description containing it's name and index.
+     * @returns the stream's description containing its name and index.
      */
     virtual std::string to_string() const;
 

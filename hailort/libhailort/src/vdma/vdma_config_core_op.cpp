@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 
@@ -143,7 +143,6 @@ hailo_status VdmaConfigCoreOp::shutdown_impl()
 
 hailo_status VdmaConfigCoreOp::activate_host_resources()
 {
-    CHECK_SUCCESS(m_resources_manager->start_vdma_transfer_launcher(), "Failed to start vdma transfer launcher");
     CHECK_SUCCESS(m_resources_manager->start_vdma_interrupts_dispatcher(), "Failed to start vdma interrupts");
     CHECK_SUCCESS(activate_low_level_streams(), "Failed to activate low level streams");
     return HAILO_SUCCESS;
@@ -153,7 +152,6 @@ hailo_status VdmaConfigCoreOp::deactivate_host_resources()
 {
     CHECK_SUCCESS(deactivate_low_level_streams(), "Failed to deactivate low level streams");
     CHECK_SUCCESS(m_resources_manager->stop_vdma_interrupts_dispatcher(), "Failed to stop vdma interrupts");
-    CHECK_SUCCESS(m_resources_manager->stop_vdma_transfer_launcher(), "Failed to stop vdma transfers pending launch");
     return HAILO_SUCCESS;
 }
 

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -20,30 +20,42 @@ namespace hailort
 {
 
 using infer_model_handle_t = uint32_t;
+using VDevicePtr = std::shared_ptr<VDevice>;
+
+using KvCacheGuard = std::unique_lock<std::timed_mutex>;
+class KvCacheFlag final
+{
+public:
+    static Expected<KvCacheGuard> acquire();
+
+    KvCacheFlag() = delete;
+
+private:
+    static std::timed_mutex m_mutex;
+};
 
 class VDeviceManager final
 {
 public:
     VDeviceManager() = default;
 
-    Expected<std::unique_ptr<VDevice>> create_vdevice(const hailo_vdevice_params_t &params, uint32_t client_id);
-    Expected<std::shared_ptr<VDevice>> create_shared_vdevice(const hailo_vdevice_params_t &params, uint32_t client_id); // Always for GenAI
+    Expected<VDevicePtr> create_vdevice(const hailo_vdevice_params_t &params, uint32_t client_id);
+    Expected<VDevicePtr> create_vdevice_for_genai(const hailo_vdevice_params_t &params, uint32_t client_id);
+
     void mark_vdevice_for_close(uint32_t client_id);
     void remove_vdevice(uint32_t client_id);
 
-    hailo_status mark_kv_cache_in_use();
-    void unmark_kv_cache_in_use();
-
 private:
-    std::string m_active_vdevice_group_id;
+    hailo_status wait_for_vdevice_ready(uint32_t client_id, std::unique_lock<std::mutex> &lock);
+    Expected<VDevicePtr> create_vdevice_internal(const hailo_vdevice_params_t &params, uint32_t client_id,
+        std::unique_lock<std::mutex> &lock);
+
+    std::string m_active_vdevice_group_id = HAILO_UNIQUE_VDEVICE_GROUP_ID;
     std::set<uint32_t> m_active_clients_with_vdevice;
     std::set<uint32_t> m_pending_close_clients_with_vdevice;
     std::queue<uint32_t> m_requesting_clients_queue;
     std::mutex m_vdevice_clients_mutex;
     std::condition_variable m_vdevice_clients_cv;
-
-    bool m_is_kv_cache_in_use;
-    std::mutex m_kv_cache_mutex;
 };
 
 struct RunAsyncInfo
@@ -59,7 +71,7 @@ class Server;
 class ConfiguredInferModelRunAsyncHandler;
 class HailoRTServer : public Server {
 public:
-    static Expected<std::unique_ptr<HailoRTServer>> create_unique(const std::string& ip = "");
+    static Expected<std::unique_ptr<HailoRTServer>> create_unique(const std::string& device_id);
     explicit HailoRTServer(std::shared_ptr<ConnectionContext> connection_context, std::shared_ptr<std::mutex> write_mutex,
         bool is_unix_socket) : Server(connection_context, write_mutex, [this] (uint32_t client_id) {
             m_vdevice_manager->mark_vdevice_for_close(client_id);
@@ -104,6 +116,7 @@ public:
     hailo_status handle_device_remove_notification_callback(const MemoryView&, ClientConnectionPtr, ResponseWriter);
     hailo_status handle_device_fetch_logs(const MemoryView&, ClientConnectionPtr, ResponseWriter);
     hailo_status handle_system_reset(const MemoryView&, ClientConnectionPtr, ResponseWriter);
+    hailo_status handle_device_get_current_limit(const MemoryView&, ClientConnectionPtr, ResponseWriter);
 
     friend class ConfiguredInferModelRunAsyncHandler;
     friend class ConfiguredInferModelRunAsyncForDurationHandler;
@@ -120,7 +133,7 @@ private:
     std::unordered_map<uint32_t, uint32_t> m_infer_model_to_info_id;
     ThreadSafeMap<uint32_t, std::shared_ptr<ServerNetworkGroupBufferPool>> m_buffer_pool_per_cim;
     ThreadSafeMap<uint32_t, ObjectPoolPtr<RunAsyncInfo>> m_run_async_info_per_cim;
-    bool m_is_unix_socket;
+    const bool m_is_unix_socket;
     std::shared_ptr<VDeviceManager> m_vdevice_manager;
 };
 

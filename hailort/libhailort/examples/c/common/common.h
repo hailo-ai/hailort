@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -13,6 +13,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#if defined(_MSC_VER)
+#include <synchapi.h>
+#endif
 
 #define FREE(var)                           \
     do {                                    \

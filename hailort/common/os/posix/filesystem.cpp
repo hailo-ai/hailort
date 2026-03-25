@@ -1,241 +1,28 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
  * @file filesystem.cpp
- * @brief Filesystem wrapper for Linux
+ * @brief Filesystem wrapper std::filesystem POSIX implementation
  **/
 
 #include "common/filesystem.hpp"
-#include "common/logger_macros.hpp"
 #include "common/utils.hpp"
 
-#include <iostream>
-#include <errno.h>
-#include <sys/stat.h>
 #include <sys/file.h>
-#include <pwd.h>
-#include <fstream>
+#include <sys/stat.h>
 
 namespace hailort
 {
 
-const char *Filesystem::SEPARATOR = "/";
 const std::string UNIQUE_TMP_FILE_SUFFIX = "XXXXXX\0";
-
-Expected<Filesystem::DirWalker> Filesystem::DirWalker::create(const std::string &dir_path)
-{
-    DIR *dir = opendir(dir_path.c_str());
-    CHECK(nullptr != dir, make_unexpected(HAILO_FILE_OPERATION_FAILURE),
-        "Could not open directory \"{}\" with errno {}", dir_path, errno);
-    return DirWalker(dir, dir_path);
-}
-
-Filesystem::DirWalker::DirWalker(DIR *dir, const std::string &dir_path) :
-    m_dir(dir),
-    m_path_string(dir_path)
-{}
-
-Filesystem::DirWalker::~DirWalker()
-{
-    if (nullptr != m_dir) {
-        const auto result = closedir(m_dir);
-        if (-1 == result) {
-            LOGGER__ERROR("closedir on directory \"{}\" failed with errno {}", m_path_string.c_str(), errno);
-        }
-    }
-}
-
-Filesystem::DirWalker::DirWalker(DirWalker &&other) :
-    m_dir(std::exchange(other.m_dir, nullptr)),
-    m_path_string(other.m_path_string)
-{}
-        
-dirent* Filesystem::DirWalker::next_file()
-{
-    return readdir(m_dir);
-}
-
-#if defined(__linux__)
-
-Expected<std::vector<std::string>> Filesystem::get_files_in_dir_flat(const std::string &dir_path)
-{
-    const std::string dir_path_with_sep = has_suffix(dir_path, SEPARATOR) ? dir_path : dir_path + SEPARATOR;
-    
-    TRY(auto dir, DirWalker::create(dir_path_with_sep));
-    
-    std::vector<std::string> files;
-    struct dirent *entry = nullptr;
-    while ((entry = dir.next_file()) != nullptr) {
-        if (entry->d_type != DT_REG) {
-            continue;
-        }
-        const std::string file_name = entry->d_name;
-        files.emplace_back(dir_path_with_sep + file_name);
-    }
-
-    return files;
-}
-// QNX
-#elif defined(__QNX__)
-Expected<std::vector<std::string>> Filesystem::get_files_in_dir_flat(const std::string &dir_path)
-{
-    (void) dir_path;
-    return make_unexpected(HAILO_NOT_IMPLEMENTED);
-}
-// Unsupported Platform
-#else
-static_assert(false, "Unsupported Platform!");
-#endif
-
-Expected<time_t> Filesystem::get_file_modified_time(const std::string &file_path)
-{
-    struct stat attr;
-    auto res = stat(file_path.c_str(), &attr);
-    CHECK(0 == res, HAILO_INTERNAL_FAILURE, "stat() failed on file {}, with errno {}", file_path, errno);
-    auto last_modification_time = attr.st_mtime;
-    return last_modification_time;
-}
-
-Expected<size_t> Filesystem::get_file_size(const std::string &file_path)
-{
-    std::ifstream file(file_path, std::ios::binary | std::ios::ate);
-    CHECK(file.is_open(), HAILO_FILE_OPERATION_FAILURE, "Failed to open file {} with errno {}", file_path, errno);
-
-    return static_cast<size_t>(file.tellg());
-}
-
-#if defined(__linux__)
-
-Expected<std::vector<std::string>> Filesystem::get_latest_files_in_dir_flat(const std::string &dir_path,
-    std::chrono::milliseconds time_interval)
-{
-    std::time_t curr_time = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-    const std::string dir_path_with_sep = has_suffix(dir_path, SEPARATOR) ? dir_path : dir_path + SEPARATOR;
-    
-    TRY(auto dir, DirWalker::create(dir_path_with_sep));
-    
-    std::vector<std::string> files;
-    struct dirent *entry = nullptr;
-    while ((entry = dir.next_file()) != nullptr) {
-        if (entry->d_type != DT_REG) {
-            continue;
-        }
-
-        const std::string file_path = dir_path_with_sep + std::string(entry->d_name);
-        TRY(const auto file_modified_time, get_file_modified_time(file_path));
-
-        auto time_diff_sec = std::difftime(curr_time, file_modified_time);
-        auto time_diff_millisec = time_diff_sec * 1000;
-        if (time_diff_millisec <= static_cast<double>(time_interval.count())) {
-            files.emplace_back(file_path);
-        }
-    }
-
-    return files;
-}
-
-#elif defined(__QNX__)
-Expected<std::vector<std::string>> Filesystem::get_latest_files_in_dir_flat(const std::string &dir_path,
-    std::chrono::milliseconds time_interval)
-{
-    // TODO: HRT-7643
-    (void)dir_path;
-    (void)time_interval;
-    return make_unexpected(HAILO_NOT_IMPLEMENTED);
-}
-// Unsupported Platform
-#else
-static_assert(false, "Unsupported Platform!");
-#endif // __linux__
-
-Expected<bool> Filesystem::is_directory(const std::string &path)
-{
-    struct stat path_stat{};
-    auto ret_Val = stat(path.c_str(), &path_stat);
-    if (ret_Val != 0 && (errno == ENOENT)) {
-        // Directory path does not exist
-        return false;
-    }
-    CHECK(0 == ret_Val, make_unexpected(HAILO_FILE_OPERATION_FAILURE),
-        "stat() on path \"{}\" failed. errno {}", path.c_str(), errno);
-
-   return S_ISDIR(path_stat.st_mode);
-}
-
-hailo_status Filesystem::create_directory(const std::string &dir_path)
-{
-    auto ret_val = mkdir(dir_path.c_str(), S_IRWXU | S_IRWXG | S_IRWXO );
-    CHECK((ret_val == 0) || (errno == EEXIST), HAILO_FILE_OPERATION_FAILURE, "Failed to create directory {}", dir_path);
-    return HAILO_SUCCESS;
-}
-
-hailo_status Filesystem::remove_directory(const std::string &dir_path)
-{
-    auto ret_val = rmdir(dir_path.c_str());
-    CHECK(0 == ret_val, HAILO_FILE_OPERATION_FAILURE, "Failed to remove directory {}", dir_path);
-    return HAILO_SUCCESS;
-}
-
-Expected<std::string> Filesystem::get_current_dir()
-{
-    char cwd[PATH_MAX];
-    auto ret_val = getcwd(cwd, sizeof(cwd));
-    CHECK_AS_EXPECTED(nullptr != ret_val, HAILO_FILE_OPERATION_FAILURE, "Failed to get current directory path with errno {}", errno);
-
-    return std::string(cwd);
-}
-
-std::string Filesystem::get_home_directory()
-{
-    const char *homedir = getenv("HOME");
-    if (NULL == homedir) {
-        homedir = getpwuid(getuid())->pw_dir;
-    }
-
-#ifdef __QNX__
-    const std::string root_dir = "/";
-    std::string homedir_str = std::string(homedir);
-    if (homedir_str == root_dir) {
-        return homedir_str + "home";
-    }
-#endif
-
-    return homedir;
-}
-
-bool Filesystem::is_path_accesible(const std::string &path)
-{
-    auto ret = access(path.c_str(), W_OK);
-    if (ret == 0) {
-        return true;
-    }
-    else if (EACCES == errno) {
-        return false;
-    } else {
-        std::cerr << "Failed checking path " << path << " access permissions, errno = " << errno << std::endl;
-        return false;
-    }
-}
-
-bool Filesystem::does_file_exists(const std::string &path)
-{
-    // From https://stackoverflow.com/a/12774387
-    struct stat buffer;
-    return (0 == stat(path.c_str(), &buffer));
-}
-
-Expected<std::string> Filesystem::get_temp_path()
-{
-    return std::string("/tmp/");
-}
 
 Expected<TempFile> TempFile::create(const std::string &file_name, const std::string &file_directory)
 {
     if (!file_directory.empty()) {
         auto status = Filesystem::create_directory(file_directory);
-        CHECK_SUCCESS_AS_EXPECTED(status);
+        CHECK_SUCCESS(status);
     }
 
     std::string file_path = file_directory + file_name + UNIQUE_TMP_FILE_SUFFIX;
@@ -246,7 +33,7 @@ Expected<TempFile> TempFile::create(const std::string &file_name, const std::str
     dirname.push_back('\0');
 
     int fd = mkstemp(fname.data());
-    CHECK_AS_EXPECTED((-1 != fd), HAILO_FILE_OPERATION_FAILURE, "Failed to create tmp file {}, with errno {}", file_path, errno);
+    CHECK((-1 != fd), HAILO_FILE_OPERATION_FAILURE, "Failed to create tmp file {}, with errno {}", file_path, errno);
     close(fd);
 
     return TempFile(fname.data(), dirname.data());
@@ -259,57 +46,142 @@ TempFile::TempFile(const char *file_path, const char *dir_path) :
 
 TempFile::~TempFile()
 {
-    // TODO: Guarantee file deletion upon unexpected program termination. 
+    // TODO: Guarantee file deletion upon unexpected program termination. HRT-19808
     std::remove(m_file_path.c_str());
 }
 
-std::string TempFile::name() const
+std::string TempFile::path() const
 {
     return m_file_path;
 }
-
 
 std::string TempFile::dir() const
 {
     return m_dir_path;
 }
 
+std::unordered_map<std::string, std::shared_ptr<std::timed_mutex>> LockedFile::m_shared_mutexes;
+std::mutex LockedFile::m_map_mutex;
 Expected<LockedFile> LockedFile::create(const std::string &file_path, const std::string &mode)
 {
-    auto fp = fopen(file_path.c_str(), mode.c_str());
-    CHECK_AS_EXPECTED((nullptr != fp), HAILO_OPEN_FILE_FAILURE, "Failed opening file: {}, with errno: {}", file_path, errno);
+    // Because of the default umask, open first with user permissions and then change to all users permissions
+    int permissions = (S_IRUSR | S_IWUSR);
 
-    int fd = fileno(fp);
-    int done = flock(fd, LOCK_EX | LOCK_NB);
-    if (-1 == done) {
-        LOGGER__ERROR("Failed to flock file: {}, with errno: {}", file_path, errno);
-        fclose(fp);
-        return make_unexpected(HAILO_FILE_OPERATION_FAILURE);
+    auto fd = open(file_path.c_str(), O_RDWR | O_CREAT, permissions);
+    if ((-1 == fd) && (EACCES == errno)) {
+        // We reached a race here between two processes with DIFFERENT PERMISSIONS, trying to create a file with the SAME PATH:
+        // The first (higher permissions) created the file, but wasn't able to fchmod it fast enough,
+        // so the second process (lower permissions) failed to open the file. The easiest way to solve it is with a small sleep and a retry
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        fd = open(file_path.c_str(), O_RDWR | O_CREAT, permissions);
+    }
+    CHECK(fd != -1, HAILO_OPEN_FILE_FAILURE, "Failed opening file: {}, with errno: {}", file_path, errno);
+
+    auto ret = fchmod(fd, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
+    // We allow EPERM because it means the user doesn't have permission to change the file permissions,
+    // but we count on the file permissions to be correct so we proceed to open the file
+    CHECK((ret != -1) || (EPERM == errno), HAILO_FILE_OPERATION_FAILURE, "Failed changing file permissions: {}, with errno: {}", file_path, errno);
+
+    FILE *fp = fdopen(fd, mode.c_str());
+    CHECK(fp != nullptr, HAILO_OPEN_FILE_FAILURE, "Failed opening file: {}, with errno: {}", file_path, errno);
+
+    std::shared_ptr<std::timed_mutex> mutex = nullptr;
+    {
+        std::unique_lock<std::mutex> lock(m_map_mutex);
+        if (contains(m_shared_mutexes, file_path)) {
+            mutex = m_shared_mutexes[file_path];
+        } else {
+            mutex = make_shared_nothrow<std::timed_mutex>();
+            CHECK_NOT_NULL(mutex, HAILO_OUT_OF_HOST_MEMORY);
+
+            m_shared_mutexes[file_path] = mutex;
+        }
     }
 
-    return LockedFile(fp, fd);
+    return LockedFile(std::unique_ptr<FILE, FcloseDeleter>(fp), file_path, mutex);
 }
 
-LockedFile::LockedFile(FILE *fp, int fd) : m_fp(fp), m_fd(fd)
-{}
+hailo_status LockedFile::lock()
+{
+    // flock does not work between threads, only between processes, so we need to make it thread safe as well
+    m_mutex->lock();
+    auto defer_unlock = defer([&]() { m_mutex->unlock(); });
+
+    int ret = flock(get_fd(), LOCK_EX);
+    CHECK(0 == ret, HAILO_FILE_OPERATION_FAILURE, "Failed to lock file with errno: {}", errno);
+
+    defer_unlock.release();
+    return HAILO_SUCCESS;
+}
+
+hailo_status LockedFile::try_lock_for(std::chrono::milliseconds timeout)
+{
+    auto start_time = std::chrono::steady_clock::now();
+    // flock does not work between threads, only between processes, so we need to make it thread safe as well
+    bool is_locked = m_mutex->try_lock_for(timeout);
+    if (!is_locked) {
+        return HAILO_TIMEOUT;
+    }
+    auto defer_unlock = defer([&]() { m_mutex->unlock(); });
+
+    auto time_passed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time);
+    if (time_passed > timeout) {
+        timeout = std::chrono::milliseconds(0);
+    } else {
+        timeout -= time_passed;
+    }
+
+    start_time = std::chrono::steady_clock::now();
+    auto backoff = std::chrono::microseconds(1);
+
+    // Try atleast once
+    do {
+        int ret = flock(get_fd(), LOCK_EX | LOCK_NB);
+        if (0 == ret) {
+            defer_unlock.release();
+            return HAILO_SUCCESS;
+        }
+        CHECK((EWOULDBLOCK == errno) || (EAGAIN == errno) || (EINTR == errno),
+            HAILO_FILE_OPERATION_FAILURE, "Failed to lock file with errno: {}", errno);
+
+        std::this_thread::sleep_for(backoff);
+        backoff = std::min(backoff * 2, std::chrono::microseconds(1000));
+    } while (std::chrono::steady_clock::now() - start_time < timeout);
+
+    return HAILO_TIMEOUT;
+}
+
+hailo_status LockedFile::unlock()
+{
+    hailo_status status = HAILO_SUCCESS;
+    int ret = flock(get_fd(), LOCK_UN);
+    if (ret != 0) {
+        status = HAILO_FILE_OPERATION_FAILURE;
+        LOGGER__ERROR("Failed to unlock file with errno: {}", errno);
+    }
+
+    m_mutex->unlock();
+    return status;
+}
 
 LockedFile::~LockedFile()
 {
     if (m_fp != nullptr) {
-        // The lock is released when all descriptors are closed.
-        // Since we use LOCK_EX, this is the only fd open and the lock will be release after d'tor.
-        fclose(m_fp);
+        auto status = unlock();
+        if (HAILO_SUCCESS != status) {
+            LOGGER__ERROR("Failed to unlock file {}, with status: {}", m_file_path, status);
+        }
     }
 }
 
-LockedFile::LockedFile(LockedFile &&other) :
-    m_fp(std::exchange(other.m_fp, nullptr)),
-    m_fd(other.m_fd)
-{}
-
 int LockedFile::get_fd() const
 {
-    return m_fd;
+    return fileno(m_fp.get());
+}
+
+const std::string &LockedFile::path() const
+{
+    return m_file_path;
 }
 
 } /* namespace hailort */

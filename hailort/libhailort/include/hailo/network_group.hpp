@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -61,7 +61,7 @@ using InputStreamRefVector = std::vector<std::reference_wrapper<InputStream>>;
 /** Represents a vector of OutputStream */
 using OutputStreamRefVector = std::vector<std::reference_wrapper<OutputStream>>;
 
-/** Represents a mapping of vstream name to its' params */
+/** Represents a mapping of vstream name to its params */
 using NameToVStreamParamsMap = std::unordered_map<std::string, hailo_vstream_params_t>;
 
 /** Represents a vector of pairs of OutputStream and NameToVStreamParamsMap */
@@ -449,7 +449,7 @@ public:
     virtual hailo_status set_nms_max_bboxes_per_class(const std::string &edge_name, uint32_t max_bboxes_per_class) = 0;
     virtual hailo_status set_nms_max_bboxes_total(const std::string &edge_name, uint32_t max_bboxes_total) = 0;
     virtual hailo_status set_nms_max_accumulated_mask_size(const std::string &edge_name, uint32_t max_accumulated_mask_size) = 0;
-
+    virtual hailo_status set_nms_classes_filter_mask(const std::string &edge_name, const std::vector<bool> &classes_filter_mask) = 0;
     virtual hailo_status init_cache(uint32_t read_offset) = 0;
     virtual hailo_status update_cache_offset(int32_t offset_delta_entries) = 0;
 

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -8,41 +8,45 @@
  **/
 
 #include "hailo/hailo_session.hpp"
-#include "hrpc/raw_connection_internal/pcie/hailo_session_internal.hpp"
-#include "hrpc/raw_connection_internal/socket/hailo_session_internal.hpp"
+#include "hrpc/session_internal/pcie_session_internal.hpp"
+#include "hrpc/session_internal/eth_session.hpp"
+#include "hrpc/session_internal/usb/usb_session.hpp"
 #include "connection_context.hpp"
 #include "vdma/transfer_common.hpp"
 
 namespace hailort
 {
 
-Expected<std::shared_ptr<SessionListener>> SessionListener::create_shared(uint16_t port, const std::string &ip)
+Expected<std::shared_ptr<SessionListener>> SessionListener::create_shared(uint16_t port, const std::string &device_id)
 {
-    TRY(auto context, ConnectionContext::create_server_shared(ip));
+    TRY(auto context, ConnectionContext::create_server_shared(device_id));
     return SessionListener::create_shared(context, port);
 }
 
 Expected<std::shared_ptr<SessionListener>> SessionListener::create_shared(std::shared_ptr<ConnectionContext> context, uint16_t port)
 {
-    // Create according to ConnectionContext type
-    auto os_connection_context = std::dynamic_pointer_cast<OsConnectionContext>(context);
-    // using BACKLOG_SIZE
-    if (os_connection_context != nullptr) {
-        return OsListener::create_shared(os_connection_context, port);
-    } else {
-        return RawPcieListener::create_shared(std::dynamic_pointer_cast<PcieConnectionContext>(context), port);
+    // Create according to ConnectionContext device_type
+    switch (context->device_type()) {
+    case Device::Type::ETH:
+    case Device::Type::INTEGRATED:
+        return OsListener::create_shared(std::static_pointer_cast<OsConnectionContext>(context), port);
+    case Device::Type::USB:
+#ifdef __linux__
+        return UsbListener::create_shared(std::static_pointer_cast<UsbConnectionContext>(context), port);
+#else
+        return make_unexpected(HAILO_NOT_SUPPORTED);
+#endif
+    case Device::Type::PCIE:
+        return RawPcieListener::create_shared(std::static_pointer_cast<PcieConnectionContext>(context), port);
+    default:
+        return make_unexpected(HAILO_INVALID_ARGUMENT);
     }
 }
 
 Expected<std::shared_ptr<Session>> Session::connect(uint16_t port, const std::string &device_id)
 {
     TRY(auto context, ConnectionContext::create_client_shared(device_id));
-    auto os_connection_context = std::dynamic_pointer_cast<OsConnectionContext>(context);
-    if (os_connection_context != nullptr) {
-        return OsSession::connect(os_connection_context, port);
-    } else {
-        return RawPcieSession::connect(std::dynamic_pointer_cast<PcieConnectionContext>(context), port);
-    }
+    return Session::connect(context, port);
 }
 
 hailo_status Session::write_async(const uint8_t *buffer, size_t size, std::function<void(hailo_status)> &&callback)
@@ -57,12 +61,17 @@ hailo_status Session::read_async(uint8_t *buffer, size_t size, std::function<voi
 
 Expected<std::shared_ptr<Session>> Session::connect(std::shared_ptr<ConnectionContext> context, uint16_t port)
 {
-    // Create according to ConnectionContext type
-    auto os_connection_context = std::dynamic_pointer_cast<OsConnectionContext>(context);
-    if (os_connection_context != nullptr) {
-        return OsSession::connect(os_connection_context, port);
-    } else {
-        return RawPcieSession::connect(std::dynamic_pointer_cast<PcieConnectionContext>(context), port);
+    // Create according to ConnectionContext device_type
+    switch (context->device_type()) {
+    case Device::Type::ETH:
+    case Device::Type::INTEGRATED:
+        return OsSession::connect(std::static_pointer_cast<OsConnectionContext>(context), port);
+    case Device::Type::USB:
+        return UsbSession::connect(std::static_pointer_cast<UsbConnectionContext>(context), port);
+    case Device::Type::PCIE:
+        return RawPcieSession::connect(std::static_pointer_cast<PcieConnectionContext>(context), port);
+    default:
+        return make_unexpected(HAILO_INVALID_ARGUMENT);
     }
 }
 

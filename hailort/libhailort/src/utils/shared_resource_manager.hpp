@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -65,6 +65,7 @@ public:
             if (m_resources.at(i) == nullptr) {
                 available_index = i;
             } else {
+                // TODO HRT-20078: Get rid of this.
                 if ((FORCE_GET_FIRST_AVAILABLE == user_key) || (m_resources.at(i)->user_key == user_key)) {
                     // Resource already registered
                     match_index = i;

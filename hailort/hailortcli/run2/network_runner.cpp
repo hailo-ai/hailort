@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -584,7 +584,7 @@ Expected<AsyncInferJob> FullAsyncNetworkRunner::create_infer_job(const Configure
 {
     frame_rate_throttle.throttle();
     if (m_overall_latency_meter) {
-        m_overall_latency_meter->add_start_sample(std::chrono::steady_clock::now().time_since_epoch());
+        m_overall_latency_meter->add_start_sample();
     }
 
     TRY(auto job, m_configured_infer_model->run_async(bindings, [=, &inference_status] (const AsyncInferCompletionInfo &completion_info) {
@@ -596,7 +596,7 @@ Expected<AsyncInferJob> FullAsyncNetworkRunner::create_infer_job(const Configure
             return;
         }
         if (m_overall_latency_meter) {
-            m_overall_latency_meter->add_end_sample("INFERENCE", std::chrono::steady_clock::now().time_since_epoch());
+            m_overall_latency_meter->add_end_sample("INFERENCE");
         }
         if (auto net_live_track = net_live_track_weak.lock()) {
             /* Using weak_ptr as net_live_track holds a reference to m_configured_infer_model (for stuff like latency measurement),

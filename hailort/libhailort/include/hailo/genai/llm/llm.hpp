@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -36,7 +36,7 @@ public:
      * @param[in] lora_name                  The name of the chosen LoRA. Default is empty string.
      * @param[in] optimize_memory_on_device  Whether to optimize memory usage on device by enabling client-side tokenization.
      *                                       When true, tokenization is performed on the host, reducing device memory usage.
-     *                                       Requires libhailort to be compiled with HAILO_BUILD_CLIENT_TOKENIZER=ON.
+     *                                       Requires libhailort to be compiled with HAILO_BUILD_CLIENT_TOKENIZER=ON (default).
      *                                       Default is false.
      */
      LLMParams(const std::string &hef_path, const std::string &lora_name = "", bool optimize_memory_on_device = false);
@@ -71,7 +71,7 @@ public:
      *
      * @param[in] optimize_memory_on_device  Whether to enable client-side tokenization for memory optimization.
      *                                       When true, tokenization is performed on the host, reducing device memory usage.
-     *                                       Requires libhailort to be compiled with HAILO_BUILD_CLIENT_TOKENIZER=ON.
+     *                                       Requires libhailort to be compiled with HAILO_BUILD_CLIENT_TOKENIZER=ON (default).
      */
     void set_optimize_memory_on_device(bool optimize_memory_on_device);
 
@@ -251,7 +251,7 @@ public:
      * @note The returned output is a UTF-8 encoded string.
      * @note After calling this function, no further reads should be attempted on this LLMGeneratorCompletion object.
      */
-     Expected<std::string> read_all(std::chrono::milliseconds timeout = HAILO_INFINITE_TIMEOUT);
+     Expected<std::string> read_all(std::chrono::milliseconds timeout = DEFAULT_READ_ALL_TIMEOUT);
 
     /**
      * Returns the current generation status.
@@ -283,6 +283,7 @@ public:
     hailo_status abort();
 
     static constexpr std::chrono::milliseconds DEFAULT_READ_TIMEOUT = std::chrono::seconds(10);
+    static constexpr std::chrono::milliseconds DEFAULT_READ_ALL_TIMEOUT = std::chrono::minutes(10);
 
     class Impl;
     LLMGeneratorCompletion(std::unique_ptr<Impl> pimpl);

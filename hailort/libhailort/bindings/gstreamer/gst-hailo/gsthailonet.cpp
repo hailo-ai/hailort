@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the LGPL 2.1 license (https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt)
  *
  * This library is free software; you can redistribute it and/or
@@ -519,14 +519,14 @@ static hailo_status gst_hailonet_toggle_activation(GstHailoNet *self, gboolean o
     std::unique_lock<std::mutex> lock(self->impl->infer_mutex);
 
     if (self->impl->props.m_scheduling_algorithm.was_changed() && (HAILO_SCHEDULING_ALGORITHM_NONE != self->impl->props.m_scheduling_algorithm.get())) {
-        g_error("scheduling-algorithm different than HAILO_SCHEDULING_ALGORITHM_NONE in combination with 'is-active' is not supported.");
+        GST_ERROR("scheduling-algorithm different than HAILO_SCHEDULING_ALGORITHM_NONE in combination with 'is-active' is not supported.");
         return HAILO_INVALID_OPERATION;
     }
 
     if (self->impl->has_called_activate) {
         // Should we keep this? If the user changes the is-active property when we are not configured, it's his fault.
         if (!self->impl->is_configured) {
-            g_warning("Trying to change is-active property when network is not configured!");
+            GST_WARNING("Trying to change is-active property when network is not configured!");
             return HAILO_INVALID_OPERATION;
         }
         if (old_is_active && !new_is_active) {
@@ -535,7 +535,7 @@ static hailo_status gst_hailonet_toggle_activation(GstHailoNet *self, gboolean o
             auto status = self->impl->configured_infer_model->activate();
             CHECK_SUCCESS(status);
         } else {
-            g_warning("Trying to change is-active property from %d to %d", old_is_active, new_is_active);
+            GST_WARNING("Trying to change is-active property from %d to %d", old_is_active, new_is_active);
         }
     }
 
@@ -549,45 +549,45 @@ static void gst_hailonet_set_property(GObject *object, guint property_id, const 
     switch (property_id) {
     case PROP_HEF_PATH:
         if (self->impl->is_configured) {
-            g_warning("The network was already configured so changing the HEF path will not take place!");
+            GST_WARNING("The network was already configured so changing the HEF path will not take place!");
             break;
         }
         self->impl->props.m_hef_path = g_value_get_string(value);
         break;
     case PROP_BATCH_SIZE:
         if (self->impl->is_configured) {
-            g_warning("The network was already configured so changing the batch size will not take place!");
+            GST_WARNING("The network was already configured so changing the batch size will not take place!");
             break;
         }
         self->impl->props.m_batch_size = static_cast<guint16>(g_value_get_uint(value));
         break;
     case PROP_DEVICE_ID:
         if (0 != self->impl->props.m_device_count.get()) {
-            g_error("device-id and device-count excludes eachother. received device-id=%s, device-count=%d",
+            GST_ERROR("device-id and device-count excludes eachother. received device-id=%s, device-count=%d",
                 g_value_get_string(value), self->impl->props.m_device_count.get());
             break;
         }
         if (self->impl->is_configured) {
-            g_warning("The network was already configured so changing the device ID will not take place!");
+            GST_WARNING("The network was already configured so changing the device ID will not take place!");
             break;
         }
         self->impl->props.m_device_id = g_value_get_string(value);
         break;
     case PROP_DEVICE_COUNT:
         if (!self->impl->props.m_device_id.get().empty()) {
-            g_error("device-id and device-count excludes eachother. received device-id=%s, device-count=%d",
+            GST_ERROR("device-id and device-count excludes eachother. received device-id=%s, device-count=%d",
                 self->impl->props.m_device_id.get().c_str(), g_value_get_uint(value));
             break;
         }
         if (self->impl->is_configured) {
-            g_warning("The network was already configured so changing the device count will not take place!");
+            GST_WARNING("The network was already configured so changing the device count will not take place!");
             break;
         }
         self->impl->props.m_device_count = static_cast<guint16>(g_value_get_uint(value));
         break;
     case PROP_VDEVICE_GROUP_ID:
         if (self->impl->is_configured) {
-            g_warning("The network was already configured so changing the vdevice group ID will not take place!");
+            GST_WARNING("The network was already configured so changing the vdevice group ID will not take place!");
             break;
         }
         self->impl->props.m_vdevice_group_id = g_value_get_string(value);
@@ -603,108 +603,108 @@ static void gst_hailonet_set_property(GObject *object, guint property_id, const 
         break;
     case PROP_OUTPUTS_MIN_POOL_SIZE:
         if (self->impl->is_configured) {
-            g_warning("The network has already been configured, the output's minimum pool size cannot be changed!");
+            GST_WARNING("The network has already been configured, the output's minimum pool size cannot be changed!");
             break;
         }
         self->impl->props.m_outputs_min_pool_size = g_value_get_uint(value);
         break;
     case PROP_OUTPUTS_MAX_POOL_SIZE:
         if (self->impl->is_configured) {
-            g_warning("The network was already configured so changing the outputs maximum pool size will not take place!");
+            GST_WARNING("The network was already configured so changing the outputs maximum pool size will not take place!");
             break;
         }
         self->impl->props.m_outputs_max_pool_size = g_value_get_uint(value);
         break;
     case PROP_SCHEDULING_ALGORITHM:
         if (self->impl->is_configured) {
-            g_warning("The network was already configured so changing the scheduling algorithm will not take place!");
+            GST_WARNING("The network was already configured so changing the scheduling algorithm will not take place!");
             break;
         }
         if (self->impl->props.m_is_active.was_changed() && (g_value_get_enum(value) != HAILO_SCHEDULING_ALGORITHM_NONE)) {
-            g_error("scheduling-algorithm different than HAILO_SCHEDULING_ALGORITHM_NONE in combination with 'is-active' is not supported.");
+            GST_ERROR("scheduling-algorithm different than HAILO_SCHEDULING_ALGORITHM_NONE in combination with 'is-active' is not supported.");
             break;
         }
         self->impl->props.m_scheduling_algorithm = static_cast<hailo_scheduling_algorithm_t>(g_value_get_enum(value));
         break;
     case PROP_SCHEDULER_TIMEOUT_MS:
         if (self->impl->is_configured) {
-            g_warning("The network was already configured so changing the scheduling timeout will not take place!");
+            GST_WARNING("The network was already configured so changing the scheduling timeout will not take place!");
             break;
         }
         self->impl->props.m_scheduler_timeout_ms = g_value_get_uint(value);
         break;
     case PROP_SCHEDULER_THRESHOLD:
         if (self->impl->is_configured) {
-            g_warning("The network was already configured so changing the scheduling threshold will not take place!");
+            GST_WARNING("The network was already configured so changing the scheduling threshold will not take place!");
             break;
         }
         self->impl->props.m_scheduler_threshold = g_value_get_uint(value);
         break;
     case PROP_SCHEDULER_PRIORITY:
         if (self->impl->is_configured) {
-            g_warning("The network was already configured so changing the scheduling priority will not take place!");
+            GST_WARNING("The network was already configured so changing the scheduling priority will not take place!");
             break;
         }
         self->impl->props.m_scheduler_priority = static_cast<guint8>(g_value_get_uint(value));
         break;
     case PROP_INPUT_FORMAT_TYPE:
         if (self->impl->is_configured) {
-            g_warning("The network was already configured so changing the format type will not take place!");
+            GST_WARNING("The network was already configured so changing the format type will not take place!");
             break;
         }
         self->impl->props.m_input_format_type = static_cast<hailo_format_type_t>(g_value_get_enum(value));
         break;
     case PROP_OUTPUT_FORMAT_TYPE:
         if (self->impl->is_configured) {
-            g_warning("The network was already configured so changing the format type will not take place!");
+            GST_WARNING("The network was already configured so changing the format type will not take place!");
             break;
         }
         self->impl->props.m_output_format_type = static_cast<hailo_format_type_t>(g_value_get_enum(value));
         break;
     case PROP_NMS_SCORE_THRESHOLD:
         if (self->impl->is_configured) {
-            g_warning("The network was already configured so changing the score threshold will not take place!");
+            GST_WARNING("The network was already configured so changing the score threshold will not take place!");
             break;
         }
         self->impl->props.m_nms_score_threshold = static_cast<gfloat>(g_value_get_float(value));
         break;
     case PROP_NMS_IOU_THRESHOLD:
         if (self->impl->is_configured) {
-            g_warning("The network was already configured so changing the IoU threshold will not take place!");
+            GST_WARNING("The network was already configured so changing the IoU threshold will not take place!");
             break;
         }
         self->impl->props.m_nms_iou_threshold = static_cast<gfloat>(g_value_get_float(value));
         break;
     case PROP_NMS_MAX_PROPOSALS_PER_CLASS:
         if (self->impl->is_configured) {
-            g_warning("The network was already configured so changing the max proposals per class will not take place!");
+            GST_WARNING("The network was already configured so changing the max proposals per class will not take place!");
             break;
         }
         self->impl->props.m_nms_max_proposals_per_class = static_cast<guint32>(g_value_get_uint(value));
         break;
     case PROP_NMS_MAX_PROPOSALS_TOTAL:
         if (self->impl->is_configured) {
-            g_warning("The network was already configured so changing the max proposals total will not take place!");
+            GST_WARNING("The network was already configured so changing the max proposals total will not take place!");
             break;
         }
         self->impl->props.m_nms_max_proposals_total = static_cast<guint32>(g_value_get_uint(value));
         break;
     case PROP_INPUT_FROM_META:
         if (self->impl->is_configured) {
-            g_warning("The network was already configured so changing the input method will not take place!");
+            GST_WARNING("The network was already configured so changing the input method will not take place!");
             break;
         }
         self->impl->props.m_input_from_meta = g_value_get_boolean(value);
         break;
     case PROP_NO_TRANSFORM:
         if (self->impl->is_configured) {
-            g_warning("The network was already configured so disabling the transformation will not take place!");
+            GST_WARNING("The network was already configured so disabling the transformation will not take place!");
         }
         self->impl->props.m_no_transform = g_value_get_boolean(value);
         break;
     case PROP_MULTI_PROCESS_SERVICE:
         if (self->impl->is_configured) {
-            g_warning("The network was already configured so changing the multi-process-service property will not take place!");
+            GST_WARNING("The network was already configured so changing the multi-process-service property will not take place!");
             break;
         }
         self->impl->props.m_multi_process_service = g_value_get_boolean(value);
@@ -1139,7 +1139,7 @@ static hailo_status gst_hailonet_call_run_async(GstHailoNet *self, const std::un
                 (void)gst_buffer_add_parent_buffer_meta(buffer, info.buffer);
                 gst_buffer_unref(info.buffer);
             } else if (HAILO_STREAM_ABORT != completion_info.status) {
-                g_error("Failed to run async inference, status = %d", completion_info.status);
+                GST_ERROR("Failed to run async inference, status = %d", completion_info.status);
             }
         }
 

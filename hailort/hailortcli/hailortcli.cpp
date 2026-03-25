@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -13,11 +13,7 @@
 #include "scan_command.hpp"
 #include "power_measurement_command.hpp"
 #include "run_command.hpp"
-#include "fw_update_command.hpp"
-#include "ssb_update_command.hpp"
-#include "sensor_config_command.hpp"
 #include "board_config_command.hpp"
-#include "fw_config_command.hpp"
 #include "benchmark_command.hpp"
 #include "mon_command.hpp"
 #include "logs_command.hpp"
@@ -67,7 +63,7 @@ Expected<std::vector<std::unique_ptr<Device>>> create_devices(const hailo_device
 
     TRY(const auto device_ids, get_device_ids(device_params));
     for (auto device_id : device_ids) {
-        TRY(auto device, Device::create(device_id));
+        TRY_WITH_ACCEPTABLE_STATUS(HAILO_INVALID_FIRMWARE, auto device, Device::create(device_id));
         res.emplace_back(std::move(device));
     }
 
@@ -189,11 +185,7 @@ public:
         add_subcommand<ScanSubcommand>();
         add_subcommand<BenchmarkCommand>();
         add_subcommand<PowerMeasurementSubcommand>();
-        add_subcommand<SensorConfigCommand>();
         add_subcommand<BoardConfigCommand>(OptionVisibility::HIDDEN);
-        add_subcommand<FwConfigCommand>();
-        add_subcommand<FwUpdateCommand>();
-        add_subcommand<SSBUpdateCommand>();
         add_subcommand<MonCommand>();
 #if defined(__GNUC__)
         add_subcommand<HwInferEstimatorCommand>(OptionVisibility::HIDDEN);

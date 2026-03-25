@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 
@@ -20,11 +20,15 @@
 #endif // __linux__
 #include <memory>
 #include <filesystem>
+#include <charconv>
 
 namespace fs = std::filesystem;
 
 namespace hailort
 {
+
+static constexpr auto CURRENT_LIMIT_FILE = "/sys/devices/soc0/current_limit";
+static constexpr auto CHIP_SERIAL_NUMBER_FILE = "/sys/devices/soc0/chip_serial_number";
 
 bool IntegratedDevice::is_loaded()
 {
@@ -120,6 +124,8 @@ Expected<float32_t> IntegratedDevice::power_measurement(
     hailo_dvm_options_t dvm,
     hailo_power_measurement_types_t measurement_type)
 {
+    CHECK(has_power_sensor(), HAILO_INVALID_OPERATION,
+        "HailoRT does not support power measurements for this architecture. Use the 'sensors' CLI command instead");
     return SocPowerMeasurement::measure(dvm, measurement_type);
 }
 
@@ -127,6 +133,8 @@ hailo_status IntegratedDevice::start_power_measurement(
     hailo_averaging_factor_t averaging_factor,
     hailo_sampling_period_t sampling_period)
 {
+    CHECK(has_power_sensor(), HAILO_INVALID_OPERATION,
+        "HailoRT does not support power measurements for this architecture. Use the 'sensors' CLI command instead");
     CHECK(nullptr != m_power_measurement_data, HAILO_INVALID_OPERATION, "Must call set_power_measurement before start_power_measurement");
     auto status = m_power_measurement_data->config(averaging_factor, sampling_period);
     CHECK_SUCCESS(status, "Failed to configure power measurement");
@@ -139,7 +147,8 @@ hailo_status IntegratedDevice::set_power_measurement(
     hailo_power_measurement_types_t measurement_type)
 {
     (void)buffer_index;
-
+    CHECK(has_power_sensor(), HAILO_INVALID_OPERATION,
+        "HailoRT does not support power measurements for this architecture. Use the 'sensors' CLI command instead");
     CHECK((HAILO_DVM_OPTIONS_VDD_CORE == dvm) || (HAILO_DVM_OPTIONS_AUTO == dvm), HAILO_INVALID_ARGUMENT,
         "Only HAILO_DVM_OPTIONS_VDD_CORE or HAILO_DVM_OPTIONS_AUTO are supported");
     m_power_measurement_data = std::make_shared<SocPowerMeasurement>(measurement_type);
@@ -150,7 +159,8 @@ Expected<hailo_power_measurement_data_t> IntegratedDevice::get_power_measurement
     hailo_measurement_buffer_index_t buffer_index, bool should_clear)
 {
     (void)buffer_index;
-
+    CHECK(has_power_sensor(), HAILO_INVALID_OPERATION,
+        "HailoRT does not support power measurements for this architecture. Use the 'sensors' CLI command instead");
     Expected<hailo_power_measurement_data_t> data(m_power_measurement_data->get_data());
     if (should_clear) {
         m_power_measurement_data->clear_data();
@@ -160,6 +170,8 @@ Expected<hailo_power_measurement_data_t> IntegratedDevice::get_power_measurement
 
 hailo_status IntegratedDevice::stop_power_measurement()
 {
+    CHECK(has_power_sensor(), HAILO_INVALID_OPERATION,
+        "HailoRT does not support power measurements for this architecture. Use the 'sensors' CLI command instead");
     CHECK_NOT_NULL(m_power_measurement_data, HAILO_INVALID_OPERATION);
     return m_power_measurement_data->stop();
 }
@@ -169,13 +181,9 @@ Expected<hailo_extended_device_information_t> IntegratedDevice::get_extended_dev
     constexpr auto STATUS_ENABLED = "okay";
     constexpr auto PCI_STATUS_FILE = "/proc/device-tree/hailo_pci_ep_driver/status";
     constexpr auto IDENTIFICATION_FILE = "/sys/devices/soc0/identification_attributes";
-    constexpr auto FUSE_FILE = "/sys/devices/soc0/fuse";
-    constexpr auto ULT_OFFSET_IN_FUSE = sizeof(uint32_t); // crypto_dummy field before the ULT
-    constexpr auto LOT_ID_SIZE = 8;
     constexpr auto NOT_AVAILABLE = 0;
 
-    // LOT_ID_SIZE + sizeof(wafer_info) = HAILO_UNIT_LEVEL_TRACKING_BYTES_LENGTH
-    static_assert(LOT_ID_SIZE == HAILO_UNIT_LEVEL_TRACKING_BYTES_LENGTH - sizeof(uint32_t), "LOT_ID_SIZE is not as expected!");
+    static_assert(HAILO_UNIT_LEVEL_TRACKING_BYTES_LENGTH == HAILO_CHIP_SERIAL_NUMBER_BYTES_LENGTH, "ULT and chip serial number must have the same size!");
 
     hailo_extended_device_information_t info = {};
 
@@ -194,20 +202,22 @@ Expected<hailo_extended_device_information_t> IntegratedDevice::get_extended_dev
     TRY(auto is_pci_supported, compare_file_content(PCI_STATUS_FILE, STATUS_ENABLED));
     TRY(auto is_power_measurement_supported, has_power_sensor());
 
-    info.boot_source                           = HAILO_DEVICE_BOOT_SOURCE_INVALID; // TODO: HRT-18652
-    info.lcs                                   = NOT_AVAILABLE;
-    info.neural_network_core_clock_rate        = NOT_AVAILABLE;                    // TODO: HRT-18652
-    info.soc_id[0]                             = NOT_AVAILABLE;
-    info.soc_pm_values[0]                      = NOT_AVAILABLE;
+    if (HAILO_ARCH_HAILO10H == m_device_architecture) {
+        info.boot_source = is_pci_supported ? HAILO_DEVICE_BOOT_SOURCE_PCIE : HAILO_DEVICE_BOOT_SOURCE_FLASH;
+    } else {
+        info.boot_source = HAILO_DEVICE_BOOT_SOURCE_INVALID;
+    }
     info.supported_features.pcie               = is_pci_supported;
     info.supported_features.power_measurement  = is_power_measurement_supported;
-
+    
     // deprecated fields
+    info.neural_network_core_clock_rate        = NOT_AVAILABLE;
     info.eth_mac_address[0]                    = NOT_AVAILABLE;
     info.supported_features.current_monitoring = NOT_AVAILABLE;
     info.supported_features.ethernet           = NOT_AVAILABLE;
     info.supported_features.mdio               = NOT_AVAILABLE;
     info.supported_features.mipi               = NOT_AVAILABLE;
+    memset(info.unit_level_tracking_id, NOT_AVAILABLE, sizeof(info.unit_level_tracking_id));
 
     if (fs::exists(IDENTIFICATION_FILE)) {
         FileReader reader(IDENTIFICATION_FILE);
@@ -227,21 +237,15 @@ Expected<hailo_extended_device_information_t> IntegratedDevice::get_extended_dev
     }
 
     {
-        FileReader reader(FUSE_FILE);
+        FileReader reader(CHIP_SERIAL_NUMBER_FILE);
         auto status = reader.open();
-        CHECK_SUCCESS(status, "Failed to open file {}", FUSE_FILE);
+        CHECK_SUCCESS(status, "Failed to open file {}", CHIP_SERIAL_NUMBER_FILE);
 
-        status = reader.seek(ULT_OFFSET_IN_FUSE);
-        CHECK_SUCCESS(status, "Failed to seek to offset {} in file {}", ULT_OFFSET_IN_FUSE, FUSE_FILE);
-
-        status = reader.read(info.unit_level_tracking_id, LOT_ID_SIZE);
-        CHECK_SUCCESS(status, "Failed to read {} bytes from file {}", LOT_ID_SIZE, FUSE_FILE);
-
-        // Reverse the bytes to get the correct order - same is done in hailo8
-        std::reverse(info.unit_level_tracking_id, info.unit_level_tracking_id + LOT_ID_SIZE);
-
-        status = reader.read(info.unit_level_tracking_id + LOT_ID_SIZE, sizeof(info.unit_level_tracking_id) - LOT_ID_SIZE);
-        CHECK_SUCCESS(status, "Failed to read {} bytes from file {}", sizeof(info.unit_level_tracking_id) - LOT_ID_SIZE, FUSE_FILE);
+        status = reader.read(info.chip_serial_number, sizeof(info.chip_serial_number));
+        CHECK_SUCCESS(status, "Failed to read {} bytes from file {}", sizeof(info.chip_serial_number), CHIP_SERIAL_NUMBER_FILE);
+        
+        // The serial number in the file is reversed - so we reverse it back, to match the order in the scu log.
+        std::reverse(info.chip_serial_number, info.chip_serial_number + sizeof(info.chip_serial_number));
     }
 
 #if defined(__linux__) && defined(GPIO_V2_GET_LINE_IOCTL)
@@ -255,6 +259,11 @@ Expected<hailo_extended_device_information_t> IntegratedDevice::get_extended_dev
 
 Expected<bool> IntegratedDevice::has_power_sensor()
 {
+    if ((HAILO_ARCH_HAILO15H == m_device_architecture) || (HAILO_ARCH_HAILO15M == m_device_architecture) ||
+        (HAILO_ARCH_HAILO15L == m_device_architecture)) {
+        return false;
+    }
+
     bool has_power_sensor = false;
     #ifdef __linux__
     glob_t glob_result;
@@ -319,5 +328,29 @@ Expected<uint16_t> IntegratedDevice::GpioReader::read()
     return static_cast<uint16_t>(values.bits);
 }
 #endif // __linux__
+
+Expected<uint32_t> IntegratedDevice::get_current_limit()
+{
+    constexpr auto MAX_LENGTH_OF_FILE = 4;
+    uint8_t buf[MAX_LENGTH_OF_FILE];
+
+    auto bytes_read = read_device_file(CURRENT_LIMIT_FILE, MemoryView(buf, sizeof(buf)));
+    if (!bytes_read) {
+        return HAILO_CURRENT_LIMIT_NA;
+    }
+
+    std::string content(reinterpret_cast<char*>(buf), bytes_read.value());
+    
+    auto trimmed_content = StringUtils::trim(content);
+    if ("NA" == trimmed_content) {
+        return HAILO_CURRENT_LIMIT_NA;
+    }
+    
+    uint32_t result = 0;
+    auto [ptr, ec] = std::from_chars(trimmed_content.data(), trimmed_content.data() + trimmed_content.size(), result);
+    CHECK((std::errc() == ec) && ((trimmed_content.data() + trimmed_content.size()) == ptr), HAILO_FILE_OPERATION_FAILURE, "Failed to parse current limit value from {}", CURRENT_LIMIT_FILE);
+    
+    return result;
+}
 
 } /* namespace hailort */

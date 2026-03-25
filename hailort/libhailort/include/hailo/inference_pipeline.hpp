@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -27,10 +27,10 @@ public:
      * Creates vstreams pipelines to be used later for inference by calling the InferVStreams::infer() function. 
      *
      * @param[in] net_group                    A ConfiguredNetworkGroup to run the inference on.
-     * @param[in] input_params                 A mapping of input vstream name to its' params. Can be achieved by calling 
+     * @param[in] input_params                 A mapping of input vstream name to its params. Can be achieved by calling 
      *                                         ConfiguredNetworkGroup::make_input_vstream_params() or Hef::make_input_vstream_params
      *                                         functions.
-     * @param[in] output_params                A mapping of output vstream name to its' params. Can be achieved by calling 
+     * @param[in] output_params                A mapping of output vstream name to its params. Can be achieved by calling 
      *                                         ConfiguredNetworkGroup::make_output_vstream_params() or Hef::make_output_vstream_params()
      *                                         functions.
      * @return Upon success, returns Expected of InferVStreams. Otherwise, returns Unexpected of ::hailo_status error.
@@ -122,6 +122,15 @@ public:
      * This function will fail in cases where the output vstream has no NMS operations on the CPU.
      */
     hailo_status set_nms_max_accumulated_mask_size(uint32_t max_accumulated_mask_size);
+
+    /**
+     * Set NMS classes filter mask, used for filtering out classes.
+     *
+     * @param[in] classes_filter_mask    NMS classes filter mask to set.
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     * @note This function will fail in cases where there is no output with NMS operations on the CPU.
+     */
+    hailo_status set_nms_classes_filter_mask(const std::vector<bool> &classes_filter_mask);
 
     InferVStreams(const InferVStreams &other) = delete;
     InferVStreams &operator=(const InferVStreams &other) = delete;

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -76,23 +76,26 @@ bool TransformContextUtils::should_transpose(const hailo_format_flags_t &src_fla
 bool TransformContextUtils::should_reorder(const hailo_3d_image_shape_t &src_image_shape, const hailo_format_t &src_format,
     const hailo_3d_image_shape_t &dst_image_shape, const hailo_format_t &dst_format)
 {
-    /* If the orders are NHCW <-> NHWC, but C == 1, no reordering is needed */
-    if  ((src_image_shape.features          == dst_image_shape.features) &&
-           (src_image_shape.features        == 1)                        &&
-           (src_image_shape.height          == dst_image_shape.height)   &&
-           (src_image_shape.width           == dst_image_shape.width)    &&
-           (((src_format.order == HAILO_FORMAT_ORDER_NHCW) && ((dst_format.order == HAILO_FORMAT_ORDER_NHWC) || (dst_format.order == HAILO_FORMAT_ORDER_FCR))) ||
-           (((src_format.order == HAILO_FORMAT_ORDER_NHWC) || src_format.order == HAILO_FORMAT_ORDER_FCR) && (dst_format.order == HAILO_FORMAT_ORDER_NHCW)))) {
-        return false;
-    }
+    // NMS formats don't use regular shapes (union with nms_info)
+    if (!HailoRTCommon::is_nms(src_format.order)) {
+        /* If the orders are NHCW <-> NHWC, but C == 1, no reordering is needed */
+        if  ((src_image_shape.features          == dst_image_shape.features) &&
+                (src_image_shape.features        == 1)                        &&
+                (src_image_shape.height          == dst_image_shape.height)   &&
+                (src_image_shape.width           == dst_image_shape.width)    &&
+                (((src_format.order == HAILO_FORMAT_ORDER_NHCW) && ((dst_format.order == HAILO_FORMAT_ORDER_NHWC) || (dst_format.order == HAILO_FORMAT_ORDER_FCR))) ||
+                (((src_format.order == HAILO_FORMAT_ORDER_NHWC) || src_format.order == HAILO_FORMAT_ORDER_FCR) && (dst_format.order == HAILO_FORMAT_ORDER_NHCW)))) {
+            return false;
+        }
 
 
-    /* If not all shapes and formats are the same - reordering is needed */
-    if  (!((src_image_shape.features        == dst_image_shape.features) &&
-           (src_image_shape.height          == dst_image_shape.height)   &&
-           (src_image_shape.width           == dst_image_shape.width)    &&
-           (src_format.order                == dst_format.order))) {
-        return true;
+        /* If not all shapes and formats are the same - reordering is needed */
+        if  (!((src_image_shape.features        == dst_image_shape.features) &&
+                (src_image_shape.height          == dst_image_shape.height)   &&
+                (src_image_shape.width           == dst_image_shape.width)    &&
+                (src_format.order                == dst_format.order))) {
+            return true;
+        }
     }
 
     /* Some orders has to be reordered, even if shapes and types are the same 
@@ -117,6 +120,11 @@ bool TransformContextUtils::should_reorder(const hailo_3d_image_shape_t &src_ima
 
 bool TransformContextUtils::should_pad_periph(const hailo_3d_image_shape_t &dst_image_shape, const hailo_format_t &dst_format)
 {
+    // NMS formats store nms_info in a union with shape fields - so the shape-based check below would use garbage values
+    if (HailoRTCommon::is_nms(dst_format.order)) {
+        return false;
+    }
+
     // Check if hw frame size is aligned to 8 for periph transfer
     const auto shape_size = dst_image_shape.height * dst_image_shape.width * dst_image_shape.features *
         HailoRTCommon::get_data_bytes(dst_format.type);
@@ -564,7 +572,11 @@ void transform__d2h_NMS(const uint8_t *src_ptr, uint8_t *dst_ptr, const hailo_nm
             // Add bbox from all chunks of current class
             src_offset = chunk_offsets[chunk_index];
             class_bboxes_count = *((nms_bbox_counter_t*)((uint8_t*)src_ptr + src_offset));
-            assert(class_bboxes_count <= nms_info.max_bboxes_per_class);
+            // Cap at max_bboxes_per_class to prevent buffer overflow
+            if (class_bboxes_count > nms_info.max_bboxes_per_class) {
+                class_bboxes_count = static_cast<nms_bbox_counter_t>(nms_info.max_bboxes_per_class);
+                LOGGER__INFO("class_index: {}, class_bboxes_count ({}) is greater than max_bboxes_per_class ({}), limiting to max", class_index, class_bboxes_count, nms_info.max_bboxes_per_class);
+            }
             *dst_bbox_counter = static_cast<nms_bbox_counter_t>(*dst_bbox_counter + class_bboxes_count);
 
             src_offset += sizeof(nms_bbox_counter_t);

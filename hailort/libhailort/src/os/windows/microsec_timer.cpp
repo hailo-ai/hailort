@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -8,9 +8,8 @@
  **/
 
 #include "os/microsec_timer.hpp"
-#include <Windows.h>
-#include <thread>
-#include <chrono>
+#include <profileapi.h>   // QueryPerformanceFrequency, QueryPerformanceCounter
+#include <winnt.h>        // LARGE_INTEGER
 
 namespace hailort
 {

@@ -318,6 +318,7 @@ message Device_ExtendedInfo_Reply {
     repeated uint32 unit_level_tracking_id = 7;
     repeated uint32 soc_pm_values = 8;
     uint32 gpio_mask = 9;
+    repeated uint32 chip_serial_number = 10;
 }
 
 message Device_GetChipTemperature_Request {
@@ -342,6 +343,7 @@ message Device_QueryHealthStats_Reply {
 
 message Device_QueryPerformanceStats_Request {
     HailoObjectHandle device_handle = 1;
+    uint32 sampling_period_ms = 2;
 }
 
 message Device_QueryPerformanceStats_Reply {
@@ -442,4 +444,12 @@ message Device_EchoBuffer_Request {
 
 message Device_EchoBuffer_Reply {
     // Protocol note: After this message, and only if status is HAILO_SUCCESS, client expects to get the buffer
+}
+
+message Device_GetCurrentLimit_Request {
+    HailoObjectHandle device_handle = 1;
+}
+
+message Device_GetCurrentLimit_Reply {
+    uint32 current_limit_mA = 1;
 }

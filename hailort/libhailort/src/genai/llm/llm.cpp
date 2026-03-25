@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -187,8 +187,15 @@ Expected<std::unique_ptr<LLM::Impl>> LLM::Impl::create_unique(std::shared_ptr<VD
         TRY(hef_hash, Hef::hash(llm_params.hef()));
     }
 
+    TRY(auto session_wrapper, GenAICommon::create_session_wrapper(vdevice, DEFAULT_LLM_CONNECTION_PORT));
     auto vdevice_params = vdevice->get_params();
-    TRY(auto session_wrapper, GenAICommon::create_session_wrapper(vdevice_params, DEFAULT_LLM_CONNECTION_PORT));
+
+    // Acquire KV cache before proceeding with LLM creation
+    TRY(auto acquire_kv_cache_request, LLMAcquireKvCacheSerializer::serialize_request());
+    TRY(auto acquire_kv_cache_reply, session_wrapper->execute(MemoryView(acquire_kv_cache_request)));
+    auto acquire_status = LLMAcquireKvCacheSerializer::deserialize_reply(MemoryView(*acquire_kv_cache_reply));
+    CHECK_SUCCESS(acquire_status, "Failed to acquire KV-Cache. KV-Cache is already in use by another model.");
+    // Note: If any subsequent step fails, the server-side KV cache is released when LLMServerManager is destroyed on session close.
 
     // Translate llm_params.hef() to an absolute path if it is not already
     std::string hef_path = llm_params.hef();
@@ -295,20 +302,11 @@ LLM::Impl::Impl(std::shared_ptr<SessionWrapper> session, const LLMParams &llm_pa
 LLM::Impl::~Impl()
 {
     auto release_request = LLMReleaseSerializer::serialize_request();
-    if (!release_request) {
-        LOGGER__CRITICAL("Failed to serialize LLM release request with status {}", release_request.status());
-        return;
-    }
+    DTOR_LOG_ON_FAILURE(release_request, "Failed to serialize LLM release request with status {}");
     auto release_reply = m_session->execute(MemoryView(release_request.value()));
-    if (!release_reply) {
-        LOGGER__CRITICAL("Failed to execute LLM release request with status {}", release_reply.status());
-        return;
-    }
+    DTOR_LOG_ON_FAILURE(release_reply, "Failed to execute LLM release request with status {}");
     auto status = LLMReleaseSerializer::deserialize_reply(MemoryView(*release_reply));
-    if (HAILO_SUCCESS != status) {
-        LOGGER__CRITICAL("Failed to deserialize LLM release reply with status {}", status);
-        return;
-    }
+    DTOR_LOG_ON_FAILURE(status, "Failed to deserialize LLM release reply with status {}");
 }
 
 LLM::LLM(std::unique_ptr<Impl> pimpl) :
@@ -602,19 +600,11 @@ LLMGenerator::Impl::Impl(std::shared_ptr<SessionWrapper> session, std::shared_pt
 LLMGenerator::Impl::~Impl()
 {
     auto release_request = LLMGeneratorReleaseSerializer::serialize_request();
-    if (!release_request) {
-        LOGGER__CRITICAL("Failed to serialize LLM generator release request with status {}", release_request.status());
-        return;
-    }
+    DTOR_LOG_ON_FAILURE(release_request, "Failed to serialize LLM generator release request with status {}");
     auto release_reply = m_session->execute(MemoryView(release_request.value()));
-    if (!release_reply) {
-        LOGGER__CRITICAL("Failed to execute LLM generator release request with status {}", release_reply.status());
-        return;
-    }
+    DTOR_LOG_ON_FAILURE(release_reply, "Failed to execute LLM generator release request with status {}");
     auto status = LLMGeneratorReleaseSerializer::deserialize_reply(MemoryView(*release_reply));
-    if (HAILO_SUCCESS != status) {
-        LOGGER__CRITICAL("Failed to deserialize LLM generator release reply with status {}", status);
-    }
+    DTOR_LOG_ON_FAILURE(status, "Failed to deserialize LLM generator release reply with status {}");
 }
 
 hailo_status LLMGenerator::write(const std::vector<std::string> &prompt_json_strings, const std::vector<std::string> &tools_json_strings)
@@ -713,18 +703,12 @@ LLMGeneratorCompletion::Impl::Impl(std::shared_ptr<SessionWrapper> session, std:
 
 LLMGeneratorCompletion::Impl::~Impl()
 {
-    // If generation is still in progress, abort it (like origin/develop)
+    hailo_status status = HAILO_SUCCESS;
     if (m_generation_status == Status::GENERATING) {
-        auto status = abort();
-        if (HAILO_SUCCESS != status) {
-            LOGGER__CRITICAL("Failed to release LLMGeneratorCompletion. Failed to abort LLM generator completion with status {}", status);
-        }
-        
-        // abort() already joined the thread, no need for additional cleanup
-    } else {
-        // If not generating, ensure proper thread shutdown and cleanup
-        stop_token_reader_thread();
+        status = abort();
     }
+    stop_token_reader_thread();
+    DTOR_LOG_ON_FAILURE(status, "Failed to release LLMGeneratorCompletion. Failed to abort LLM generator completion with status {}");
 }
 
 void LLMGeneratorCompletion::Impl::stop_token_reader_thread()
@@ -758,7 +742,7 @@ void LLMGeneratorCompletion::Impl::token_reader_thread(const std::string &aggreg
         }
 
         // Send request and get response
-        auto response_exp = send_read_request(input, timeout_guard.get_remaining_timeout());
+        auto response_exp = send_read_request(input);
         if (!response_exp) {
             LOGGER__ERROR("Failed to send read request: {}", response_exp.status());
             break;
@@ -835,7 +819,7 @@ hailo_status LLMGeneratorCompletion::Impl::prepare_client_side_embeddings(LLMGen
 
     // Convert tokens to embeddings
     input.embeddings.clear();
-    auto embeddings = m_token_embedder->tokens_to_embeddings(tokens_to_embed);
+    TRY(auto embeddings, m_token_embedder->tokens_to_embeddings(tokens_to_embed));
     for (auto &embedding : embeddings) {
         TRY(auto buffer, Buffer::create_shared(embedding.data(), embedding.size(), BufferStorageParams::create_dma()));
         input.embeddings.emplace_back(buffer, static_cast<EmbeddingViewWrapper::EmbeddingType>(embedding.type()));
@@ -846,9 +830,9 @@ hailo_status LLMGeneratorCompletion::Impl::prepare_client_side_embeddings(LLMGen
 }
 
 Expected<std::pair<LLMGeneratorReadSerializer::TextGenerationOutput, LLMGeneratorCompletion::Status>>
-LLMGeneratorCompletion::Impl::send_read_request(const LLMGeneratorReadSerializer::TextGenerationInput &input, std::chrono::milliseconds timeout)
+LLMGeneratorCompletion::Impl::send_read_request(const LLMGeneratorReadSerializer::TextGenerationInput &input)
 {
-    TRY(auto read_request, LLMGeneratorReadSerializer::serialize_request(timeout, input));
+    TRY(auto read_request, LLMGeneratorReadSerializer::serialize_request(input));
     TRY(auto read_reply, m_session->execute(MemoryView(read_request)));
     TRY(auto response_pair, LLMGeneratorReadSerializer::deserialize_reply(MemoryView(*read_reply)));
     

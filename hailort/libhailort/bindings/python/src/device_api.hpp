@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -108,32 +108,18 @@ public:
     PowerMeasurementData get_power_measurement(hailo_measurement_buffer_index_t buffer_index, bool should_clear);
     void stop_power_measurement();
     void reset(hailo_reset_device_mode_t mode);
-    hailo_fw_user_config_information_t examine_user_config();
-    py::bytes read_user_config();
-    void write_user_config(py::bytes data);
-    void erase_user_config();
     py::bytes read_board_config();
     void write_board_config(py::bytes data);
     hailo_extended_device_information_t get_extended_device_information();
     hailo_health_info_t get_health_information();
-    void sensor_store_config(uint32_t section_index, uint32_t reset_data_size, uint32_t sensor_type,
-        const std::string &config_file_path, uint16_t config_height, uint16_t config_width, uint16_t config_fps, const std::string &config_name);
-    void store_isp_config(uint32_t reset_config_size, uint16_t config_height, uint16_t config_width, uint16_t config_fps,
-        const std::string &isp_static_config_file_path, const std::string &isp_runtime_config_file_path, const std::string &config_name);
-    py::bytes sensor_get_sections_info();
-    void sensor_set_i2c_bus_index(uint32_t sensor_type, uint32_t bus_index);
-    void sensor_load_and_start_config(uint32_t section_index);
-    void sensor_reset(uint32_t section_index);
-    void sensor_set_generic_i2c_slave(uint16_t slave_address,
-        uint8_t register_address_size, uint8_t bus_index, uint8_t should_hold_bus, uint8_t endianness);
-    void firmware_update(py::bytes fw_bin, uint32_t fw_bin_length, bool should_reset);
-    void second_stage_update(py::bytes second_stage_bin, uint32_t second_stage_bin_length);
     void set_pause_frames(bool rx_pause_frames_enable);
     void wd_enable(hailo_cpu_id_t cpu_id);
     void wd_disable(hailo_cpu_id_t cpu_id);
     void wd_config(hailo_cpu_id_t cpu_id, uint32_t wd_cycles, hailo_watchdog_mode_t wd_mode);
     uint32_t previous_system_state(hailo_cpu_id_t cpu_id);
     hailo_chip_temperature_info_t get_chip_temperature();
+    hailo_performance_stats_t query_performance_stats(uint32_t sampling_period_ms);
+    uint32_t get_current_limit();
     void set_notification_callback(const std::function<void(uintptr_t, const hailo_notification_t&, py::object)> &callback,
         hailo_notification_id_t notification_id, py::object opaque);
     void remove_notification_callback(hailo_notification_id_t notification_id);

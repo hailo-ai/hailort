@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -11,6 +11,7 @@
 #define _HAILO_CONNECTION_CONTEXT_HPP_
 
 #include "hailo/expected.hpp"
+#include "hailo/device.hpp"
 
 #include <memory>
 #include <string>
@@ -25,11 +26,12 @@ class HailoRTDriver;
 class ConnectionContext
 {
 public:
-    static Expected<std::shared_ptr<ConnectionContext>> create_client_shared(const std::string &device_id = "");
-    static Expected<std::shared_ptr<ConnectionContext>> create_server_shared(const std::string &ip = "");
+    static Expected<std::shared_ptr<ConnectionContext>> create_client_shared(const std::string &device_id);
+    static Expected<std::shared_ptr<ConnectionContext>> create_server_shared(const std::string &device_id);
 
     bool is_accepting() const { return m_is_accepting; }
     virtual std::shared_ptr<HailoRTDriver> get_driver() { return nullptr; };
+    virtual Device::Type device_type() = 0;
 
     ConnectionContext(bool is_accepting) : m_is_accepting(is_accepting) {}
     virtual ~ConnectionContext() = default;

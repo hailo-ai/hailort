@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -1169,7 +1169,7 @@ hailo_status VStreamsBuilderUtils::add_nms_post_process(OutputStreamPtrVector &o
     CHECK_SUCCESS(op_metadata->validate_format_type(vstreams_params.user_buffer_format));
 
     if (!op_metadata->nms_config().bbox_only) {
-        CHECK(HailoRTCommon::is_nms(vstreams_params.user_buffer_format.order), HAILO_INVALID_ARGUMENT,
+        CHECK(HailoRTCommon::is_non_chip_nms(vstreams_params.user_buffer_format.order), HAILO_INVALID_ARGUMENT,
             "NMS output format order must be one of NMS format orders");
     }
 

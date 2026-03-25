@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -26,7 +26,7 @@ class LLMInferenceManager : public InferenceManager
 {
 public:
     static Expected<std::unique_ptr<InferenceManager>> create(std::shared_ptr<hailort::VDevice> vdevice,
-        Hef hef, const std::string &model_name_suffix="");
+        Hef hef, const std::string &model_name_suffix);
     LLMInferenceManager(std::shared_ptr<hailort::VDevice> vdevice, std::shared_ptr<InferModel> model);
 
     virtual ~LLMInferenceManager() = default;

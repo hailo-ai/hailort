@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -61,7 +61,7 @@ Expected<size_t> read_binary_file(const std::string &file_path, MemoryView mem_v
 Expected<Buffer> read_binary_file(const std::string &file_path, const BufferStorageParams &output_buffer_params)
 {
     std::ifstream file(file_path, std::ios::in | std::ios::binary);
-    CHECK(file.good(), HAILO_OPEN_FILE_FAILURE, "Error opening file {}", file_path);
+    CHECK(file.good(), HAILO_OPEN_FILE_FAILURE, "Error opening file \"{}\"", file_path);
 
     TRY(const auto file_size, get_istream_size(file), "Failed to get file size");
     TRY(auto buffer, Buffer::create(file_size, output_buffer_params),
@@ -90,6 +90,17 @@ Expected<size_t> read_device_file(const std::string &file_path, MemoryView buffe
     }
 
     return bytes_read;
+}
+
+hailo_status write_device_file(const std::string &file_path, const std::string &content)
+{
+    std::ofstream file(file_path);
+    CHECK(file.good(), HAILO_OPEN_FILE_FAILURE, "Failed to open file {}", file_path);
+
+    file << content;
+    CHECK(file.good(), HAILO_FILE_OPERATION_FAILURE, "Failed to write to file {}", file_path);
+
+    return HAILO_SUCCESS;
 }
 
 Expected<std::shared_ptr<StreamPositionGuard>> StreamPositionGuard::create_shared(std::shared_ptr<std::ifstream> stream)

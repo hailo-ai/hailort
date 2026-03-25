@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -42,9 +42,7 @@ protected:
 
     YOLOv5PostProcessOp(std::shared_ptr<Yolov5OpMetadata> metadata) :
         NmsPostProcessOp(static_cast<std::shared_ptr<NmsOpMetadata>>(metadata)),
-        m_metadata(metadata),
-        m_is_crop_optimization_on(is_env_variable_on(HAILORT_YOLOV5_SEG_PP_CROP_OPT_ENV_VAR)),
-        m_is_nn_resize_optimization_on(is_env_variable_on(HAILORT_YOLOV5_SEG_NN_RESIZE_ENV_VAR))
+        m_metadata(metadata)
     {}
 
     static const uint32_t X_INDEX = 0;
@@ -107,7 +105,7 @@ protected:
                         data[coeffs_offset], quant_info) * objectness);
                 }
                 m_detections.emplace_back(DetectionBbox(bbox, static_cast<uint16_t>(class_index), std::move(mask_coefficients),
-                    yolov5_config.image_height, yolov5_config.image_width, m_is_crop_optimization_on));
+                    yolov5_config.image_height, yolov5_config.image_width));
             } else {
                 m_detections.emplace_back(DetectionBbox(bbox, class_index));
             }
@@ -214,8 +212,6 @@ protected:
     }
 
     std::shared_ptr<Yolov5OpMetadata> m_metadata;
-    bool m_is_crop_optimization_on;
-    bool m_is_nn_resize_optimization_on;
 
 };
 

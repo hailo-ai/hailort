@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -10,6 +10,7 @@
 #include "genai_common.hpp"
 #include "common/genai/session_wrapper/session_wrapper.hpp"
 #include "common/genai/connection_ports.hpp"
+#include "common/logger_macros.hpp"
 
 
 namespace hailort
@@ -25,20 +26,12 @@ hailo_status GenAICommon::validate_genai_vdevice_params(const hailo_vdevice_para
     return HAILO_SUCCESS;
 }
 
-Expected<std::shared_ptr<SessionWrapper>> GenAICommon::create_session_wrapper(const hailo_vdevice_params_t &vdevice_params,
+Expected<std::shared_ptr<SessionWrapper>> GenAICommon::create_session_wrapper(std::shared_ptr<VDevice> vdevice,
     uint16_t connection_port)
 {
-    CHECK_SUCCESS(validate_genai_vdevice_params(vdevice_params));
+    CHECK_SUCCESS(validate_genai_vdevice_params(vdevice->get_params()));
 
-    std::string device_id = "";
-    // If multi-process-service, use SERVER_ADDR_USE_UNIX_SOCKET for the connection
-    if (vdevice_params.multi_process_service) {
-        device_id = SERVER_ADDR_USE_UNIX_SOCKET;
-    } else {
-        device_id = (nullptr != vdevice_params.device_ids) ? vdevice_params.device_ids[0].id : "";
-    }
-
-    TRY(auto hailo_session, Session::connect(connection_port, device_id));
+    TRY(auto hailo_session, vdevice->create_session(connection_port));
     auto session_wrapper = make_shared_nothrow<SessionWrapper>(hailo_session);
     CHECK_NOT_NULL_AS_EXPECTED(session_wrapper, HAILO_OUT_OF_HOST_MEMORY);
 

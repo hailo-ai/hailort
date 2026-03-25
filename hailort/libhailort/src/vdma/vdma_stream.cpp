@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -26,11 +26,10 @@ Expected<std::shared_ptr<VdmaInputStream>> VdmaInputStream::create(hailo_stream_
 
     TRY(auto bounce_buffers_pool, init_dma_bounce_buffer_pool(device, channel, edge_layer));
 
-    hailo_status status = HAILO_UNINITIALIZED;
-    auto result = make_shared_nothrow<VdmaInputStream>(device, channel, edge_layer,
-        core_op_activated_event, interface, std::move(bounce_buffers_pool), status);
-    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
-    CHECK_SUCCESS_AS_EXPECTED(status);
+    auto result = make_shared_nothrow<VdmaInputStream>(device, channel, edge_layer, core_op_activated_event, interface,
+        std::move(bounce_buffers_pool));
+    CHECK_NOT_NULL(result, HAILO_OUT_OF_HOST_MEMORY);
+
     return result;
 }
 
@@ -64,24 +63,16 @@ Expected<BounceBufferQueuePtr> VdmaInputStream::init_dma_bounce_buffer_pool(
     return bounce_buffers_pool;
 }
 
-VdmaInputStream::VdmaInputStream(VdmaDevice &device, vdma::BoundaryChannelPtr channel,
-                                 const LayerInfo &edge_layer, EventPtr core_op_activated_event,
-                                 hailo_stream_interface_t stream_interface, BounceBufferQueuePtr &&bounce_buffers_pool,
-                                 hailo_status &status) :
-    AsyncInputStreamBase(edge_layer, std::move(core_op_activated_event), status),
+VdmaInputStream::VdmaInputStream(VdmaDevice &device, vdma::BoundaryChannelPtr channel, const LayerInfo &edge_layer,
+    EventPtr core_op_activated_event, hailo_stream_interface_t stream_interface,
+    BounceBufferQueuePtr &&bounce_buffers_pool) :
+    AsyncInputStreamBase(edge_layer, std::move(core_op_activated_event)),
     m_device(device),
     m_bounce_buffers_pool(std::move(bounce_buffers_pool)),
     m_channel(std::move(channel)),
     m_interface(stream_interface),
     m_core_op_handle(INVALID_CORE_OP_HANDLE)
-{
-    // Checking status for base class c'tor
-    if (HAILO_SUCCESS != status) {
-        return;
-    }
-
-    status = HAILO_SUCCESS;
-}
+{}
 
 VdmaInputStream::~VdmaInputStream()
 {
@@ -100,13 +91,10 @@ void VdmaInputStream::set_vdevice_core_op_handle(vdevice_core_op_handle_t core_o
 
 Expected<std::unique_ptr<StreamBufferPool>> VdmaInputStream::allocate_buffer_pool()
 {
-    const auto frame_size = get_frame_size();
-
-    // Since this calc if for aligned transfers, we don't need to factor in the bounce buffer
-    constexpr auto NO_BOUNCE_BUFFER = false;
-    const auto max_transfers_in_desc_list = m_channel->get_desc_list().max_transfers(static_cast<uint32_t>(frame_size), NO_BOUNCE_BUFFER);
-
+    const auto frame_size = static_cast<uint32_t>(get_frame_size());
+    const auto max_transfers_in_desc_list = m_channel->get_desc_list().max_transfers(frame_size);
     const auto max_ongoing_transfers = m_channel->get_max_ongoing_transfers(frame_size);
+
     if (max_transfers_in_desc_list < max_ongoing_transfers) {
         // In this case we don't bind, since the descriptor list isn't big enough to hold all the buffers.
         // (otherwise pending_transfers_queue_in_use would be false)
@@ -174,14 +162,12 @@ Expected<TransferRequest> VdmaInputStream::align_transfer_request(TransferReques
 
 hailo_status VdmaInputStream::prepare_transfer(TransferRequest &&transfer_request)
 {
-    if (transfer_request.transfer_buffers[0].is_memview()) {
-        const auto is_request_aligned = transfer_request.transfer_buffers[0].is_aligned_for_dma();
-        if (!is_request_aligned) {
-            // Best effort, if buffer is not aligned - will program descriptors later
-            return HAILO_SUCCESS;
-        }
+    const auto is_request_aligned = transfer_request.transfer_buffers[0].is_aligned_for_dma();
+    if (!is_request_aligned) {
+        // Best effort, if buffer is not aligned - will program descriptors later
+        return HAILO_SUCCESS;
     }
-    
+
     return m_channel->prepare_transfer(std::move(transfer_request));
 }
 
@@ -189,18 +175,12 @@ hailo_status VdmaInputStream::write_async_impl(TransferRequest &&transfer_reques
 {
     TRACE(FrameDequeueH2DTrace, m_device.get_dev_id(), m_core_op_handle, name());
 
-    if (transfer_request.transfer_buffers[0].is_dmabuf()) {
-        return m_channel->launch_transfer(std::move(transfer_request));
-    } else {
-        const auto is_request_aligned = transfer_request.transfer_buffers[0].is_aligned_for_dma();
-        if (is_request_aligned) {
-            return m_channel->launch_transfer(std::move(transfer_request));
-        } else {
-            auto realigned_transfer_request = align_transfer_request(std::move(transfer_request));
-            CHECK_EXPECTED_AS_STATUS(realigned_transfer_request);
-            return m_channel->launch_transfer(realigned_transfer_request.release());
-        }
+    const auto is_request_aligned = transfer_request.transfer_buffers[0].is_aligned_for_dma();
+    if (!is_request_aligned) {
+        TRY(transfer_request, align_transfer_request(std::move(transfer_request)));
     }
+
+    return m_channel->launch_transfer(std::move(transfer_request));
 }
 
 hailo_status VdmaInputStream::activate_stream_impl()
@@ -228,34 +208,22 @@ Expected<std::shared_ptr<VdmaOutputStream>> VdmaOutputStream::create(hailo_strea
 {
     assert((interface == HAILO_STREAM_INTERFACE_PCIE) || (interface == HAILO_STREAM_INTERFACE_INTEGRATED));
 
-    hailo_status status = HAILO_UNINITIALIZED;
-    auto result = make_shared_nothrow<VdmaOutputStream>(device, channel, edge_layer,
-        core_op_activated_event, interface, status);
-    CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
-    CHECK_SUCCESS_AS_EXPECTED(status);
+    auto result = make_shared_nothrow<VdmaOutputStream>(device, channel, edge_layer, core_op_activated_event, interface);
+    CHECK_NOT_NULL(result, HAILO_OUT_OF_HOST_MEMORY);
 
     return result;
 }
 
 VdmaOutputStream::VdmaOutputStream(VdmaDevice &device, vdma::BoundaryChannelPtr channel, const LayerInfo &edge_layer,
-                                   EventPtr core_op_activated_event,
-                                   hailo_stream_interface_t interface,
-                                   hailo_status &status) :
-    AsyncOutputStreamBase(edge_layer, std::move(core_op_activated_event), status),
+    EventPtr core_op_activated_event, hailo_stream_interface_t interface) :
+    AsyncOutputStreamBase(edge_layer, std::move(core_op_activated_event)),
     m_device(device),
     m_channel(std::move(channel)),
     m_interface(interface),
     m_transfer_size(get_transfer_size(m_stream_info, get_layer_info())),
     m_core_op_handle(INVALID_CORE_OP_HANDLE),
     m_d2h_callback(default_d2h_callback)
-{
-    // Check status for base class c'tor
-    if (HAILO_SUCCESS != status) {
-        return;
-    }
-
-    status = HAILO_SUCCESS;
-}
+{}
 
 VdmaOutputStream::~VdmaOutputStream()
 {
@@ -269,11 +237,9 @@ hailo_stream_interface_t VdmaOutputStream::get_interface() const
 
 Expected<std::unique_ptr<StreamBufferPool>> VdmaOutputStream::allocate_buffer_pool()
 {
-    // Since this calc if for aligned transfers, we don't need to factor in the bounce buffer
-    constexpr auto NO_BOUNCE_BUFFER = false;
-    const auto max_transfers_in_desc_list = m_channel->get_desc_list().max_transfers(m_transfer_size, NO_BOUNCE_BUFFER);
-
+    const auto max_transfers_in_desc_list = m_channel->get_desc_list().max_transfers(m_transfer_size);
     const auto max_ongoing_transfers = m_channel->get_max_ongoing_transfers(m_transfer_size);
+
     if (max_transfers_in_desc_list < max_ongoing_transfers) {
         // In this case we don't bind, since the descriptor list isn't big enough to hold all the buffers.
         // (otherwise pending_transfers_queue_in_use would be false)
@@ -298,47 +264,14 @@ size_t VdmaOutputStream::get_max_ongoing_transfers() const
     return m_channel->get_max_ongoing_transfers(m_transfer_size);
 }
 
-Expected<TransferRequest> VdmaOutputStream::align_transfer_request_only_end(TransferRequest &&transfer_request)
-{
-    // Create 2 buffers - one for the aligned part and one for the unaligned part.
-    // The unaligned part will be copied to the bounce buffer and the aligned part will be transferred directly.
-    // The bounce buffer will be kept alive and copied back to the user buffer in the callback.
-    std::vector<TransferBuffer> transfer_buffers;
-    TRY(auto base_buffer, transfer_request.transfer_buffers[0].base_buffer());
-    auto user_buffer_size = transfer_request.transfer_buffers[0].size();
-    auto bounce_buffer_size = user_buffer_size % OsUtils::get_dma_able_alignment();
-    CHECK(bounce_buffer_size > 0, HAILO_INVALID_ARGUMENT, "Buffer size is already aligned");
-    auto aligned_buffer_size = user_buffer_size - bounce_buffer_size;
-
-    if (0 != aligned_buffer_size) {
-        transfer_buffers.emplace_back(MemoryView(base_buffer.data(), aligned_buffer_size));
-    }
-
-    TRY(auto bounce_buffer, Buffer::create_shared(bounce_buffer_size, BufferStorageParams::create_dma())); // TODO: HRT-15660
-    transfer_buffers.emplace_back(MemoryView(bounce_buffer->data(), bounce_buffer_size));
-
-    auto callback = [
-        dst = base_buffer,
-        src = bounce_buffer,
-        user_callback = transfer_request.callback,
-        offset = user_buffer_size - bounce_buffer_size](hailo_status callback_status) mutable {
-            if (HAILO_SUCCESS == callback_status) {
-                memcpy(dst.data() + offset, src->data(), src->size());
-            }
-            user_callback(callback_status);
-    };
-
-    return TransferRequest(std::move(transfer_buffers), callback);
-}
-
 Expected<TransferRequest> VdmaOutputStream::align_transfer_request(TransferRequest &&transfer_request)
 {
     // Allocate a bounce buffer and store it inside the lambda to keep it alive until not needed.
-    auto bounce_buffer_exp = Buffer::create_shared(transfer_request.transfer_buffers[0].size(), BufferStorageParams::create_dma());
-    CHECK_EXPECTED(bounce_buffer_exp);
-    auto bounce_buffer = bounce_buffer_exp.release();
+    // TODO HRT-15660: Use a buffer-pool here.
+    const auto dma_buffer_params = BufferStorageParams::create_dma();
+    TRY(auto bounce_buffer, Buffer::create_shared(transfer_request.transfer_buffers[0].size(), dma_buffer_params));
 
-    TRY(auto base_buffer, transfer_request.transfer_buffers[0].base_buffer()); // TODO: HRT-15660
+    TRY(auto base_buffer, transfer_request.transfer_buffers[0].base_buffer());
     auto wrapped_callback = [unaligned_user_buffer = base_buffer,
             bounce_buffer=bounce_buffer, user_callback=transfer_request.callback](hailo_status callback_status) {
         memcpy(const_cast<uint8_t*>(unaligned_user_buffer.data()), bounce_buffer->data(), unaligned_user_buffer.size());
@@ -360,40 +293,24 @@ hailo_status VdmaOutputStream::read_async_impl(TransferRequest &&transfer_reques
             original_callback(status);
         };
     }
-    if (transfer_request.transfer_buffers[0].is_dmabuf()) {
-        return m_channel->launch_transfer(std::move(transfer_request));
-    } else {
-        const auto is_request_aligned = transfer_request.transfer_buffers[0].is_aligned_for_dma();
-        if (is_request_aligned) {
-            bool can_skip_alignment = true; // TODO :change back to false when HRT-15741 is resolved, then implement HRT-15731
-            bool owned_by_user = (StreamBufferMode::OWNING != buffer_mode()); // Buffers owned by HRT are always aligned
-            TRY(auto is_request_end_aligned, transfer_request.is_request_end_aligned());
-            if (owned_by_user && !can_skip_alignment && !is_request_end_aligned) {
-                TRY(transfer_request, align_transfer_request_only_end(std::move(transfer_request)));
-            }
-            return m_channel->launch_transfer(std::move(transfer_request));
-        } else {
-            // In case of read unaligned - don't support using users buffer - so well allocate complete new buffer size of user's buffer
-            TRY(auto base_buffer, transfer_request.transfer_buffers[0].base_buffer());
-            LOGGER__WARNING("read_async() was provided an unaligned buffer (address=0x{:x}), which causes performance degradation. Use buffers algined to {} bytes for optimal performance",
-                reinterpret_cast<size_t>(base_buffer.data()), OsUtils::get_dma_able_alignment());
 
-            auto realigned_transfer_request = align_transfer_request(std::move(transfer_request));
-            CHECK_EXPECTED_AS_STATUS(realigned_transfer_request);
-            return m_channel->launch_transfer(realigned_transfer_request.release());
-        }
+    const auto is_request_aligned = transfer_request.transfer_buffers[0].is_aligned_for_dma();
+    if (!is_request_aligned) {
+        TRY(auto base_buffer, transfer_request.transfer_buffers[0].base_buffer());
+        LOGGER__WARN("read_async with unaligned buffer (0x{:x}) harms performance. Use buffer aligned to {}",
+            reinterpret_cast<uintptr_t>(base_buffer.data()), OsUtils::get_dma_able_alignment());
+        TRY(transfer_request, align_transfer_request(std::move(transfer_request)));
     }
+
+    return m_channel->launch_transfer(std::move(transfer_request));
 }
 
 hailo_status VdmaOutputStream::prepare_transfer(TransferRequest &&transfer_request)
 {
-    if (transfer_request.transfer_buffers[0].is_memview()) {
-        const auto is_request_aligned = transfer_request.transfer_buffers[0].is_aligned_for_dma();
-        TRY(auto is_request_end_aligned, transfer_request.is_request_end_aligned());
-        if (!is_request_aligned || !is_request_end_aligned) {
-            // Best effort, if buffer is not aligned - will program descriptors later
-            return HAILO_SUCCESS;
-        }
+    const auto is_request_aligned = transfer_request.transfer_buffers[0].is_aligned_for_dma();
+    if (!is_request_aligned) {
+        // Best effort, if buffer is not aligned - will program descriptors later
+        return HAILO_SUCCESS;
     }
 
     return m_channel->prepare_transfer(std::move(transfer_request));

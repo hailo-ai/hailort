@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -11,7 +11,7 @@
  * Device                       (External "interface")
  * |-- BaseDevice               (Base classes)
  *     |-- VdmaDevice
- *     |   |-- PcieDevice
+ *     |   |-- LegacyPcieDevice
  *     |   |-- IntegratedDevice
  * |-- DeviceHrpcClient     (RPC handle communicating with the server)
  **/
@@ -80,26 +80,8 @@ public:
     virtual void activate_notifications(const std::string &device_id);
     virtual void start_notification_fetch_thread(D2hEventQueue *write_queue);
     virtual hailo_status stop_notification_fetch_thread();
-    virtual hailo_status firmware_update(const MemoryView &firmware_binary, bool should_reset) override;
-    virtual hailo_status second_stage_update(uint8_t *second_stage_binary, uint32_t second_stage_binary_length) override;
-    virtual hailo_status store_sensor_config(uint32_t section_index, hailo_sensor_types_t sensor_type,
-        uint32_t reset_config_size, uint16_t config_height, uint16_t config_width, uint16_t config_fps,
-        const std::string &config_file_path, const std::string &config_name) override;
-    virtual hailo_status store_isp_config(uint32_t reset_config_size, uint16_t config_height, uint16_t config_width, uint16_t config_fps,
-        const std::string &isp_static_config_file_path, const std::string &isp_runtime_config_file_path, const std::string &config_name) override;
-    virtual Expected<Buffer> sensor_get_sections_info() override;
-    virtual hailo_status sensor_dump_config(uint32_t section_index, const std::string &config_file_path) override;
-    virtual hailo_status sensor_set_i2c_bus_index(hailo_sensor_types_t sensor_type, uint32_t bus_index) override;
-    virtual hailo_status sensor_load_and_start_config(uint32_t section_index) override;
-    virtual hailo_status sensor_reset(uint32_t section_index) override;
-    virtual hailo_status sensor_set_generic_i2c_slave(uint16_t slave_address, uint8_t offset_size, uint8_t bus_index,
-        uint8_t should_hold_bus, uint8_t slave_endianness) override;
     virtual Expected<Buffer> read_board_config() override;
     virtual hailo_status write_board_config(const MemoryView &buffer) override;
-    virtual Expected<hailo_fw_user_config_information_t> examine_user_config() override;
-    virtual Expected<Buffer> read_user_config() override;
-    virtual hailo_status write_user_config(const MemoryView &buffer) override;
-    virtual hailo_status erase_user_config() override;
     static std::vector<hailo_device_architecture_t> hef_arch_to_device_compatible_archs(HEFHwArch hef_arch);
 
     virtual Expected<size_t> fetch_logs(MemoryView buffer, hailo_log_type_t log_type) override;
@@ -169,8 +151,6 @@ private:
     static hailo_status validate_fw_version_for_platform(const hailo_device_identity_t &board_info,
         firmware_version_t fw_version, FW_BINARY_TYPE_t fw_binary_type);
     static void check_clock_rate_for_hailo8(uint32_t clock_rate, HEFHwArch hef_hw_arch);
-    hailo_status store_sensor_control_buffers(const std::vector<SENSOR_CONFIG__operation_cfg_t> &control_buffers, uint32_t section_index, hailo_sensor_types_t sensor_type,
-        uint32_t reset_config_size, uint16_t config_height, uint16_t config_width, uint16_t config_fps, const std::string &config_name);
     virtual void notification_fetch_thread(std::shared_ptr<NotificationThreadSharedParams> params);
     Expected<firmware_type_t> get_fw_type();
 

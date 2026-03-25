@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -15,31 +15,39 @@
 #include "measurement_live_track.hpp"
 
 #include <spdlog/fmt/fmt.h>
-#include <sstream>
 
 using namespace hailort;
 
-Expected<std::shared_ptr<MeasurementLiveTrack>> MeasurementLiveTrack::create_shared(Device &device, bool measure_power, bool measure_current,
-    bool measure_temp)
+Expected<std::shared_ptr<MeasurementLiveTrack>> MeasurementLiveTrack::create_shared(const std::string &device_id,
+    bool measure_power, bool measure_current, bool measure_temp)
 {
+    // TODO HRT-20327: Current Device API allows only 1 concurrent measurement per device. As a workaround we open a
+    // new device per measurement that we want to make.
+    std::vector<std::unique_ptr<hailort::Device>> device_gaurd;
+
     std::shared_ptr<PowerMeasurement> power_measurement = nullptr;
     if (measure_power) {
-        TRY(power_measurement,
-            PowerMeasurement::create_shared(device, HAILO_POWER_MEASUREMENT_TYPES__POWER));
+        TRY(auto device, Device::create(device_id));
+        TRY(power_measurement, PowerMeasurement::create_shared(*device, HAILO_POWER_MEASUREMENT_TYPES__POWER));
+        device_gaurd.push_back(std::move(device));
     }
 
     std::shared_ptr<PowerMeasurement> current_measurement = nullptr;
     if (measure_current) {
-        TRY(current_measurement,
-            PowerMeasurement::create_shared(device, HAILO_POWER_MEASUREMENT_TYPES__CURRENT));
+        TRY(auto device, Device::create(device_id));
+        TRY(current_measurement, PowerMeasurement::create_shared(*device, HAILO_POWER_MEASUREMENT_TYPES__CURRENT));
+        device_gaurd.push_back(std::move(device));
     }
 
     std::shared_ptr<TemperatureMeasurement> temp_measurement = nullptr;
     if (measure_temp) {
-        TRY(temp_measurement, TemperatureMeasurement::create_shared(device));
+        TRY(auto device, Device::create(device_id));
+        TRY(temp_measurement, TemperatureMeasurement::create_shared(*device));
+        device_gaurd.push_back(std::move(device));
     }
 
-    auto ptr = make_shared_nothrow<MeasurementLiveTrack>(power_measurement, current_measurement, temp_measurement, device.get_dev_id());
+    auto ptr = make_shared_nothrow<MeasurementLiveTrack>(
+        power_measurement, current_measurement, temp_measurement, device_id, std::move(device_gaurd));
     CHECK_NOT_NULL_AS_EXPECTED(ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     return ptr;
@@ -47,9 +55,13 @@ Expected<std::shared_ptr<MeasurementLiveTrack>> MeasurementLiveTrack::create_sha
 
 MeasurementLiveTrack::MeasurementLiveTrack(std::shared_ptr<PowerMeasurement> power_measurement,
     std::shared_ptr<PowerMeasurement> current_measurement, std::shared_ptr<TemperatureMeasurement> temp_measurement,
-    const std::string &device_id) :
-        LiveStats::Track(), m_power_measurement(std::move(power_measurement)), m_current_measurement(std::move(current_measurement)),
-        m_temp_measurement(std::move(temp_measurement)), m_device_id(device_id)
+    const std::string &device_id, std::vector<std::unique_ptr<hailort::Device>> &&device_guard)
+    : LiveStats::Track(),
+      m_device_guard(std::move(device_guard)), // NOTE: must be first so that dtor is called last.
+      m_power_measurement(std::move(power_measurement)),
+      m_current_measurement(std::move(current_measurement)),
+      m_temp_measurement(std::move(temp_measurement)),
+      m_device_id(device_id)
 {}
 
 hailo_status MeasurementLiveTrack::start_impl()
@@ -67,64 +79,53 @@ hailo_status MeasurementLiveTrack::start_impl()
     return HAILO_SUCCESS;
 }
 
-uint32_t MeasurementLiveTrack::push_text_impl(std::stringstream &ss)
+std::string MeasurementLiveTrack::get_text_impl() const
 {
-    auto rows_count = 0;
-
+    std::string s;
     if (m_power_measurement || m_current_measurement || m_temp_measurement) {
-        ss << fmt::format("\nMeasurements for device {}\n", m_device_id);
-        rows_count += 2;
+        s += fmt::format("\nMeasurements for device {}\n", m_device_id);
     }
 
     if (m_power_measurement) {
         auto measurement_info = m_power_measurement->get_data();
         if (auto min = measurement_info.min()) {
-            ss << fmt::format("\tMinimum power consumption: {:.2f} {}\n", *min, m_power_measurement->measurement_unit());
-            rows_count++;
+            s += fmt::format("\tMinimum power consumption: {:.2f} {}\n", *min, m_power_measurement->measurement_unit());
         }
         if (auto mean = measurement_info.mean()) {
-            ss << fmt::format("\tAverage power consumption: {:.2f} {}\n", *mean, m_power_measurement->measurement_unit());
-            rows_count++;
+            s += fmt::format("\tAverage power consumption: {:.2f} {}\n", *mean, m_power_measurement->measurement_unit());
         }
         if (auto max = measurement_info.max()) {
-            ss << fmt::format("\tMaximum power consumption: {:.2f} {}\n", *max, m_power_measurement->measurement_unit());
-            rows_count++;
+            s += fmt::format("\tMaximum power consumption: {:.2f} {}\n", *max, m_power_measurement->measurement_unit());
         }
     }
 
     if (m_current_measurement) {
         auto measurement_info = m_current_measurement->get_data();
         if (auto min = measurement_info.min()) {
-            ss << fmt::format("\tMinimum current consumption: {:.2f} {}\n", *min, m_current_measurement->measurement_unit());
-            rows_count++;
+            s += fmt::format("\tMinimum current consumption: {:.2f} {}\n", *min, m_current_measurement->measurement_unit());
         }
         if (auto mean = measurement_info.mean()) {
-            ss << fmt::format("\tAverage current consumption: {:.2f} {}\n", *mean, m_current_measurement->measurement_unit());
-            rows_count++;
+            s += fmt::format("\tAverage current consumption: {:.2f} {}\n", *mean, m_current_measurement->measurement_unit());
         }
         if (auto max = measurement_info.max()) {
-            ss << fmt::format("\tMaximum current consumption: {:.2f} {}\n", *max, m_current_measurement->measurement_unit());
-            rows_count++;
+            s += fmt::format("\tMaximum current consumption: {:.2f} {}\n", *max, m_current_measurement->measurement_unit());
         }
     }
 
     if (m_temp_measurement) {
         auto measurement_info = m_temp_measurement->get_data();
         if (auto min = measurement_info.min()) {
-            ss << fmt::format("\tMinimum chip temperature: {:.2f} {}\n", *min, m_temp_measurement->measurement_unit());
-            rows_count++;
+            s += fmt::format("\tMinimum chip temperature: {:.2f} {}\n", *min, m_temp_measurement->measurement_unit());
         }
         if (auto mean = measurement_info.mean()) {
-            ss << fmt::format("\tAverage chip temperature: {:.2f} {}\n", *mean, m_temp_measurement->measurement_unit());
-            rows_count++;
+            s += fmt::format("\tAverage chip temperature: {:.2f} {}\n", *mean, m_temp_measurement->measurement_unit());
         }
         if (auto max = measurement_info.max()) {
-            ss << fmt::format("\tMaximum chip temperature: {:.2f} {}\n", *max, m_temp_measurement->measurement_unit());
-            rows_count++;
+            s += fmt::format("\tMaximum chip temperature: {:.2f} {}\n", *max, m_temp_measurement->measurement_unit());
         }
     }
 
-    return rows_count;
+    return s;
 }
 
 void MeasurementLiveTrack::push_json_measurment_val(nlohmann::ordered_json &device_json, std::shared_ptr<BaseMeasurement> measurment, const std::string &measurment_name)
@@ -135,10 +136,10 @@ void MeasurementLiveTrack::push_json_measurment_val(nlohmann::ordered_json &devi
     auto max = measurment_info.max();
     auto mean = measurment_info.mean();
     if (min && max && mean){
-        device_json[measurment_name] = { 
-            {"min", std::to_string(min.value()) + " " + measurement_unit}, 
-            {"max", std::to_string(max.value()) + " " + measurement_unit}, 
-            {"average", std::to_string(mean.value()) + " " + measurement_unit} 
+        device_json[measurment_name] = {
+            {"min", std::to_string(min.value()) + " " + measurement_unit},
+            {"max", std::to_string(max.value()) + " " + measurement_unit},
+            {"average", std::to_string(mean.value()) + " " + measurement_unit}
         };
     }
 }

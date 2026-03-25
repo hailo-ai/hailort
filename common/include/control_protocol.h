@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -1082,7 +1082,7 @@ typedef enum {
     CONTROL_PROTOCOL__BOOT_SOURCE_FLASH
 } CONTROL_PROTOCOL__boot_source_t;
 
-/* CONTROL_PROTOCOL_fuse_info_t sturct will be packed to unit_level_tracking_id field in hailo_extended_device_information_t */
+/* CONTROL_PROTOCOL_fuse_info_t sturct will be packed to unit_level_tracking_id field in hailo_extended_device_information_t */
 /* CONTROL_PROTOCOL_fuse_info_t size is tightly coupled HAILO_UNIT_LEVEL_TRACKING_BYTES_LEN */
 typedef struct {
     uint8_t lot_id[LOT_ID_BYTES_LEN];

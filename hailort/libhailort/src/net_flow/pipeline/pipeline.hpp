@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -437,6 +437,10 @@ public:
     }
 
     virtual hailo_status set_nms_max_accumulated_mask_size(uint32_t /*max_accumulated_mask_size*/) {
+        return HAILO_INVALID_OPERATION;
+    }
+
+    virtual hailo_status set_nms_classes_filter_mask(const std::vector<bool> &/*classes_filter_mask*/) {
         return HAILO_INVALID_OPERATION;
     }
 

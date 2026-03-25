@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -28,22 +28,14 @@ static const char *get_buffer_mode_api_name(StreamBufferMode mode)
     }
 }
 
-AsyncInputStreamBase::AsyncInputStreamBase(const LayerInfo &edge_layer, EventPtr core_op_activated_event,
-    hailo_status &status) :
-        InputStreamBase(edge_layer, core_op_activated_event, status),
+AsyncInputStreamBase::AsyncInputStreamBase(const LayerInfo &edge_layer, EventPtr core_op_activated_event) :
+        InputStreamBase(edge_layer, core_op_activated_event),
         m_is_stream_activated(false),
         m_is_aborted(false),
         m_timeout(DEFAULT_TRANSFER_TIMEOUT),
         m_buffer_mode(StreamBufferMode::NOT_SET),
         m_ongoing_transfers(0)
-{
-    // Checking status for base class c'tor
-    if (HAILO_SUCCESS != status) {
-        return;
-    }
-
-    status = HAILO_SUCCESS;
-}
+{}
 
 hailo_status AsyncInputStreamBase::abort_impl()
 {
@@ -264,9 +256,8 @@ bool AsyncInputStreamBase::is_ready_for_dequeue() const
     return m_ongoing_transfers < m_buffer_pool->max_queue_size();
 }
 
-AsyncOutputStreamBase::AsyncOutputStreamBase(const LayerInfo &edge_layer, EventPtr core_op_activated_event,
-    hailo_status &status) :
-        OutputStreamBase(edge_layer, std::move(core_op_activated_event), status),
+AsyncOutputStreamBase::AsyncOutputStreamBase(const LayerInfo &edge_layer, EventPtr core_op_activated_event) :
+        OutputStreamBase(edge_layer, std::move(core_op_activated_event)),
         m_is_stream_activated(false),
         m_is_aborted(false),
         m_timeout(DEFAULT_TRANSFER_TIMEOUT),

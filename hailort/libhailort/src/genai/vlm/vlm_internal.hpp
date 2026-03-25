@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -32,14 +32,23 @@ class VLMGenerator::Impl final : public TextGeneratorBase
 public:
     Impl(std::shared_ptr<SessionWrapper> session, std::shared_ptr<PromptTemplateHandler> prompt_template_handler,
         std::shared_ptr<HailoTokenizer> tokenizer, std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder,
-        uint32_t max_generated_tokens);
+        uint32_t max_generated_tokens, uint32_t embeddings_per_frame);
 
     Expected<LLMGeneratorCompletion> generate(const std::string &prompt, const std::vector<MemoryView> &input_frames,
         const std::vector<std::vector<MemoryView>> &input_videos);
     Expected<LLMGeneratorCompletion> generate(const std::vector<std::string> &messages_json_strings, const std::vector<MemoryView> &input_frames,
         const std::vector<std::vector<MemoryView>> &input_videos);
 
+    Expected<LLMGeneratorCompletion> generate_from_embeddings(const std::string &prompt, const std::vector<MemoryView> &image_embeddings,
+        const std::vector<std::vector<MemoryView>> &video_embeddings);
+    Expected<LLMGeneratorCompletion> generate_from_embeddings(const std::vector<std::string> &messages_json_strings,
+        const std::vector<MemoryView> &image_embeddings, const std::vector<std::vector<MemoryView>> &video_embeddings);
+
 private:
+    // Core implementation for server communication - handles both raw frames and raw embeddings
+    Expected<LLMGeneratorCompletion> generate_impl(const std::string &prompt, const std::vector<MemoryView> &image_data,
+        const std::vector<std::vector<MemoryView>> &video_data, bool is_raw_embeddings);
+
     Expected<std::string> apply_vlm_template_from_json(const std::vector<std::string> &messages_json_strings);
 
     std::shared_ptr<SessionWrapper> m_session;
@@ -49,6 +58,7 @@ private:
     std::shared_ptr<HailoTokenizer> m_tokenizer;
     std::shared_ptr<TokenEmbedder<uint16_t>> m_token_embedder;
     uint32_t m_max_generated_tokens;
+    uint32_t m_embeddings_per_frame;
 };
 
 
@@ -82,12 +92,18 @@ public:
     Expected<LLMGeneratorCompletion> generate(const LLMGeneratorParams &params, const std::vector<std::string> &messages_json_strings,
         const std::vector<MemoryView> &input_frames, const std::vector<std::vector<MemoryView>> &input_videos);
 
+    // Direct generation methods using pre-computed embeddings
+    Expected<LLMGeneratorCompletion> generate_from_embeddings(const LLMGeneratorParams &params,
+        const std::vector<std::string> &messages_json_strings, const std::vector<MemoryView> &image_embeddings,
+        const std::vector<std::vector<MemoryView>> &video_embeddings);
+
     ~Impl();
 
     Impl(std::shared_ptr<SessionWrapper> session, const VLMParams &Vlm_params,
         const LLMGeneratorParams &default_generator_params, hailo_3d_image_shape_t input_frame_shape,
         hailo_format_t input_frame_format, std::shared_ptr<PromptTemplateHandler> prompt_template_handler,
-        std::shared_ptr<HailoTokenizer> tokenizer, std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder);
+        std::shared_ptr<HailoTokenizer> tokenizer, std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder,
+        uint32_t embeddings_per_frame);
 
 private:
     hailo_status validate_generator_params(const LLMGeneratorParams &params);
@@ -102,6 +118,7 @@ private:
     // Optionals, only used if optimize_memory_on_device is true
     std::shared_ptr<HailoTokenizer> m_tokenizer;
     std::shared_ptr<TokenEmbedder<uint16_t>> m_token_embedder;
+    uint32_t m_embeddings_per_frame;
 };
 
 } /* namespace genai */

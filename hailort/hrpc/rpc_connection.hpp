@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -58,6 +58,8 @@ public:
         std::shared_ptr<PoolAllocator> read_messages_allocator;
     };
 
+    static constexpr std::chrono::milliseconds TRANSFER_TIMEOUT = std::chrono::milliseconds(10000);
+
     RpcConnection() = default;
     RpcConnection(Params &&params) :
             m_session(params.session), m_write_messages_allocator(params.write_messages_allocator),
@@ -71,9 +73,9 @@ public:
     Expected<BufferPtr> read_message();
     std::tuple<rpc_message_header_t, MemoryView> parse_message(BufferPtr buffer);
 
-    hailo_status read_buffer(MemoryView buffer);
+    hailo_status read_buffer(MemoryView buffer, std::chrono::milliseconds timeout = TRANSFER_TIMEOUT);
     Expected<std::shared_ptr<FileDescriptor>> read_dmabuf_fd();
-    hailo_status read_buffers(std::vector<TransferBuffer> &&buffers);
+    hailo_status read_buffers(std::vector<TransferBuffer> &&buffers, std::chrono::milliseconds timeout = TRANSFER_TIMEOUT);
 
     hailo_status wait_for_write_message_async_ready(size_t buffer_size, std::chrono::milliseconds timeout);
     hailo_status write_message_async(TransferRequest &&transfer_request);

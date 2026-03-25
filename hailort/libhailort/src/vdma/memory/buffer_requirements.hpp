@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -17,7 +17,6 @@
 #include <cstdint>
 #include <cassert>
 #include <vector>
-
 
 namespace hailort {
 namespace vdma {
@@ -48,8 +47,8 @@ public:
         uint16_t min_batch_size, uint16_t max_batch_size, uint32_t transfer_size, bool is_circular,
         bool force_default_page_size, bool force_batch_size, bool is_vdma_aligned_buffer, bool is_ddr);
 
-    static BufferSizesRequirements get_sram_buffer_requirements(const DescSizesParams &desc_sizes_params,
-        uint32_t transfer_size);
+    static Expected<BufferSizesRequirements> get_sram_buffer_requirements(const DescSizesParams &desc_sizes_params,
+        uint32_t row_size, uint32_t minimum_rows);
 
 private:
     static uint16_t find_initial_desc_page_size(const DescSizesParams &desc_sizes_params,

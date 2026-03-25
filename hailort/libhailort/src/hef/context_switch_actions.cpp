@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -806,7 +806,7 @@ Expected<Buffer> DdrPairInfoAction::serialize_params(const ContextResources &) c
     params.d2h_packed_vdma_channel_id = pack_vdma_channel_id(m_d2h_channel_id);
     params.network_index = m_network_index;
     params.descriptors_per_frame = m_descriptors_per_frame;
-    params.programmed_descriptors_count = m_descs_count;
+    params.desc_list_size = m_descs_count;
     return Buffer::create(reinterpret_cast<uint8_t*>(&params), sizeof(params));
 }
 
@@ -1209,24 +1209,27 @@ Expected<Buffer> ActivateDdrInputChannelAction::serialize_params(const ContextRe
 
 Expected<ContextSwitchConfigActionPtr> ActivateDdrOutputChannelAction::create(const vdma::ChannelId &channel_id,
     uint8_t stream_index, const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
-    const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info, uint32_t buffered_rows_count)
+    const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info, uint32_t buffered_rows_count,
+    const vdma::ChannelId &connected_h2d_channel_id)
 {
     auto result = ContextSwitchConfigActionPtr(new (std::nothrow) ActivateDdrOutputChannelAction(channel_id,
-        stream_index, nn_stream_config, host_buffer_info, buffered_rows_count));
+        stream_index, nn_stream_config, host_buffer_info, buffered_rows_count, connected_h2d_channel_id));
     CHECK_NOT_NULL_AS_EXPECTED(result, HAILO_OUT_OF_HOST_MEMORY);
     return result;
 }
 
 ActivateDdrOutputChannelAction::ActivateDdrOutputChannelAction(const vdma::ChannelId &channel_id,
     uint8_t stream_index, const CONTROL_PROTOCOL__nn_stream_config_t &nn_stream_config,
-    const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info, uint32_t buffered_rows_count) :
+    const CONTROL_PROTOCOL__host_buffer_info_t &host_buffer_info, uint32_t buffered_rows_count,
+    const vdma::ChannelId &connected_h2d_channel_id) :
     ContextSwitchConfigAction(ContextSwitchConfigAction::Type::ActivateDdrOutputChannel,
                               CONTEXT_SWITCH_DEFS__ACTION_TYPE_ACTIVATE_DDR_BUFFER_OUTPUT),
     m_channel_id(channel_id),
     m_stream_index(stream_index),
     m_nn_stream_config(nn_stream_config),
     m_host_buffer_info(host_buffer_info),
-    m_buffered_rows_count(buffered_rows_count)
+    m_buffered_rows_count(buffered_rows_count),
+    m_connected_h2d_channel_id(connected_h2d_channel_id)
 {}
 
 bool ActivateDdrOutputChannelAction::supports_repeated_block() const
@@ -1243,6 +1246,7 @@ Expected<Buffer> ActivateDdrOutputChannelAction::serialize_params(const ContextR
     params.stream_reg_info = parse_nn_config(m_nn_stream_config);
     params.host_buffer_info = m_host_buffer_info;
     params.buffered_rows_count = m_buffered_rows_count;
+    params.connected_h2d_packed_vdma_channel_id = pack_vdma_channel_id(m_connected_h2d_channel_id);
     return Buffer::create(reinterpret_cast<uint8_t*>(&params), sizeof(params));
 }
 

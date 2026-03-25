@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -60,10 +60,7 @@ InferModelHrpcClient::~InferModelHrpcClient()
 
         auto execute_request_result = client->execute_request(static_cast<uint32_t>(HailoRpcActionID::INFER_MODEL__DESTROY),
             MemoryView(request_buffer.value()->data(), *request_size));
-        if (!execute_request_result) {
-            LOGGER__CRITICAL("Failed to destroy infer model! status = {}", execute_request_result.status());
-            return;
-        }
+        DTOR_LOG_ON_FAILURE(execute_request_result, "Failed to destroy infer model! status = {}");
     }
 }
 

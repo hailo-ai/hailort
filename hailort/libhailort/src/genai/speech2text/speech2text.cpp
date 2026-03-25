@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -7,6 +7,7 @@
  * @brief HailoRT GenAI Speech2Text implementation of client side.
  **/
 
+#include "common/utils.hpp"
 #include "speech2text_internal.hpp"
 #include "hailo/hailort.h"
 #include "common/filesystem.hpp"
@@ -14,6 +15,7 @@
 #include "common/genai/serializer/serializer.hpp"
 #include "genai/genai_common.hpp"
 #include <filesystem>
+#include <future>
 
 namespace hailort
 {
@@ -124,20 +126,11 @@ Speech2Text::Impl::Impl(std::shared_ptr<SessionWrapper> session, const Speech2Te
 Speech2Text::Impl::~Impl()
 {
     auto release_request = Speech2TextReleaseSerializer::serialize_request();
-    if (!release_request) {
-        LOGGER__CRITICAL("Failed to serialize Speech2Text release request with status {}", release_request.status());
-        return;
-    }
+    DTOR_LOG_ON_FAILURE(release_request, "Failed to serialize Speech2Text release request with status {}");
     auto release_reply = m_session->execute(MemoryView(release_request.value()));
-    if (!release_reply) {
-        LOGGER__CRITICAL("Failed to execute Speech2Text release request with status {}", release_reply.status());
-        return;
-    }
+    DTOR_LOG_ON_FAILURE(release_reply, "Failed to execute Speech2Text release request with status {}");
     auto status = Speech2TextReleaseSerializer::deserialize_reply(MemoryView(*release_reply));
-    if (HAILO_SUCCESS != status) {
-        LOGGER__CRITICAL("Failed to deserialize Speech2Text release reply with status {}", status);
-        return;
-    }
+    DTOR_LOG_ON_FAILURE(status, "Failed to deserialize Speech2Text release reply with status {}");
 }
 
 Expected<std::unique_ptr<Speech2Text::Impl>> Speech2Text::Impl::create_unique(std::shared_ptr<hailort::VDevice> vdevice, const Speech2TextParams &speech2text_params)
@@ -145,7 +138,7 @@ Expected<std::unique_ptr<Speech2Text::Impl>> Speech2Text::Impl::create_unique(st
     CHECK(!speech2text_params.hef().empty(), HAILO_INVALID_OPERATION, "Failed to create Speech2Text. HEF was not set.");
 
     auto vdevice_params = vdevice->get_params();
-    TRY(auto session_wrapper, GenAICommon::create_session_wrapper(vdevice_params, DEFAULT_SPEECH2TEXT_CONNECTION_PORT));
+    TRY(auto session_wrapper, GenAICommon::create_session_wrapper(vdevice, DEFAULT_SPEECH2TEXT_CONNECTION_PORT));
 
     TRY(auto create_speech2text_request, Speech2TextCreateSerializer::serialize_request(vdevice_params));
     std::vector<MemoryView> write_buffers = { MemoryView(create_speech2text_request) };
@@ -190,14 +183,33 @@ Expected<std::vector<Speech2Text::SegmentInfo>> Speech2Text::Impl::generate_all_
 Expected<std::vector<Speech2Text::SegmentInfo>> Speech2Text::Impl::generate_impl(MemoryView audio_buffer,
     const Speech2TextGeneratorParams &generator_params, std::chrono::milliseconds timeout)
 {
-    (void)timeout; // TODO: HRT-18570 - Support timeout
-
     CHECK(generator_params.repetition_penalty() > 0.0f, HAILO_INVALID_ARGUMENT, "Repetition penalty must be greater than 0. Got {}", generator_params.repetition_penalty());
 
     TRY(auto generate_request, Speech2TextGenerateSerializer::serialize_request(generator_params));
     std::vector<MemoryView> write_buffers = { MemoryView(generate_request) };
     write_buffers.push_back(audio_buffer);
-    TRY(auto generate_reply, m_session->execute(write_buffers));
+
+    // Run server communication in a background thread
+    BufferPtr generate_reply;
+    auto generate_future = std::async(std::launch::async, [this, &write_buffers, &generate_reply]() {
+        auto reply = m_session->execute(write_buffers);
+        if (!reply) {
+            return reply.status();
+        }
+        else {
+            generate_reply = reply.value();
+            return HAILO_SUCCESS;
+        }
+    });
+
+    // Wait with timeout
+    auto wait_status = generate_future.wait_for(timeout);
+    CHECK(wait_status == std::future_status::ready, HAILO_TIMEOUT,
+        "Speech2Text generation timed out after {} milliseconds. Server is still processing", timeout.count());
+
+    auto status = generate_future.get();
+    CHECK_SUCCESS(status, "Failed to generate Speech2Text");
+    CHECK_NOT_NULL_AS_EXPECTED(generate_reply, HAILO_INTERNAL_FAILURE);
     TRY(auto segments, Speech2TextGenerateSerializer::deserialize_reply(MemoryView(*generate_reply)));
 
     return segments;

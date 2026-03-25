@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -641,6 +641,11 @@ hailo_status OutputVStream::set_nms_max_accumulated_mask_size(uint32_t max_accum
     return m_vstream->set_nms_max_accumulated_mask_size(max_accumulated_mask_size);
 }
 
+hailo_status OutputVStream::set_nms_classes_filter_mask(const std::vector<bool> &classes_filter_mask)
+{
+    return m_vstream->set_nms_classes_filter_mask(classes_filter_mask);
+}
+
 OutputVStream::OutputVStream(std::shared_ptr<OutputVStreamInternal> vstream) : m_vstream(std::move(vstream)) {}
 
 std::map<std::string, AccumulatorPtr> get_pipeline_accumulators_by_type(
@@ -1020,6 +1025,24 @@ hailo_status OutputVStreamImpl::set_nms_max_accumulated_mask_size(uint32_t max_a
     }
     CHECK_SUCCESS(status, "Unable to set NMS max accumulated mask size in {}", name());
 
+    return HAILO_SUCCESS;
+}
+
+hailo_status OutputVStreamImpl::set_nms_classes_filter_mask(const std::vector<bool> &classes_filter_mask)
+{
+    auto status = HAILO_INVALID_OPERATION; // Assuming there is no valid element
+    for (auto &elem : m_pipeline) {
+        auto elem_status = elem->set_nms_classes_filter_mask(classes_filter_mask);
+        if (HAILO_INVALID_OPERATION == elem_status) {
+            continue;
+        }
+        if (HAILO_SUCCESS != elem_status) {
+            status = elem_status; // Return the actual failure instead of generic INVALID_OPERATION
+            break;
+        }
+        status = HAILO_SUCCESS;
+    }
+    CHECK_SUCCESS(status, "Unable to set NMS classes filter mask in {}", name());
 
     return HAILO_SUCCESS;
 }

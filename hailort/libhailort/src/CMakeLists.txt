@@ -9,6 +9,9 @@ include(CMakePackageConfigHelpers)
 include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/common_compiler_options.cmake)
 include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/eigen.cmake)
 include(genai/llm/minja_wrapper/minja_wrapper.cmake)
+if(HAILO_BUILD_USB)
+    include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/libusb.cmake)
+endif()
 
 # Include tokenizers when client tokenizer is enabled
 if(HAILO_BUILD_CLIENT_TOKENIZER)
@@ -66,7 +69,15 @@ set(DRIVER_OS_DIR ${DRIVER_OS_DIR} CACHE INTERNAL "Absolute Full path of driver 
 set(HAILO_DRIVER_SRC_FILES ${HAILO_DRIVER_SRC_FILES} CACHE INTERNAL "Absolute Full path of driver src files")
 set(HAILORT_CPP_SOURCES ${HAILORT_CPP_SOURCES} CACHE INTERNAL "Absolute paths of hailort's cpp source files")
 set(COMMON_C_SOURCES ${COMMON_C_SOURCES} CACHE INTERNAL "Absolute paths of common source files")
-set(HAILORT_SRCS_ABS ${HAILORT_CPP_SOURCES} ${COMMON_C_SOURCES} ${HRPC_CPP_SOURCES} ${HRPC_PROTOCOL_CPP_SOURCES} ${GENAI_SCHEME_CPP_SOURCES} CACHE INTERNAL "All absolute paths of hailort's source files")
+set(HAILORT_SRCS_ABS
+    ${HAILORT_CPP_SOURCES}
+    ${COMMON_C_SOURCES}
+    ${HRPC_CPP_SOURCES}
+    ${HRPC_PROTOCOL_CPP_SOURCES}
+    ${HRPC_CLIENT_CPP_SOURCES}
+    ${GENAI_SCHEME_CPP_SOURCES}
+    CACHE INTERNAL "All absolute paths of hailort's source files"
+)
 
 SET_SOURCE_FILES_PROPERTIES(${C_SOURCES} PROPERTIES LANGUAGE CXX)
 add_library(libhailort SHARED ${HAILORT_SRCS_ABS})
@@ -98,6 +109,9 @@ target_link_libraries(libhailort PRIVATE Eigen3::Eigen)
 target_link_libraries(libhailort PRIVATE rpc_proto)
 target_link_libraries(libhailort PRIVATE genai_scheme_proto)
 target_link_libraries(libhailort PRIVATE minja_wrapper)
+if(HAILO_BUILD_USB)
+    target_link_libraries(libhailort PRIVATE PkgConfig::LIBUSB)
+endif()
 
 # Link tokenizers when client tokenizer is enabled
 if(HAILO_BUILD_CLIENT_TOKENIZER)
@@ -194,7 +208,6 @@ target_compile_definitions(libhailort PUBLIC
 install(DIRECTORY ${HAILORT_INC_DIR}/hailo/ DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/hailo")
 install(TARGETS libhailort
     EXPORT HailoRTTargets
-    CONFIGURATIONS Release
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}

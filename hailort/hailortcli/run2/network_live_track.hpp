@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -29,8 +29,9 @@ public:
         hailort::LatencyMeterPtr overall_latency_meter, bool measure_fps, const std::string &hef_path,
         bool should_print_ops, uint64_t computational_ops);
     virtual ~NetworkLiveTrack() = default;
+    virtual void measure() override;
     virtual hailo_status start_impl() override;
-    virtual uint32_t push_text_impl(std::stringstream &ss) override;
+    virtual std::string get_text_impl() const override;
     virtual void push_json_impl(nlohmann::ordered_json &json) override;
 
     void progress();
@@ -39,7 +40,7 @@ public:
 
 private:
     double get_fps();
-    std::string prettify_ops(double ops);
+    std::string prettify_ops(double ops) const;
 
     static size_t max_ng_name;
     static std::mutex mutex;
@@ -55,6 +56,8 @@ private:
     const bool m_should_print_ops;
     const uint64_t m_computational_ops;
 
+    double m_fps;
+    double m_ops_value;
     double m_last_measured_fps;
 };
 

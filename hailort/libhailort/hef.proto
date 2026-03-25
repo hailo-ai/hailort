@@ -66,7 +66,7 @@ enum ProtoHEFExtensionType {
     SHARED_CONFIG = 32;
     CSM_CRC = 33;
     ENABLE_CONFIG_CHANNELS = 34;
-    STRICT_RUNTIME_VERSIONING = 35;
+    STRICT_RUNTIME_VERSIONING = 35; // Unused
     UNUSED = 0XFFFF;
 }
 
@@ -86,6 +86,12 @@ message ProtoHEFSdkVersion {
     uint32 sdk_version_revision = 3;
 }
 
+message ProtoHEFRuntimeVersion {
+    uint32 runtime_min_version_major = 1;
+    uint32 runtime_min_version_minor = 2;
+    uint32 runtime_min_version_patch = 3;
+}
+
 message ProtoHEFHeader {
     // The target hw_arch the HEF is compiled to
     ProtoHEFHwArch hw_arch = 1;
@@ -99,6 +105,9 @@ message ProtoHEFHeader {
 
     // The format version of the hef file
     uint64 version = 4;
+
+    // Minimal runtime version compatible with the HEF
+    ProtoHEFRuntimeVersion strict_runtime_min_version = 6;
 }
 
 // Enum describing the different possible hw_archs

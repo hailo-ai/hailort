@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -26,7 +26,7 @@ namespace hailort
 #define DEFAULT_NMS_NO_BURST_SIZE (1)
 #define DEFAULT_ACTUAL_BATCH_SIZE (1)
 
-/*! Hailo configure parameters per network_group. Analogical to hailo_configure_network_group_params_t */
+/*! Hailo configure parameters per network_group. Analogous to hailo_configure_network_group_params_t */
 struct ConfigureNetworkParams
 {
     ConfigureNetworkParams() = default;
@@ -57,7 +57,7 @@ struct ConfigureNetworkParams
 /** @addtogroup group_type_definitions */
 /*@{*/
 
-/** Represents a mapping of network group name to its' params */
+/** Represents a mapping of network group name to its params */
 using NetworkGroupsParamsMap = std::map<std::string, ConfigureNetworkParams>;
 
 /*@}*/
@@ -138,7 +138,7 @@ public:
     Expected<std::vector<hailo_stream_info_t>> get_all_stream_infos(const std::string &name="") const;
 
     /**
-     * Gets stream's information from it's name.
+     * Gets stream's information from its name.
      *
      * @param[in] stream_name         The name of the stream as presented in the Hef.
      * @param[in] stream_direction    Indicates the stream direction.
@@ -420,7 +420,7 @@ public:
      * @param[in] net_group_name      The name of the network_group which contains the network information.
      *                                If NULL is passed, the function returns the network infos of 
      *                                all the networks of the first network group.
-     * @return Upon success, returns Expected of a vector of ::hailo_network_info_t, containing each networks's information.
+     * @return Upon success, returns Expected of a vector of ::hailo_network_info_t, containing each network's information.
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
     Expected<std::vector<hailo_network_info_t>> get_network_infos(const std::string &net_group_name="") const;

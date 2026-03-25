@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -48,15 +48,9 @@ bool InternalBufferPlanner::should_edge_layer_use_ccb(const LayerType &layer_typ
             return true;
         }
     case LayerType::DDR:
-        // On circular_continuous (aka ddr), the buffers are relatively small and we want to verify the C2C mechanism,
-        // therefore the CCB is the default behaviour.
-        // Due to request from the DFC group (Memory issues) - DDR buffers would run over DESC and not CCB buffers.
-        if (is_env_variable_on(HAILO_FORCE_DDR_CHANNEL_OVER_CCB_ENV_VAR)) {
-            LOGGER__WARNING("Using Non default buffer type (CCB instead of DESC) for ddr channel.");
-            return true;
-        } else {
-            return false;
-        }
+        // DDR portals use descriptors only.
+        // A special-case and exception to this is SRAM buffers on Pluto, but they are allocated separatley.
+        return false;
     default:
         // Shouldn't reach here
         assert(false);
@@ -261,7 +255,7 @@ Expected<InternalBufferPlanning> InternalBufferPlanner::create_single_buffer_pla
 }
 
 Expected<InternalBufferPlanning> InternalBufferPlanner::create_sram_buffer_planning(
-    const std::map<EdgeLayerKey, EdgeLayerInfo> &edge_layer_infos, const DescSizesParams &continuous_desc_params)
+    const std::map<EdgeLayerKey, EdgeLayerInfo> &edge_layer_infos, const DescSizesParams &desc_params)
 {
     InternalBufferPlanning buffer_planning;
 
@@ -274,8 +268,8 @@ Expected<InternalBufferPlanning> InternalBufferPlanner::create_sram_buffer_plann
             continue;
         }
 
-        auto buffer_requirements = vdma::BufferSizesRequirements::
-            get_sram_buffer_requirements(continuous_desc_params, edge_layer.transfer_size);
+        TRY(auto buffer_requirements, vdma::BufferSizesRequirements::
+            get_sram_buffer_requirements(desc_params, edge_layer.transfer_size, edge_layer.max_transfers_in_batch));
 
         EdgeLayerPlan edge_layer_plan;
         edge_layer_plan.key = edge_layer_key;

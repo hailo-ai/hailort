@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -53,7 +53,6 @@ public:
     static hailo_vdevice_params_t get_vdevice_params();
 
 private:
-    static struct sockaddr_in get_sockaddr();
     static hailo_pcie_input_stream_params_t get_pcie_input_stream_params();
     static hailo_pcie_output_stream_params_t get_pcie_output_stream_params();
     static hailo_integrated_input_stream_params_t get_integrated_input_stream_params();

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -280,16 +280,11 @@ hailo_status RemoteProcessInputStream::write_impl(const MemoryView &buffer)
 
 RemoteProcessInputStream::RemoteProcessInputStream(std::shared_ptr<InputStreamBase> base_stream,
     EventPtr thread_stop_event, hailo_status &status) :
-        InputStreamBase(base_stream->get_layer_info(), base_stream->get_core_op_activated_event(), status),
+        InputStreamBase(base_stream->get_layer_info(), base_stream->get_core_op_activated_event()),
         m_base_stream(base_stream),
         m_timeout(m_base_stream->get_timeout()),
         m_wait_for_activation(m_base_stream->get_core_op_activated_event(), thread_stop_event)
 {
-    if (HAILO_SUCCESS != status) {
-        // Failure on base class
-        return;
-    }
-
     // Set infinite timeout on the base stream - the write will exit only on abort/deactivate.
     // It doesn't affect timeout for this class write function (m_timeout).
     auto set_timeout_status = m_base_stream->set_timeout(HAILO_INFINITE_TIMEOUT);
@@ -497,15 +492,11 @@ hailo_status RemoteProcessOutputStream::read_impl(MemoryView buffer)
 
 RemoteProcessOutputStream::RemoteProcessOutputStream(std::shared_ptr<OutputStreamBase> base_stream,
     EventPtr thread_stop_event, hailo_status &status) :
-        OutputStreamBase(base_stream->get_layer_info(), base_stream->get_core_op_activated_event(), status),
+        OutputStreamBase(base_stream->get_layer_info(), base_stream->get_core_op_activated_event()),
         m_base_stream(base_stream),
         m_timeout(m_base_stream->get_timeout()),
         m_wait_for_activation(m_base_stream->get_core_op_activated_event(), thread_stop_event)
 {
-    if (HAILO_SUCCESS != status) {
-        return;
-    }
-
     // Set infinite timeout on the base stream - the read will exit only on abort/deactivate.
     // It doesn't affect timeout for this class write function (m_timeout).
     auto set_timeout_status = m_base_stream->set_timeout(HAILO_INFINITE_TIMEOUT);

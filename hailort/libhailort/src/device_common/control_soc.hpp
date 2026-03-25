@@ -1,11 +1,14 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
  * @file control_soc.hpp
  * @brief Contains defines and declarations related to controlling Hailo SOC
  **/
+
+#ifndef _HAILO_CONTROL_SOC_HPP_
+#define _HAILO_CONTROL_SOC_HPP_
 
 #include "common/utils.hpp"
 #include "hailo/expected.hpp"
@@ -36,7 +39,8 @@ class SocPowerMeasurement final
 public:
     SocPowerMeasurement(hailo_power_measurement_types_t type = HAILO_POWER_MEASUREMENT_TYPES__MAX_ENUM)
         : m_averaging_factor(HAILO_AVERAGE_FACTOR_MAX_ENUM), m_dvm(HAILO_DVM_OPTIONS_MAX_ENUM), m_data({}),
-          m_type(type), m_sampling_period(HAILO_SAMPLING_PERIOD_MAX_ENUM)
+          m_type(type), m_sampling_period(HAILO_SAMPLING_PERIOD_MAX_ENUM), m_is_running(false),
+          m_average_factor_value(0), m_sampling_interval_microseconds(0), m_sampling_period_value(0)
     {
     }
     ~SocPowerMeasurement();
@@ -74,3 +78,5 @@ public:
 };
 
 } // namespace hailort
+
+#endif /* _HAILO_CONTROL_SOC_HPP_ */

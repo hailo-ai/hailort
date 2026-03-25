@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -16,7 +16,6 @@
 #include "hailo/expected.hpp"
 #include "hailo/event.hpp"
 
-#include "common/filesystem.hpp"
 #include "common/utils.hpp"
 #include "common/runtime_statistics_internal.hpp"
 
@@ -48,7 +47,7 @@ namespace hailort
 #define NNC_UTILIZATION_TMP_DIR "/tmp/nnc_utilization/"
 #define NNC_UTILIZATION_FILE_NAME "nnc_utilization"
 #define DEFAULT_SCHEDULER_MON_INTERVAL (std::chrono::seconds(1))
-#define SCHEDULER_MON_NAN_VAL (-1)
+#define SCHEDULER_MON_INVALID_VALUE (-1)
 
 using stream_name = std::string;
 

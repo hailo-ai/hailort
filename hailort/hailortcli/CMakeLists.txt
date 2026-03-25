@@ -18,19 +18,18 @@ set(HAILORTCLI_CPP_FILES
     inference_progress.cpp
     power_measurement_command.cpp
     fw_control_command.cpp
-    fw_update_command.cpp
-    ssb_update_command.cpp
     infer_stats_printer.cpp
-    sensor_config_command.cpp
     board_config_command.cpp
-    fw_config_command.cpp
-    fw_config_serializer.cpp
     common.cpp
     benchmark_command.cpp
     parse_hef_command.cpp
     memory_requirements_command.cpp
     graph_printer.cpp
     mon_command.cpp
+    hailo_monitor/hailo_monitor.cpp
+    hailo_monitor/monitor_common.cpp
+    hailo_monitor/integrated_monitor.cpp
+    hailo_monitor/accelerator_monitor.cpp
     logs_command.cpp
 
     run2/run2_command.cpp
@@ -91,6 +90,7 @@ endif()
 target_include_directories(hailortcli
     PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR} # CMAKE_CURRENT_BINARY_DIR is necessary for config_definitions_header
+    ${CMAKE_CURRENT_SOURCE_DIR}
     ${HAILORT_COMMON_DIR}
     ${COMMON_INC_DIR}
     ${HAILORT_SRC_DIR}
@@ -98,6 +98,4 @@ target_include_directories(hailortcli
 
 install(TARGETS hailortcli
    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-   CONFIGURATIONS Release
 )
-cli11_install_completion_file(hailortcli)

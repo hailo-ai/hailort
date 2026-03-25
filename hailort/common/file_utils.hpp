@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -35,9 +35,14 @@ Expected<Buffer> read_binary_file(const std::string &file_path,
 
 /**
  * Reads a file from dev content into a provided `MemoryView`, and return the file_size.
- * Can't perform operations operations like tellg() on such files (hence, the special implementation).
+ * Can't perform operations like tellg() on such files (hence, the special implementation).
  */
 Expected<size_t> read_device_file(const std::string &file_path, MemoryView buffer);
+
+/**
+ * Writes content to a device file (e.g. sysfs file).
+ */
+hailo_status write_device_file(const std::string &file_path, const std::string &content);
 
 // This class is an RAII to return to the original stream position
 class StreamPositionGuard

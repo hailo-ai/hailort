@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -78,9 +78,8 @@ Expected<uint32_t> MultiSgEdgeLayer::program_descriptors(size_t transfer_size,
 {
     // Program the next descriptor list (for single list, next == current)
     uint32_t next_desc_list_index = get_next_descriptor_list_index();
-    CHECK_SUCCESS(m_desc_lists[next_desc_list_index].program(get_mapped_buffer(), transfer_size, buffer_offset, m_channel_id,
-        static_cast<uint32_t>(desc_offset), batch_size,
-        InterruptsDomain::NONE));
+    CHECK_SUCCESS(m_desc_lists[next_desc_list_index].program(get_mapped_buffer(), transfer_size, buffer_offset,
+        m_channel_id, static_cast<uint32_t>(desc_offset), batch_size));
 
     m_active_desc_list_index = next_desc_list_index;
 

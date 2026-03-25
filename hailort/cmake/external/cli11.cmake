@@ -5,7 +5,7 @@ include(FetchContent)
 FetchContent_Declare(
     cli11
     GIT_REPOSITORY https://github.com/hailo-ai/CLI11.git
-    GIT_TAG ae78ac41cf225706e83f57da45117e3e90d4a5b4 # Version 2.2.0 + hailo completion
+    GIT_TAG 242adfdb23957d30e3e56831e474020d0ac6c86c # v2.2.0-hailo
     GIT_SHALLOW TRUE
     SOURCE_DIR ${HAILO_EXTERNAL_DIR}/cli11-src
     SUBBUILD_DIR ${HAILO_EXTERNAL_DIR}/cli11-subbuild

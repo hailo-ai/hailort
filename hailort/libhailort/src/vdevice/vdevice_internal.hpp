@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -133,7 +133,7 @@ public:
         return status;
     }
 
-    static Expected<HailoRTDriver::AcceleratorType> get_accelerator_type(hailo_device_id_t *device_ids, size_t device_count);
+    static Expected<HailoRTDriver::DeviceType> get_device_type(hailo_device_id_t *device_ids, size_t device_count);
     static hailo_status validate_params(const hailo_vdevice_params_t &params);
     static Expected<bool> do_device_ids_contain_eth(const hailo_vdevice_params_t &params);
 

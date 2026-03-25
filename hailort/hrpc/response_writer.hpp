@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -39,29 +39,33 @@ public:
         TRY(auto message_buffer, m_client_connection->allocate_message_buffer());
         RpcConnection::fill_message_buffer(message_buffer, m_message_header, response.as_view());
 
-        auto callback = [additional_writes, message_buffer] (hailo_status status) {
-            if (HAILO_SUCCESS != status) {
-                LOGGER__ERROR("Failed to write Hrpc response. status: {}", status);
-            }
-        };
-
         std::unique_lock<std::mutex> lock(*m_mutex);
 
         status = m_client_connection->wait_for_write_message_async_ready(response.size(), WRITE_TIMEOUT);
         CHECK_SUCCESS(status);
 
         TransferRequest transfer_request;
-        transfer_request.callback = std::move(callback);
+        transfer_request.callback = [message_buffer] (hailo_status status) {
+            if ((HAILO_SUCCESS != status) && (HAILO_COMMUNICATION_CLOSED != status)) {
+                LOGGER__ERROR("Failed to write Hrpc response. status: {}", status);
+            }
+        };
         transfer_request.transfer_buffers.emplace_back(message_buffer->as_view());
 
         status = m_client_connection->write_message_async(std::move(transfer_request));
         CHECK_SUCCESS(status);
 
+        auto additional_writes_callback = [additional_writes] (hailo_status status) {
+            if ((HAILO_SUCCESS != status) && (HAILO_COMMUNICATION_CLOSED != status)) {
+                LOGGER__ERROR("Failed to write Hrpc response. status: {}", status);
+            }
+        };
+
         for (const auto &buffer : additional_writes) {
             status = m_client_connection->wait_for_write_message_async_ready(buffer->size(), WRITE_TIMEOUT);
             CHECK_SUCCESS(status);
 
-            status = m_client_connection->write_buffer_async(buffer->as_view(), callback);
+            status = m_client_connection->write_buffer_async(buffer->as_view(), additional_writes_callback);
             CHECK_SUCCESS(status);
         }
 

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -22,13 +22,7 @@ Expected<CmaBuffer> CmaBuffer::create(size_t size, HailoRTDriver &driver)
     }
 
     auto result = driver.vdma_continuous_buffer_alloc(size);
-    /* Don't print error here since this might be expected error that the libhailoRT can recover from
-        (out of host memory). If it's not the case, there is a print in hailort_driver.cpp file */
-    if (HAILO_OUT_OF_HOST_CMA_MEMORY == result.status()) {
-        return make_unexpected(result.status());
-    } else {
-        CHECK_EXPECTED(result);
-    }
+    CHECK_EXPECTED_WITH_ACCEPTABLE_STATUS(HAILO_RESOURCE_EXHAUSTED, result);
 
     return CmaBuffer(driver, result.release());
 }

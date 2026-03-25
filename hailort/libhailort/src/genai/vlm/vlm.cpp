@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -78,7 +78,14 @@ Expected<std::unique_ptr<VLM::Impl>> VLM::Impl::create_unique(std::shared_ptr<ha
     TRY(auto hef_hash, Hef::hash(vlm_params.hef()));
 
     auto vdevice_params = vdevice->get_params();
-    TRY(auto session_wrapper, GenAICommon::create_session_wrapper(vdevice_params, DEFAULT_VLM_CONNECTION_PORT));
+    TRY(auto session_wrapper, GenAICommon::create_session_wrapper(vdevice, DEFAULT_VLM_CONNECTION_PORT));
+
+    // Acquire KV cache before proceeding with VLM creation
+    TRY(auto acquire_kv_cache_request, LLMAcquireKvCacheSerializer::serialize_request());
+    TRY(auto acquire_kv_cache_reply, session_wrapper->execute(MemoryView(acquire_kv_cache_request)));
+    auto acquire_status = LLMAcquireKvCacheSerializer::deserialize_reply(MemoryView(*acquire_kv_cache_reply));
+    CHECK_SUCCESS(acquire_status, "Failed to acquire KV-Cache. KV-Cache is already in use by another model.");
+    // Note: If any subsequent step fails, the server-side KV cache is release when LLMServerManager is destroyed on session close.
 
     // Translate vlm_params.hef() to an absolute path if it is not already
     std::string hef_path = vlm_params.hef();
@@ -151,6 +158,8 @@ Expected<std::unique_ptr<VLM::Impl>> VLM::Impl::create_unique(std::shared_ptr<ha
     auto prompt_template_handler_ptr = make_shared_nothrow<PromptTemplateHandler>(std::move(prompt_template_handler));
     CHECK_NOT_NULL_AS_EXPECTED(prompt_template_handler_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
+    auto embeddings_per_frame = vlm_create_reply_info.embeddings_per_frame;
+
     if (vlm_params.optimize_memory_on_device()) {
 #ifndef HAILO_CLIENT_TOKENIZER_ENABLED
         (void)token_embedder_buffer;
@@ -162,11 +171,10 @@ Expected<std::unique_ptr<VLM::Impl>> VLM::Impl::create_unique(std::shared_ptr<ha
         auto embedding_features = vlm_create_reply_info.embedding_features;
         auto image_pad_token_id = vlm_create_reply_info.image_pad_token_id;
         auto video_pad_token_id = vlm_create_reply_info.video_pad_token_id;
-        auto embeddings_per_frame = vlm_create_reply_info.embeddings_per_frame;
 
         TRY(token_embedder, TokenEmbedder<uint16_t>::create(token_embedder_buffer,
             token_embedder_buffer->size() / (sizeof(uint16_t) * embedding_features), embedding_features,
-            image_pad_token_id, video_pad_token_id, embeddings_per_frame));
+            image_pad_token_id, video_pad_token_id));
 #endif // HAILO_CLIENT_TOKENIZER_ENABLED
     }
 
@@ -175,7 +183,7 @@ Expected<std::unique_ptr<VLM::Impl>> VLM::Impl::create_unique(std::shared_ptr<ha
     TRY(auto default_generator_params, LLMGetGeneratorParamsSerializer::deserialize_reply(MemoryView(*get_generator_default_params_reply)));
 
     auto vlm_ptr = make_unique_nothrow<Impl>(session_wrapper, vlm_params, default_generator_params, input_frame_shape, input_frame_format, prompt_template_handler_ptr,
-        tokenizer, token_embedder);
+        tokenizer, token_embedder, embeddings_per_frame);
     CHECK_NOT_NULL_AS_EXPECTED(vlm_ptr, HAILO_OUT_OF_HOST_MEMORY);
     return vlm_ptr;
 }
@@ -183,32 +191,24 @@ Expected<std::unique_ptr<VLM::Impl>> VLM::Impl::create_unique(std::shared_ptr<ha
 VLM::Impl::Impl(std::shared_ptr<SessionWrapper> session, const VLMParams &vlm_params,
     const LLMGeneratorParams &default_generator_params, hailo_3d_image_shape_t input_frame_shape,
     hailo_format_t input_frame_format, std::shared_ptr<PromptTemplateHandler> prompt_template_handler,
-    std::shared_ptr<HailoTokenizer> tokenizer, std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder) :
+    std::shared_ptr<HailoTokenizer> tokenizer, std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder,
+    uint32_t embeddings_per_frame) :
         m_session(session), m_vlm_params(vlm_params), m_default_generator_params(default_generator_params),
         m_input_frame_shape(input_frame_shape), m_input_frame_format(input_frame_format),
         m_prompt_template_handler(prompt_template_handler),
         m_tokenizer(tokenizer),
-        m_token_embedder(token_embedder)
+        m_token_embedder(token_embedder),
+        m_embeddings_per_frame(embeddings_per_frame)
 {}
 
 VLM::Impl::~Impl()
 {
     auto release_request = LLMReleaseSerializer::serialize_request();
-    if (!release_request) {
-        LOGGER__CRITICAL("Failed to serialize VLM release request with status {}", release_request.status());
-        return;
-    }
+    DTOR_LOG_ON_FAILURE(release_request, "Failed to serialize VLM release request with status {}");
     auto release_reply = m_session->execute(MemoryView(release_request.value()));
-    if (!release_reply) {
-        LOGGER__CRITICAL("Failed to execute VLM release request with status {}", release_reply.status());
-        return;
-    }
-
+    DTOR_LOG_ON_FAILURE(release_reply, "Failed to execute VLM release request with status {}");
     auto status = LLMReleaseSerializer::deserialize_reply(MemoryView(release_reply.value()));
-    if (HAILO_SUCCESS != status) {
-        LOGGER__CRITICAL("Failed to deserialize VLM release reply with status {}", status);
-        return;
-    }
+    DTOR_LOG_ON_FAILURE(status, "Failed to deserialize VLM release reply with status {}");
 }
 
 VLM::VLM(std::unique_ptr<Impl> pimpl) :
@@ -495,6 +495,30 @@ Expected<LLMGeneratorCompletion> VLM::Impl::generate(const LLMGeneratorParams &p
     return completion;
 }
 
+Expected<LLMGeneratorCompletion> VLM::generate_from_embeddings(const std::vector<std::string> &messages_json_strings,
+    const std::vector<MemoryView> &image_embeddings, const std::vector<std::vector<MemoryView>> &video_embeddings)
+{
+    TRY(auto generator_params, create_generator_params());
+    return m_pimpl->generate_from_embeddings(generator_params, messages_json_strings, image_embeddings, video_embeddings);
+}
+
+Expected<LLMGeneratorCompletion> VLM::generate_from_embeddings(const LLMGeneratorParams &params,
+    const std::vector<std::string> &messages_json_strings, const std::vector<MemoryView> &image_embeddings,
+    const std::vector<std::vector<MemoryView>> &video_embeddings)
+{
+    return m_pimpl->generate_from_embeddings(params, messages_json_strings, image_embeddings, video_embeddings);
+}
+
+Expected<LLMGeneratorCompletion> VLM::Impl::generate_from_embeddings(const LLMGeneratorParams &params,
+    const std::vector<std::string> &messages_json_strings, const std::vector<MemoryView> &image_embeddings,
+    const std::vector<std::vector<MemoryView>> &video_embeddings)
+{
+    TRY(auto generator, create_generator(params));
+    TRY(auto completion, generator.generate_from_embeddings(messages_json_strings, image_embeddings, video_embeddings));
+    // Generator is kept alive via shared_from_this() in VLMGenerator::Impl::generate_from_embeddings()
+    return completion;
+}
+
 Expected<VLMGenerator> VLM::Impl::create_generator(const LLMGeneratorParams &params)
 {
     CHECK_SUCCESS(validate_generator_params(params));
@@ -504,7 +528,7 @@ Expected<VLMGenerator> VLM::Impl::create_generator(const LLMGeneratorParams &par
     CHECK_SUCCESS(LLMGeneratorCreateSerializer::deserialize_reply(MemoryView(*create_generator_reply)), "Failed to create LLM generator");
 
     auto pimpl = make_unique_nothrow<VLMGenerator::Impl>(m_session, m_prompt_template_handler,
-        m_tokenizer, m_token_embedder, params.max_generated_tokens());
+        m_tokenizer, m_token_embedder, params.max_generated_tokens(), m_embeddings_per_frame);
     CHECK_NOT_NULL_AS_EXPECTED(pimpl, HAILO_OUT_OF_HOST_MEMORY);
     return VLMGenerator(std::move(pimpl));
 }
@@ -528,11 +552,13 @@ VLMGenerator::VLMGenerator(std::shared_ptr<Impl> pimpl) :
 {}
 
 VLMGenerator::Impl::Impl(std::shared_ptr<SessionWrapper> session, std::shared_ptr<PromptTemplateHandler> prompt_template_handler,
-    std::shared_ptr<HailoTokenizer> tokenizer, std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder, uint32_t max_generated_tokens) :
+    std::shared_ptr<HailoTokenizer> tokenizer, std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder, uint32_t max_generated_tokens,
+    uint32_t embeddings_per_frame) :
         m_session(session), m_prompt_template_handler(prompt_template_handler),
         m_tokenizer(tokenizer),
         m_token_embedder(token_embedder),
-        m_max_generated_tokens(max_generated_tokens)
+        m_max_generated_tokens(max_generated_tokens),
+        m_embeddings_per_frame(embeddings_per_frame)
 {}
 
 Expected<LLMGeneratorCompletion> VLMGenerator::generate(const std::string &prompt, const std::vector<MemoryView> &input_frames,
@@ -547,51 +573,116 @@ Expected<LLMGeneratorCompletion> VLMGenerator::generate(const std::vector<std::s
     return m_pimpl->generate(messages_json_strings, input_frames, input_videos);
 }
 
+Expected<LLMGeneratorCompletion> VLMGenerator::generate_from_embeddings(const std::string &prompt, const std::vector<MemoryView> &image_embeddings,
+    const std::vector<std::vector<MemoryView>> &video_embeddings)
+{
+    return m_pimpl->generate_from_embeddings(prompt, image_embeddings, video_embeddings);
+}
+
+Expected<LLMGeneratorCompletion> VLMGenerator::generate_from_embeddings(const std::vector<std::string> &messages_json_strings,
+    const std::vector<MemoryView> &image_embeddings, const std::vector<std::vector<MemoryView>> &video_embeddings)
+{
+    return m_pimpl->generate_from_embeddings(messages_json_strings, image_embeddings, video_embeddings);
+}
+
 Expected<LLMGeneratorCompletion> VLMGenerator::Impl::generate(const std::string &prompt, const std::vector<MemoryView> &input_frames,
     const std::vector<std::vector<MemoryView>> &input_videos)
 {
+    return generate_impl(prompt, input_frames, input_videos, false /* is_raw_embeddings */);
+}
+
+Expected<LLMGeneratorCompletion> VLMGenerator::Impl::generate(const std::vector<std::string> &messages_json_strings, const std::vector<MemoryView> &input_frames,
+    const std::vector<std::vector<MemoryView>> &input_videos)
+{
+    CHECK_AS_EXPECTED(!messages_json_strings.empty(), HAILO_INVALID_ARGUMENT, "Messages cannot be empty");
+
+    TRY(auto processed_prompt, apply_vlm_template_from_json(messages_json_strings));
+
+    return generate_impl(processed_prompt, input_frames, input_videos, false /* is_raw_embeddings */);
+}
+
+Expected<LLMGeneratorCompletion> VLMGenerator::Impl::generate_from_embeddings(const std::string &prompt,
+    const std::vector<MemoryView> &image_embeddings, const std::vector<std::vector<MemoryView>> &video_embeddings)
+{
+    return generate_impl(prompt, image_embeddings, video_embeddings, true /* is_raw_embeddings */);
+}
+
+Expected<LLMGeneratorCompletion> VLMGenerator::Impl::generate_from_embeddings(const std::vector<std::string> &messages_json_strings,
+    const std::vector<MemoryView> &image_embeddings, const std::vector<std::vector<MemoryView>> &video_embeddings)
+{
+    CHECK_AS_EXPECTED(!messages_json_strings.empty(), HAILO_INVALID_ARGUMENT, "Messages cannot be empty");
+
+    TRY(auto processed_prompt, apply_vlm_template_from_json(messages_json_strings));
+
+    return generate_impl(processed_prompt, image_embeddings, video_embeddings, true /* is_raw_embeddings */);
+}
+
+Expected<LLMGeneratorCompletion> VLMGenerator::Impl::generate_impl(const std::string &prompt, const std::vector<MemoryView> &image_data,
+    const std::vector<std::vector<MemoryView>> &video_data, bool is_raw_embeddings)
+{
     CHECK_AS_EXPECTED(!prompt.empty(), HAILO_INVALID_ARGUMENT, "Prompt cannot be empty");
 
-    // Build vector of raw frame counts per video for the server
-    std::vector<uint32_t> raw_video_frames_count_per_video;
-    raw_video_frames_count_per_video.reserve(input_videos.size());
-    uint32_t sum_of_video_frames = 0;
-    for (const auto &video : input_videos) {
-        uint32_t frame_count = static_cast<uint32_t>(video.size());
-        raw_video_frames_count_per_video.push_back(frame_count);
-        sum_of_video_frames += frame_count;
+    // Build vector of frame/embedding counts per video for the server
+    std::vector<uint32_t> video_item_count_per_video;
+    video_item_count_per_video.reserve(video_data.size());
+    uint32_t total_video_items = 0;
+    for (const auto &video : video_data) {
+        uint32_t item_count = static_cast<uint32_t>(video.size());
+        video_item_count_per_video.push_back(item_count);
+        total_video_items += item_count;
     }
 
     TRY(auto generator_generate_request, VLMGeneratorGenerateSerializer::serialize_request(
-        static_cast<uint32_t>(input_frames.size()), raw_video_frames_count_per_video));
+        static_cast<uint32_t>(image_data.size()), video_item_count_per_video, is_raw_embeddings));
 
     std::vector<MemoryView> write_buffers;
-    write_buffers.reserve(1 + input_frames.size() + sum_of_video_frames); // generate_req + standalone_frames + video_frames
+    write_buffers.reserve(1 + image_data.size() + total_video_items);
     write_buffers.push_back(MemoryView(generator_generate_request));
-    write_buffers.insert(write_buffers.end(), input_frames.begin(), input_frames.end());
-    for (const auto &video : input_videos) {
+    write_buffers.insert(write_buffers.end(), image_data.begin(), image_data.end());
+    for (const auto &video : video_data) {
         write_buffers.insert(write_buffers.end(), video.begin(), video.end());
     }
 
-    // If tokenizer on host, update the token embedder with the number of video frames per video
+    // If tokenizer on host, update the token embedder with the embedding counts per image/video
     if (m_tokenizer) {
 #ifdef HAILO_CLIENT_TOKENIZER_ENABLED
-        // Build vector of frame counts per video (encoder outputs half the input frames, rounded up)
-        std::vector<size_t> processed_video_frames_count_per_video;
-        processed_video_frames_count_per_video.reserve(input_videos.size());
-        for (const auto &video : input_videos) {
-            uint32_t processed_frames = (static_cast<uint32_t>(video.size()) + 1) / 2;
-            processed_video_frames_count_per_video.push_back(processed_frames);
+        std::vector<size_t> embeddings_count_per_image;
+        std::vector<size_t> embeddings_count_per_video;
+        embeddings_count_per_image.reserve(image_data.size());
+        embeddings_count_per_video.reserve(video_data.size());
+
+        if (is_raw_embeddings) {
+            // For raw embeddings: compute count from buffer size
+            const auto embedding_features = m_token_embedder->cols();
+            for (const auto &item : image_data) {
+                embeddings_count_per_image.push_back(item.size() / (embedding_features * sizeof(uint16_t)));
+            }
+            for (const auto &video : video_data) {
+                size_t total_video_embeddings = 0;
+                for (const auto &item : video) {
+                    total_video_embeddings += item.size() / (embedding_features * sizeof(uint16_t));
+                }
+                embeddings_count_per_video.push_back(total_video_embeddings);
+            }
+        } else {
+            // For encoder-based: all images have the same embedding count
+            embeddings_count_per_image.assign(image_data.size(), m_embeddings_per_frame);
+            // For encoder-based videos: each video has (embeddings_per_frame * processed_frames_count) embeddings
+            for (const auto &video : video_data) {
+                uint32_t processed_frames = (static_cast<uint32_t>(video.size()) + 1) / 2;
+                embeddings_count_per_video.push_back(m_embeddings_per_frame * processed_frames);
+            }
         }
-        m_token_embedder->set_video_frames_count(processed_video_frames_count_per_video);
-# endif // HAILO_CLIENT_TOKENIZER_ENABLED
+        m_token_embedder->set_special_tokens_embeddings_count(embeddings_count_per_image, embeddings_count_per_video);
+#else // HAILO_CLIENT_TOKENIZER_ENABLED
+        // Avoiding 'unused member' warnings
+        (void)m_embeddings_per_frame;
+#endif // HAILO_CLIENT_TOKENIZER_ENABLED
     }
 
     TRY(auto generator_generate_reply, m_session->execute(write_buffers));
     CHECK_SUCCESS(VLMGeneratorGenerateSerializer::deserialize_reply(MemoryView(*generator_generate_reply)),
-        "Failed to generate. Make sure the number of passed frames ('{}') matches the number of frames in the prompt," \
-         " each passed frame size matches the expected input frame size (see 'VLM::input_frame_size'), and there is no other generation in progress",
-            input_frames.size());
+        "Failed to generate. Make sure the input data matches what the model expects and there is no other generation in progress");
 
     TRY(auto shutdown_event, Event::create_shared(Event::State::not_signalled));
     const auto TOKENS_BACKLOG = 1024;
@@ -603,7 +694,7 @@ Expected<LLMGeneratorCompletion> VLMGenerator::Impl::generate(const std::string 
     CHECK_NOT_NULL_AS_EXPECTED(pimpl, HAILO_OUT_OF_HOST_MEMORY);
 
     LLMGeneratorCompletion obj(std::move(pimpl));
-    // In case no tokens are expected back, make sure you get an empty respone from server before returning
+    // In case no tokens are expected back, make sure you get an empty response from server before returning
     if (0 == m_max_generated_tokens) {
         TRY(auto vlm_response, obj.read(LONG_TIMEOUT));
         CHECK(vlm_response.empty(), HAILO_INTERNAL_FAILURE, "Received text '{}' while no text is expected back", vlm_response);
@@ -611,16 +702,6 @@ Expected<LLMGeneratorCompletion> VLMGenerator::Impl::generate(const std::string 
             HAILO_INTERNAL_FAILURE, "Generation status is not MAX_TOKENS_REACHED");
     }
     return obj;
-}
-
-Expected<LLMGeneratorCompletion> VLMGenerator::Impl::generate(const std::vector<std::string> &messages_json_strings, const std::vector<MemoryView> &input_frames,
-    const std::vector<std::vector<MemoryView>> &input_videos)
-{
-    CHECK_AS_EXPECTED(!messages_json_strings.empty(), HAILO_INVALID_ARGUMENT, "Messages cannot be empty");
-
-    TRY(auto processed_prompt, apply_vlm_template_from_json(messages_json_strings));
-
-    return generate(processed_prompt, input_frames, input_videos);
 }
 
 Expected<std::string> VLMGenerator::Impl::apply_vlm_template_from_json(const std::vector<std::string> &messages_json_strings)

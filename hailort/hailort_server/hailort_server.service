@@ -10,8 +10,6 @@ Wants=network.target
 # Start hailort_server with server address argument if provided
 ExecStart=/bin/sh -c 'if [ -z "$HAILO_SERVER_ADDRESS" ]; then /usr/bin/hailort_server; else /usr/bin/hailort_server $HAILO_SERVER_ADDRESS; fi'
 # Set up environment variables for server configuration
-Environment="HAILO_MONITOR=1"
-Environment="HAILO_MONITOR_TIME_INTERVAL=100"
 Environment="HAILO_DDR_ACTION_LIST=1"
 Environment="HAILO_PRINT_TO_SYSLOG=1"
 # Log startup configuration

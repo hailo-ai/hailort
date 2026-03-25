@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -77,10 +77,12 @@ hailo_status SessionWrapper::write(MemoryView buffer, std::chrono::milliseconds 
     // First we send the buffer's size. Then the buffer itself.
     // TODO: Use hrpc protocol
     size_t size = buffer.size();
-    CHECK_SUCCESS(m_session->write(reinterpret_cast<const uint8_t*>(&size), sizeof(size), timeout_guard.get_remaining_timeout()));
+    auto status = m_session->write(reinterpret_cast<const uint8_t*>(&size), sizeof(size), timeout_guard.get_remaining_timeout());
+    CHECK_SUCCESS_ACCEPT_DISCONNECT(status);
     if (0 != size) {
         // In order to avoid sending empty buffers, we check if the size is 0 - same as socket
-        CHECK_SUCCESS(m_session->write(buffer.data(), size, timeout_guard.get_remaining_timeout()));
+        status = m_session->write(buffer.data(), size, timeout_guard.get_remaining_timeout());
+        CHECK_SUCCESS_ACCEPT_DISCONNECT(status);
     }
 
     return HAILO_SUCCESS;
@@ -89,14 +91,16 @@ hailo_status SessionWrapper::write(MemoryView buffer, std::chrono::milliseconds 
 Expected<std::shared_ptr<Buffer>> SessionWrapper::execute(MemoryView write_buffer)
 {
     std::unique_lock<std::mutex> lock(m_mutex);
-    CHECK_SUCCESS(write(write_buffer));
+    auto status = write(write_buffer);
+    CHECK_SUCCESS_ACCEPT_DISCONNECT(status);
     return read();
 }
 
 Expected<size_t> SessionWrapper::execute(MemoryView write_buffer, MemoryView read_buffer)
 {
     std::unique_lock<std::mutex> lock(m_mutex);
-    CHECK_SUCCESS(write(write_buffer));
+    auto status = write(write_buffer);
+    CHECK_SUCCESS_ACCEPT_DISCONNECT(status);
     return read(read_buffer);
 }
 
@@ -104,7 +108,8 @@ Expected<std::shared_ptr<Buffer>> SessionWrapper::execute(std::vector<MemoryView
 {
     std::unique_lock<std::mutex> lock(m_mutex);
     for (const auto &buffer : write_buffers) {
-        CHECK_SUCCESS(write(buffer, LONG_TIMEOUT));
+        auto status = write(buffer, LONG_TIMEOUT);
+        CHECK_SUCCESS_ACCEPT_DISCONNECT(status);
     }
     return read();
 }

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -43,26 +43,20 @@ Expected<std::string> get_path_from_lora_name(const std::string &lora_name)
     }
 }
 
-Expected<std::string> get_prefill_model_name_suffix(const std::string &lora_name, size_t network_group_count)
+Expected<std::string> get_prefill_model_name_suffix(const std::string &lora_name)
 {
-    // TODO (HRT-18043): remove this hack. NG names should be deterministic and not depend on the number of NGs.
-    if (network_group_count <= 2) {
-        return std::string("prefill");
-    }
+    // TODO (HRT-18043): Instead of using suffixes, NG names for base model (lora_name is not given) should be well defined in 'hailo-config.json'
     if (lora_name.empty()) {
-        return std::string("base_model__prefill");
+        return std::string("__prefill");
     }
     return lora_name + std::string("__prefill");
 }
 
-Expected<std::string> get_tbt_model_name_suffix(const std::string &lora_name, size_t network_group_count)
+Expected<std::string> get_tbt_model_name_suffix(const std::string &lora_name)
 {
-    // TODO (HRT-18043): remove this hack. NG names should be deterministic and not depend on the number of NGs.
-    if (network_group_count == 2) {
-        return std::string("tbt");
-    }
+    // TODO (HRT-18043): Instead of using suffixes, NG names for base model (lora_name is not given) should be well defined in 'hailo-config.json'
     if (lora_name.empty()) {
-        return std::string("base_model__tbt");
+        return std::string("__tbt");
     }
     return lora_name + std::string("__tbt");
 }
@@ -96,7 +90,7 @@ LLMServer::~LLMServer()
 
     m_vdevice_manager->remove_vdevice(DEFAULT_LLM_CONNECTION_PORT); // Use it as a unique client id
 
-    m_vdevice_manager->unmark_kv_cache_in_use();
+    m_kv_cache_guard.reset();
 }
 
 hailo_status LLMServer::parse_config_json(const MemoryView &config_json)
@@ -203,13 +197,13 @@ std::future<hailo_status> LLMServer::create_inference_managers_future(std::share
         inference_models_created_event, shutdown_event]() -> hailo_status {
 
         LOGGER__GENAI_STATS_START("[create] create prefill model");
-        auto network_group_names = hef.get_network_groups_names();
-        TRY(auto prefill_model_suffix, get_prefill_model_name_suffix(lora_name, network_group_names.size()));
-        TRY(m_inference_manager_prefill, LLMInferenceManager::create(vdevice, hef, prefill_model_suffix));
+        TRY(auto prefill_model_name_suffix, get_prefill_model_name_suffix(lora_name));
+        TRY(m_inference_manager_prefill, LLMInferenceManager::create(vdevice, hef, prefill_model_name_suffix));
         CHECK_SUCCESS(WaitOrShutdown(external_resources_created_event, shutdown_event).wait(WAIT_FOR_OPERATION_TIMEOUT));
         auto model_prefill = m_inference_manager_prefill->get_model();
         for (auto input : model_prefill->inputs()) {
-            if (LLMPreProcess::is_positional_embed_layer(input.name(), m_input_layers_names_suffixes)) {
+            if (LLMPreProcess::is_positional_embed_layer(input.name(), m_input_layers_names_suffixes) ||
+                LLMPreProcess::is_deepstack_layer(input.name(), m_input_layers_names_suffixes)) {
                 input.set_format_type(HAILO_FORMAT_TYPE_FLOAT32);
             }
         }
@@ -220,13 +214,14 @@ std::future<hailo_status> LLMServer::create_inference_managers_future(std::share
 
         LOGGER__GENAI_STATS_START("[create] create tbt model");
         m_inference_manager_tbt = nullptr;
-        TRY(auto tbt_model_suffix, get_tbt_model_name_suffix(lora_name, network_group_names.size()));
-        auto inference_manager_tbt = LLMInferenceManager::create(vdevice, hef, tbt_model_suffix);
+        TRY(auto tbt_model_name_suffix, get_tbt_model_name_suffix(lora_name));
+        auto inference_manager_tbt = LLMInferenceManager::create(vdevice, hef, tbt_model_name_suffix);
         if (inference_manager_tbt) {
             m_inference_manager_tbt = inference_manager_tbt.release();
             auto model_tbt = m_inference_manager_tbt->get_model();
             for (auto input : model_tbt->inputs()) {
-                if (LLMPreProcess::is_positional_embed_layer(input.name(), m_input_layers_names_suffixes)) {
+                if (LLMPreProcess::is_positional_embed_layer(input.name(), m_input_layers_names_suffixes) ||
+                    LLMPreProcess::is_deepstack_layer(input.name(), m_input_layers_names_suffixes)) {
                     input.set_format_type(HAILO_FORMAT_TYPE_FLOAT32);
                 }
             }
@@ -416,7 +411,8 @@ Expected<Buffer> LLMServer::handle_create_llm_request(const MemoryView &request)
     if (!group_id.empty()) {
         params.group_id = group_id.c_str();
     }
-    TRY_AS_HRPC_STATUS(auto vdevice, m_vdevice_manager->create_shared_vdevice(params, DEFAULT_LLM_CONNECTION_PORT), LLMCreateSerializer);
+    TRY_AS_HRPC_STATUS(auto vdevice, m_vdevice_manager->create_vdevice_for_genai(params, DEFAULT_LLM_CONNECTION_PORT),
+        LLMCreateSerializer);
     LOGGER__GENAI_STATS_END("[create] create vdevice");
 
     LOGGER__GENAI_STATS_START("[create] transfer HEF");
@@ -555,9 +551,8 @@ Expected<Buffer> LLMServer::handle_generate_request(const MemoryView &request)
 
 Expected<Buffer> LLMServer::handle_read_request(const MemoryView &request)
 {
-    TRY_AS_HRPC_STATUS(auto pair, LLMGeneratorReadSerializer::deserialize_request(request),
+    TRY_AS_HRPC_STATUS(auto input, LLMGeneratorReadSerializer::deserialize_request(request),
         LLMGeneratorReadSerializer);
-    auto &[timeout, input] = pair;
 
     std::unique_lock<std::mutex> lock(m_generation_mutex);
     LLMGeneratorCompletion::Status gen_status = LLMGeneratorCompletion::Status::GENERATING;
@@ -590,12 +585,14 @@ Expected<Buffer> LLMServer::handle_read_request(const MemoryView &request)
 
             // TODO: (HRT-18669) think how to manage memory better to prevent allocations
             assert(m_token_embedder);
-            embeddings_views = m_token_embedder->tokens_to_embeddings(combined_tokens);
+            TRY_AS_HRPC_STATUS(embeddings_views, m_token_embedder->tokens_to_embeddings(combined_tokens),
+                LLMGeneratorReadSerializer);
         } else if (!input.tokens.empty() && input.embeddings.empty()) {
             // Subsequent iterations OR client-side tokenizer without embeddings
             // Just use tokens as-is (single token for TBT, or combined tokens from client)
             assert(m_token_embedder);
-            embeddings_views = m_token_embedder->tokens_to_embeddings(input.tokens);
+            TRY_AS_HRPC_STATUS(embeddings_views, m_token_embedder->tokens_to_embeddings(input.tokens),
+                LLMGeneratorReadSerializer);
         } else {
             // Client-side tokenizer with embeddings
             // Embeddings already contain prefix+input combined (first iter) or single token (subsequent)
@@ -758,6 +755,44 @@ Expected<Buffer> LLMServer::handle_generator_release_request(const MemoryView &r
     CHECK_SUCCESS_AS_HRPC_STATUS(LLMGeneratorReleaseSerializer::deserialize_request(request), LLMGeneratorReleaseSerializer);
     TRY_AS_HRPC_STATUS(auto reply, LLMGeneratorReleaseSerializer::serialize_reply(HAILO_SUCCESS),
         LLMGeneratorReleaseSerializer);
+    return reply;
+}
+
+Expected<Buffer> LLMServer::handle_acquire_kv_cache_request(const MemoryView &)
+{
+    auto guard = KvCacheFlag::acquire();
+    auto status = guard.status();
+    if (guard) {
+        m_kv_cache_guard = std::move(guard.release());
+    }
+    return LLMAcquireKvCacheSerializer::serialize_reply(status);
+}
+
+Expected<Buffer> LLMServer::handle_check_hef_exists_request(const MemoryView &request)
+{
+    TRY_AS_HRPC_STATUS(auto pair, GenAICheckHefExistsSerializer::deserialize_request(request),
+        GenAICheckHefExistsSerializer);
+    const auto &hef_path = pair.first;
+    const auto &hef_hash = pair.second;
+
+    if (!Filesystem::does_file_exists(hef_path)) {
+        LOGGER__INFO("HEF file '{}' does not exist on device", hef_path);
+        TRY_AS_HRPC_STATUS(auto reply, GenAICheckHefExistsSerializer::serialize_reply(HAILO_SUCCESS, false),
+            GenAICheckHefExistsSerializer);
+        return reply;
+    }
+
+    TRY_AS_HRPC_STATUS(auto local_hef_hash, Hef::hash(hef_path), GenAICheckHefExistsSerializer);
+    if (local_hef_hash != hef_hash) {
+        LOGGER__INFO("HEF file '{}' exists on device, but hash '{}' does not match expected hash '{}'", hef_path, local_hef_hash, hef_hash);
+        TRY_AS_HRPC_STATUS(auto reply, GenAICheckHefExistsSerializer::serialize_reply(HAILO_SUCCESS, false),
+            GenAICheckHefExistsSerializer);
+        return reply;
+    }
+
+    LOGGER__INFO("HEF file '{}' exists on device and hash '{}' matches expected hash '{}'", hef_path, local_hef_hash, hef_hash);
+    TRY_AS_HRPC_STATUS(auto reply, GenAICheckHefExistsSerializer::serialize_reply(HAILO_SUCCESS, true),
+        GenAICheckHefExistsSerializer);
     return reply;
 }
 
@@ -1167,16 +1202,9 @@ hailo_status LLMServer::set_context(const MemoryView &context_buffer)
 
 Expected<std::unique_ptr<LLMServerManager>> LLMServerManager::create(std::shared_ptr<Session> session, std::shared_ptr<VDeviceManager> vdevice_manager)
 {
-    // Check if KV-Cache is already in use
-    CHECK_SUCCESS(vdevice_manager->mark_kv_cache_in_use(), "Failed to mark KV-Cache in use. KV-Cache is already in use by another model!");
+    TRY(auto server, LLMServer::create_unique(session, vdevice_manager));
 
-    auto server = LLMServer::create_unique(session, vdevice_manager);
-    if (server.status() != HAILO_SUCCESS) {
-        vdevice_manager->unmark_kv_cache_in_use();
-    }
-    CHECK_EXPECTED(server);
-
-    auto ptr = std::make_unique<LLMServerManager>(session, std::move(server.value()));
+    auto ptr = std::make_unique<LLMServerManager>(session, std::move(server));
     CHECK_NOT_NULL_AS_EXPECTED(ptr, HAILO_OUT_OF_HOST_MEMORY); // Consider returning different status
 
     return ptr;
@@ -1222,7 +1250,9 @@ LLMServerManager::LLMServerManager(std::shared_ptr<Session> session, std::unique
     m_dispatcher[HailoGenAIActionID::LLM__GET_MAX_CONTEXT_CAPACITY] =
         [&](const MemoryView &request) { return m_server->handle_get_max_context_capacity(request); };
     m_dispatcher[HailoGenAIActionID::GENAI__CHECK_HEF_EXISTS] =
-        [&](const MemoryView &request) { return handle_check_hef_exists_request(request); };
+        [&](const MemoryView &request) { return m_server->handle_check_hef_exists_request(request); };
     m_dispatcher[HailoGenAIActionID::LLM__GENERATOR_RELEASE] =
         [&](const MemoryView &request) { return m_server->handle_generator_release_request(request); };
+    m_dispatcher[HailoGenAIActionID::LLM__ACQUIRE_KV_CACHE] =
+        [&](const MemoryView &request) { return m_server->handle_acquire_kv_cache_request(request); };
 }

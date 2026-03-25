@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -8,21 +8,28 @@
  **/
 
 #include "hailort_server.hpp"
+#include "common/utils.hpp"
 #include "hailo/hailort.h"
+#include "hailo/vdevice.hpp"
+#include "hrpc/connection_context.hpp"
 #include "hrpc/server.hpp"
 #include "hrpc/server_resource_manager.hpp"
-#include "hailo/vdevice.hpp"
 #include "hrpc_protocol/serializer.hpp"
 #include "net_flow/ops/nms_post_process.hpp"
-#include "common/thread_safe_queue.hpp"
-#include "hrpc/connection_context.hpp"
-#include "vdma/pcie_session.hpp"
 
 #include <unordered_map>
 
 using namespace hailort;
 
 #define ASYNC_QUEUE_SIZE_FACTOR (2) // double buffer
+
+#ifndef HAILO_EMULATOR
+constexpr std::chrono::milliseconds WAIT_FOR_VDEVICE_TIMEOUT(std::chrono::seconds(5));
+constexpr std::chrono::milliseconds KV_CACHE_RELEASE_TIMEOUT(std::chrono::seconds(5));
+#else /* ifndef HAILO_EMULATOR */
+constexpr std::chrono::milliseconds WAIT_FOR_VDEVICE_TIMEOUT(std::chrono::seconds(5000));
+constexpr std::chrono::milliseconds KV_CACHE_RELEASE_TIMEOUT(std::chrono::seconds(5000));
+#endif /* ifndef HAILO_EMULATOR */
 
 #define REGISTER_ACTION(_dispatcher, action_id, handler_func) \
     _dispatcher.register_handler(static_cast<uint32_t>(HailoRpcActionID::action_id), \
@@ -51,47 +58,74 @@ struct InferModelInfo
     std::vector<std::string> outputs_names;
 };
 
-Expected<std::unique_ptr<VDevice>> VDeviceManager::create_vdevice(const hailo_vdevice_params_t &params, uint32_t client_id)
+hailo_status VDeviceManager::wait_for_vdevice_ready(uint32_t client_id, std::unique_lock<std::mutex> &lock)
 {
-    static const auto WAIT_FOR_VDEVICE_TIMEOUT = std::chrono::seconds(5);
-    std::unique_ptr<VDevice> vdevice = nullptr;
-    {
-        std::unique_lock<std::mutex> lock(m_vdevice_clients_mutex);
-        auto no_active_clients = (m_active_clients_with_vdevice.size() == 0);
-        auto has_pending_close_clients = (m_pending_close_clients_with_vdevice.size() > 0);
-        auto is_same_vdevice_group = (m_active_vdevice_group_id == params.group_id);
-        auto is_unique_vdevice_group = (params.group_id == std::string(HAILO_UNIQUE_VDEVICE_GROUP_ID));
+    m_requesting_clients_queue.push(client_id);
+    DEFER(m_requesting_clients_queue.pop());
 
-        if ((no_active_clients && has_pending_close_clients && is_same_vdevice_group) || is_unique_vdevice_group) {
-            m_requesting_clients_queue.push(client_id);
-            auto wait_result = m_vdevice_clients_cv.wait_for(lock, WAIT_FOR_VDEVICE_TIMEOUT, [this, client_id] () {
-                return (m_active_clients_with_vdevice.size() == 0) && (m_pending_close_clients_with_vdevice.size() == 0) && (m_requesting_clients_queue.front() == client_id);
-            });
-            m_requesting_clients_queue.pop();
-            CHECK(wait_result, HAILO_DEVICE_IN_USE, "VDevice is in use, timed out waiting for it");
-        }
+    auto check_ready = [&]() {
+        return (m_requesting_clients_queue.front() == client_id) &&
+               (m_active_clients_with_vdevice.size() == 0) &&
+               (m_pending_close_clients_with_vdevice.size() == 0);
+    };
+    auto is_ready = m_vdevice_clients_cv.wait_for(lock, WAIT_FOR_VDEVICE_TIMEOUT, check_ready);
+    CHECK(is_ready, HAILO_TIMEOUT, "Timeout out waiting for VDevice ready");
 
-        auto vdevice_expected = VDevice::create(params);
-        auto vdevice_status = vdevice_expected.status();
-        if (HAILO_OUT_OF_PHYSICAL_DEVICES == vdevice_status) {
-            // This is a small hack to have the same behavior and return code as the standard VDevice
-            vdevice_status = HAILO_DEVICE_IN_USE;
-        }
-        CHECK_SUCCESS(vdevice_status);
-        vdevice = vdevice_expected.release();
-
-        m_active_vdevice_group_id = params.group_id;
-        m_active_clients_with_vdevice.insert(client_id);
-    }
-    m_vdevice_clients_cv.notify_all(); // Notify for other waiting clients to continue
-
-    return vdevice;
+    return HAILO_SUCCESS;
 }
 
-Expected<std::shared_ptr<VDevice>> VDeviceManager::create_shared_vdevice(const hailo_vdevice_params_t &params, uint32_t client_id)
+Expected<VDevicePtr> VDeviceManager::create_vdevice(const hailo_vdevice_params_t &params, uint32_t client_id)
 {
-    TRY(auto vdevice, create_vdevice(params, client_id));
-    return std::shared_ptr<VDevice>(std::move(vdevice));
+    std::unique_lock<std::mutex> lock(m_vdevice_clients_mutex);
+
+    bool is_unique_group = (params.group_id == std::string(HAILO_UNIQUE_VDEVICE_GROUP_ID));
+    bool is_new_group = (m_active_vdevice_group_id != params.group_id);
+
+    if (is_unique_group || is_new_group) {
+        // NOTE: For regular hailort_server (unlike genai) we want
+        // to fail fast if the vdevice is already in use.
+        // TODO HRT-20078: move this into wait_for_vdevice_ready.
+        if (m_active_clients_with_vdevice.size() > 0) {
+                return make_unexpected(HAILO_DEVICE_IN_USE);
+        }
+
+        auto status = wait_for_vdevice_ready(client_id, lock);
+        CHECK_SUCCESS(status);
+    }
+
+    return create_vdevice_internal(params, client_id, lock);
+}
+
+// TODO HRT-20078: Get rid of this.
+// NOTE: GenAI assumes params.group_id will be FORCE_GET_FIRST_AVAILABLE in certain cases. This hidden assumption is
+// error prone, and should be removed as part of HRT-20078.
+Expected<VDevicePtr> VDeviceManager::create_vdevice_for_genai(const hailo_vdevice_params_t &params, uint32_t client_id)
+{
+    std::unique_lock<std::mutex> lock(m_vdevice_clients_mutex);
+
+    bool should_get_first_avail = (params.group_id == std::string(FORCE_GET_FIRST_AVAILABLE));
+    bool is_new_group = (m_active_vdevice_group_id != params.group_id);
+
+    if (!should_get_first_avail && is_new_group) {
+        auto status = wait_for_vdevice_ready(client_id, lock);
+        CHECK_SUCCESS(status);
+    }
+
+    return create_vdevice_internal(params, client_id, lock);
+}
+
+Expected<VDevicePtr> VDeviceManager::create_vdevice_internal(const hailo_vdevice_params_t &params, uint32_t client_id,
+    std::unique_lock<std::mutex> &lock)
+{
+    (void)lock;
+
+    TRY(auto vdevice, VDevice::create_shared(params));
+
+    m_active_vdevice_group_id = params.group_id;
+    m_active_clients_with_vdevice.insert(client_id);
+    m_vdevice_clients_cv.notify_all();
+
+    return vdevice;
 }
 
 void VDeviceManager::mark_vdevice_for_close(uint32_t client_id)
@@ -113,29 +147,19 @@ void VDeviceManager::remove_vdevice(uint32_t client_id)
             m_pending_close_clients_with_vdevice.erase(client_id);
         }
     }
+    release_free_memory();
     m_vdevice_clients_cv.notify_all();
 }
 
-hailo_status VDeviceManager::mark_kv_cache_in_use()
+std::timed_mutex KvCacheFlag::m_mutex;
+Expected<KvCacheGuard> KvCacheFlag::acquire()
 {
-    std::lock_guard<std::mutex> lock(m_kv_cache_mutex);
-    if (m_is_kv_cache_in_use) {
-        LOGGER__ERROR("KV-Cache is already in use!");
-        return HAILO_INVALID_OPERATION;
-    }
+    KvCacheGuard lock(m_mutex, std::defer_lock);
+    auto was_lock_successful = lock.try_lock_for(KV_CACHE_RELEASE_TIMEOUT);
+    CHECK(was_lock_successful, HAILO_INVALID_OPERATION, "KV-Cache is already in use!");
 
     LOGGER__INFO("Marking KV-Cache in use");
-    m_is_kv_cache_in_use = true;
-    return HAILO_SUCCESS;
-}
-
-void VDeviceManager::unmark_kv_cache_in_use()
-{
-    std::lock_guard<std::mutex> lock(m_kv_cache_mutex);
-    if (m_is_kv_cache_in_use) {
-        LOGGER__INFO("Unmarking KV-Cache in use");
-        m_is_kv_cache_in_use = false;
-    }
+    return lock;
 }
 
 void HailoRTServer::cleanup_infer_model_infos(const std::vector<uint32_t> &infer_model_handles)
@@ -175,14 +199,14 @@ hailo_status HailoRTServer::cleanup_client_resources(ClientConnectionPtr client_
     return HAILO_SUCCESS;
 }
 
-Expected<std::unique_ptr<HailoRTServer>> HailoRTServer::create_unique(const std::string &ip)
+Expected<std::unique_ptr<HailoRTServer>> HailoRTServer::create_unique(const std::string &device_id)
 {
-    TRY(auto connection_context, ConnectionContext::create_server_shared(ip));
+    TRY(auto connection_context, ConnectionContext::create_server_shared(device_id));
 
     auto write_mutex = make_shared_nothrow<std::mutex>();
     CHECK_NOT_NULL(write_mutex, HAILO_OUT_OF_HOST_MEMORY);
 
-    bool is_unix_socket = (ip == SERVER_ADDR_USE_UNIX_SOCKET);
+    bool is_unix_socket = (device_id == SERVER_ADDR_USE_UNIX_SOCKET);
     auto res = make_unique_nothrow<HailoRTServer>(connection_context, write_mutex, is_unix_socket);
     CHECK_NOT_NULL(res, HAILO_OUT_OF_HOST_MEMORY);
     return res;
@@ -229,7 +253,7 @@ hailo_status VDeviceCreateInferModelHandler::parse_request(const MemoryView &req
     assert(hef_size <= SIZE_MAX);
     TRY(m_hef_buffer, Buffer::create_shared(static_cast<size_t>(hef_size), BufferStorageParams::create_dma()));
 
-    auto status = client_connection->read_buffer(m_hef_buffer->as_view());
+    auto status = client_connection->read_buffer(m_hef_buffer->as_view(), LONG_RPC_ACTION_TIMEOUT);
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
@@ -402,7 +426,7 @@ hailo_status HailoRTServer::handle_configured_infer_model_destroy(const MemoryVi
         configured_infer_model->shutdown();
         return HAILO_SUCCESS;
     };
-    manager.execute<hailo_status>(configured_infer_model_handle, shutdown_lambda);
+    (void)manager.execute<hailo_status>(configured_infer_model_handle, shutdown_lambda);
     cleanup_cim_buffer_pools({ configured_infer_model_handle });
     (void)manager.release_resource(configured_infer_model_handle, client_connection->client_id());
 
@@ -663,7 +687,7 @@ hailo_status ConfiguredInferModelRunAsyncHandler::parse_request(const MemoryView
                 CHECK(read_size + current_size <= buffer->size(), HAILO_INTERNAL_FAILURE);
 
                 auto status = client_connection->read_buffer(MemoryView(buffer->data() + read_size, current_size));
-                CHECK_SUCCESS(status);
+                CHECK_SUCCESS_WITH_ACCEPTABLE_STATUS(HAILO_COMMUNICATION_CLOSED, status);
 
                 read_size += current_size;
             }
@@ -914,11 +938,13 @@ hailo_status HailoRTServer::handle_device_query_performance_stats(const MemoryVi
 {
     using Serializer = QueryPerformanceStatsSerializer;
 
-    TRY(auto device_handle, Serializer::deserialize_request(request));
+    TRY(auto tuple, Serializer::deserialize_request(request));
+
+    auto [device_handle, sampling_period] = tuple;
 
     auto &manager = ServerResourceManager<Device>::get_instance();
-    auto device_lambda = [] (std::shared_ptr<Device> device) {
-        return device->query_performance_stats();
+    auto device_lambda = [sampling_period] (std::shared_ptr<Device> device) {
+        return device->query_performance_stats(sampling_period);
     };
 
     TRY(auto info, manager.execute<Expected<hailo_performance_stats_t>>(device_handle, device_lambda));
@@ -1148,6 +1174,18 @@ hailo_status HailoRTServer::handle_system_reset(const MemoryView&, ClientConnect
     return HAILO_SUCCESS;
 }
 
+hailo_status HailoRTServer::handle_device_get_current_limit(const MemoryView &request, ClientConnectionPtr, ResponseWriter response_writer)
+{
+    TRY(auto device_handle, GetCurrentLimitSerializer::deserialize_request(request));
+    auto &manager = ServerResourceManager<Device>::get_instance();
+
+    auto device_lambda = [](std::shared_ptr<Device> device) { return device->get_current_limit(); };
+
+    TRY(auto current_limit_mA, manager.execute<Expected<uint32_t>>(device_handle, device_lambda));
+    TRY(auto reply, GetCurrentLimitSerializer::serialize_reply(current_limit_mA));
+    return response_writer.write(HAILO_SUCCESS, std::move(reply));
+}
+
 hailo_status DeviceEchoBufferHandler::parse_request(const MemoryView &request, ClientConnectionPtr client_connection)
 {
     TRY(auto buffer_size, EchoBufferSerializer::deserialize_request(request));
@@ -1213,5 +1251,6 @@ Expected<Dispatcher> HailoRTServer::create_dispatcher()
     REGISTER_ACTION(dispatcher, DEVICE__FETCH_LOGS, handle_device_fetch_logs);
     REGISTER_ACTION_WITH_READS(dispatcher, DEVICE__ECHO_BUFFER, DeviceEchoBufferHandler);
     REGISTER_ACTION(dispatcher, SYSTEM__RESET, handle_system_reset);
+    REGISTER_ACTION(dispatcher, DEVICE__GET_CURRENT_LIMIT, handle_device_get_current_limit);
     return dispatcher;
 }

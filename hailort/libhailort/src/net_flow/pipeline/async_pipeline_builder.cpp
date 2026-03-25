@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -334,7 +334,7 @@ hailo_status AsyncPipelineBuilder::add_output_demux_flow(const std::string &outp
             TRY(auto post_infer_elem, add_post_infer_element(output_format.second, edge_info.nms_info,
                 async_pipeline, edge_info.hw_shape, edge_info.format, edge_info.shape, {edge_info.quant_info}, demux_queue_elem));
 
-            auto post_transform_frame_size = (HailoRTCommon::is_nms(edge_info.format.order)) ?
+            auto post_transform_frame_size = (HailoRTCommon::is_non_chip_nms(edge_info.format.order)) ?
                 HailoRTCommon::get_nms_by_class_host_frame_size(edge_info.nms_info, output_format.second) :
                 HailoRTCommon::get_frame_size(edge_info.shape, output_format.second);
 
@@ -532,7 +532,7 @@ hailo_status AsyncPipelineBuilder::add_nms_flow(std::shared_ptr<AsyncPipeline> a
     CHECK_SUCCESS(nms_op_metadata->validate_format_type(output_format.second));
 
     if(!nms_op_metadata->nms_config().bbox_only){
-        CHECK(HailoRTCommon::is_nms(output_format.second.order), HAILO_INVALID_ARGUMENT,
+        CHECK(HailoRTCommon::is_non_chip_nms(output_format.second.order), HAILO_INVALID_ARGUMENT,
             "NMS output format order must be an NMS format order");
     }
 

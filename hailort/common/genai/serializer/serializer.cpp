@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -340,11 +340,9 @@ Expected<std::vector<int>> LLMGeneratorGenerateSerializer::deserialize_reply(con
     return initial_prefix_tokens;
 }
 
-Expected<Buffer> LLMGeneratorReadSerializer::serialize_request(const std::chrono::milliseconds &timeout,
-    const TextGenerationInput &request)
+Expected<Buffer> LLMGeneratorReadSerializer::serialize_request(const TextGenerationInput &request)
 {
     LLM_Generator_Read_Request llm_generator_read;
-    llm_generator_read.set_timeout_ms(static_cast<uint32_t>(timeout.count()));
 
     auto generation_input_proto = llm_generator_read.mutable_generation_input();
     generation_input_proto->set_initial_prompt(request.initial_prompt);
@@ -362,7 +360,7 @@ Expected<Buffer> LLMGeneratorReadSerializer::serialize_request(const std::chrono
         static_cast<uint32_t>(HailoGenAIActionID::LLM__GENERATOR_READ), "LLM_Generator_Read_Request");
 }
 
-Expected<std::pair<std::chrono::milliseconds, LLMGeneratorReadSerializer::TextGenerationInput>>
+Expected<LLMGeneratorReadSerializer::TextGenerationInput>
     LLMGeneratorReadSerializer::deserialize_request(const MemoryView &serialized_request)
 {
     TRY(auto llm_generator_read, get_deserialized_message<LLM_Generator_Read_Request>(serialized_request,
@@ -379,7 +377,7 @@ Expected<std::pair<std::chrono::milliseconds, LLMGeneratorReadSerializer::TextGe
         input.embeddings.emplace_back(buffer, static_cast<EmbeddingViewWrapper::EmbeddingType>(embedding.type()));
     }
 
-    return std::make_pair(std::chrono::milliseconds(llm_generator_read.timeout_ms()), input);
+    return input;
 }
 
 Expected<Buffer> LLMGeneratorReadSerializer::serialize_reply(hailo_status status, const TextGenerationOutput &output,
@@ -1036,19 +1034,20 @@ Expected<VLMCreateSerializer::ReplyInfo> VLMCreateSerializer::deserialize_reply(
 }
 
 Expected<Buffer> VLMGeneratorGenerateSerializer::serialize_request(uint32_t number_of_standalone_frames,
-    const std::vector<uint32_t> &video_frames_count_per_video)
+    const std::vector<uint32_t> &video_frames_count_per_video, bool raw_embeddings)
 {
     VLM_Generator_Generate_Request vlm_generator_generate;
     vlm_generator_generate.set_number_of_frames(number_of_standalone_frames);
     for (auto count : video_frames_count_per_video) {
         vlm_generator_generate.add_video_frames_count_per_video(count);
     }
+    vlm_generator_generate.set_raw_embeddings(raw_embeddings);
 
     return get_serialized_message<VLM_Generator_Generate_Request>(vlm_generator_generate,
         static_cast<uint32_t>(HailoGenAIActionID::VLM__GENERATOR_GENERATE), "VLM_Generator_Generate_Request");
 }
 
-Expected<std::tuple<uint32_t, std::vector<uint32_t>>> VLMGeneratorGenerateSerializer::deserialize_request(const MemoryView &serialized_request)
+Expected<std::tuple<uint32_t, std::vector<uint32_t>, bool>> VLMGeneratorGenerateSerializer::deserialize_request(const MemoryView &serialized_request)
 {
     TRY(auto vlm_generator_generate, get_deserialized_message<VLM_Generator_Generate_Request>(serialized_request,
         static_cast<uint32_t>(HailoGenAIActionID::VLM__GENERATOR_GENERATE), "VLM_Generator_Generate_Request"));
@@ -1059,7 +1058,8 @@ Expected<std::tuple<uint32_t, std::vector<uint32_t>>> VLMGeneratorGenerateSerial
             video_frames_count_per_video.push_back(vlm_generator_generate.video_frames_count_per_video(i));
         }
     
-        return std::make_tuple(vlm_generator_generate.number_of_frames(), video_frames_count_per_video);
+        return std::make_tuple(vlm_generator_generate.number_of_frames(), video_frames_count_per_video,
+            vlm_generator_generate.raw_embeddings());
 }
 
 Expected<Buffer> VLMGeneratorGenerateSerializer::serialize_reply(hailo_status status)
@@ -1301,6 +1301,39 @@ Expected<std::vector<int>> Speech2TextTokenizeSerializer::deserialize_reply(cons
         tokens.push_back(token);
     }
     return tokens;
+}
+
+Expected<Buffer> LLMAcquireKvCacheSerializer::serialize_request()
+{
+    LLM_Acquire_KV_Cache_Request llm_acquire_kv_cache;
+    return get_serialized_message<LLM_Acquire_KV_Cache_Request>(llm_acquire_kv_cache,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__ACQUIRE_KV_CACHE), "LLM_Acquire_KV_Cache_Request");
+}
+
+hailo_status LLMAcquireKvCacheSerializer::deserialize_request(const MemoryView &serialized_request)
+{
+    TRY(auto llm_acquire_kv_cache, get_deserialized_message<LLM_Acquire_KV_Cache_Request>(serialized_request,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__ACQUIRE_KV_CACHE), "LLM_Acquire_KV_Cache_Request"));
+
+    return HAILO_SUCCESS;
+}
+
+Expected<Buffer> LLMAcquireKvCacheSerializer::serialize_reply(hailo_status status)
+{
+    LLM_Acquire_KV_Cache_Reply llm_acquire_kv_cache;
+    llm_acquire_kv_cache.set_status(status);
+
+    return get_serialized_message<LLM_Acquire_KV_Cache_Reply>(llm_acquire_kv_cache,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__ACQUIRE_KV_CACHE), "LLM_Acquire_KV_Cache_Reply");
+}
+
+hailo_status LLMAcquireKvCacheSerializer::deserialize_reply(const MemoryView &serialized_reply)
+{
+    TRY(auto llm_acquire_kv_cache, get_deserialized_message<LLM_Acquire_KV_Cache_Reply>(serialized_reply,
+        static_cast<uint32_t>(HailoGenAIActionID::LLM__ACQUIRE_KV_CACHE), "LLM_Acquire_KV_Cache_Reply"));
+
+    CHECK(llm_acquire_kv_cache.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to de-serialize 'LLM_Acquire_KV_Cache_Reply'");
+    return static_cast<hailo_status>(llm_acquire_kv_cache.status());
 }
 
 } /* namespace genai */

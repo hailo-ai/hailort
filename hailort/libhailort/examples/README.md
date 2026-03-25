@@ -48,7 +48,9 @@ The following examples below demonstrate the HailoRT API:
   - `multi_process_example` - Demonstrates how to infer in multiple processes using the HailoRT C++ API.
 
 - GenAI examples:
-  - `chat_example` - Demonstrates LLM-based chat application using HailoRT C++ API.
+  - `chat_example` - Demonstrates LLM-based chat application using HailoRT C++ API, with structured prompts.
+  - `chat_raw_prompt_example` - Demonstrates LLM-based chat application using HailoRT C++ API, with raw prompts. Tailored for the Qwen2.5-1.5B-Instruct model
+  Demonstrates a chat application using the HailoRT C++ LLM API with raw prompts, tailored for the Qwen2.5‑1.5B‑Instruct model.
   - `vlm_example` - Demonstrates VLM usage in a chat application using HailoRT C++ API.
   - `speech2text_example` - Demonstrates Speech2Text usage for audio transcription using HailoRT C++ API.
 

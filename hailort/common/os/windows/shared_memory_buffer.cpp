@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -12,7 +12,9 @@
 #include "common/utils.hpp"
 #include "hailo/hailort.h"
 
-#include <windows.h>
+#include <memoryapi.h>
+#include <winbase.h>
+#include <errhandlingapi.h>
 
 namespace hailort
 {

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -65,6 +65,7 @@ public:
 
     static std::string get_log_path(const std::string &path_env_var);
     static std::string get_main_log_path();
+    static std::string create_main_log_dir();
     static std::shared_ptr<spdlog::sinks::sink> create_file_sink(const std::string &dir_path, const std::string &filename, bool rotate);
     static Expected<spdlog::level::level_enum> get_console_logger_level_from_string(const std::string &user_console_logger_level)
     {

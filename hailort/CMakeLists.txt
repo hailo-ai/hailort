@@ -14,6 +14,49 @@ option(HAILO_BUILD_HX18 "Build HX18" OFF)
 option(ENABLE_PERFETTO "Build with Perfetto tracing support" OFF)
 option(HAILO_BUILD_HAILORT_SERVER "Build Hailort Server" OFF)
 option(HAILO_BUILD_GENAI_SERVER "Build GenAI Server" OFF)
+option(HAILO_BUILD_USB "Build USB" OFF)
+option(HAILO_BUILD_FUNCTIONFS_LISTENER "Build FunctionFS listener" OFF)
+option(HAILO_BUILD_OLLAMA "Build Hailo-Ollama GenAI Model Server" OFF)
+
+# Ensure Windows SDK knows the target architecture to avoid "No Target Architecture" errors.
+if (WIN32)
+    if (CMAKE_SIZEOF_VOID_P EQUAL 8)
+        add_compile_definitions(_AMD64_=1)
+    else()
+        add_compile_definitions(_X86_=1)
+    endif()
+endif()
+
+# On Windows with MSVC, CMake's FindOpenSSL searches lib/VC but the Shining Light
+# OpenSSL installer places libraries under lib/VC/<arch>/<runtime> (e.g. lib/VC/x64/MD).
+# Pre-seed FindOpenSSL's internal find_library cache variables so they resolve correctly.
+if(WIN32 AND MSVC AND HAILO_BUILD_OLLAMA)
+    # Default OPENSSL_ROOT_DIR to the standard Shining Light install location
+    if(NOT OPENSSL_ROOT_DIR)
+        if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+            set(OPENSSL_ROOT_DIR "C:/Program Files/OpenSSL-Win64")
+        else()
+            set(OPENSSL_ROOT_DIR "C:/Program Files/OpenSSL")
+        endif()
+    endif()
+
+    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+        set(_openssl_arch "x64")
+    else()
+        set(_openssl_arch "x86")
+    endif()
+    set(_openssl_vc_lib_dir "${OPENSSL_ROOT_DIR}/lib/VC/${_openssl_arch}/MD")
+
+    if(NOT LIB_EAY_RELEASE AND EXISTS "${_openssl_vc_lib_dir}/libcrypto.lib")
+        set(LIB_EAY_RELEASE "${_openssl_vc_lib_dir}/libcrypto.lib" CACHE FILEPATH "")
+    endif()
+    if(NOT SSL_EAY_RELEASE AND EXISTS "${_openssl_vc_lib_dir}/libssl.lib")
+        set(SSL_EAY_RELEASE "${_openssl_vc_lib_dir}/libssl.lib" CACHE FILEPATH "")
+    endif()
+
+    unset(_openssl_vc_lib_dir)
+    unset(_openssl_arch)
+endif()
 
 if (HAILO_COMPILE_WARNING_AS_ERROR)
     if(WIN32)
@@ -33,7 +76,7 @@ endif()
 
 # Set firmware version
 add_definitions( -DFIRMWARE_VERSION_MAJOR=5 )
-add_definitions( -DFIRMWARE_VERSION_MINOR=2 )
+add_definitions( -DFIRMWARE_VERSION_MINOR=3 )
 add_definitions( -DFIRMWARE_VERSION_REVISION=0 )
 
 # TODO: temporary hack to support offline builds. Remove HAILO_OFFLINE_COMPILATION and use FETCHCONTENT_FULLY_DISCONNECTED
@@ -62,6 +105,7 @@ add_subdirectory(common)
 add_subdirectory(hrpc)
 add_subdirectory(hrpc_protocol)
 add_subdirectory(libhailort)
+add_subdirectory(libhailopp)
 add_subdirectory(hailortcli)
 
 if(HAILO_BUILD_HAILORT_SERVER OR HAILO_BUILD_GENAI_SERVER)

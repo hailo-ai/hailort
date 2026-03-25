@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the LGPL 2.1 license (https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt)
  *
  * This library is free software; you can redistribute it and/or
@@ -125,7 +125,7 @@ void HailoRecvImpl::set_property(GObject *object, guint property_id, const GValu
     GST_DEBUG_OBJECT(m_element, "set_property");
 
     if ((object == nullptr) || (value == nullptr) || (pspec == nullptr)) {
-        g_error("set_property got null parameter!");
+        GST_ERROR("set_property got null parameter!");
         return;
     }
 
@@ -150,7 +150,7 @@ void HailoRecvImpl::get_property(GObject *object, guint property_id, GValue *val
     GST_DEBUG_OBJECT(m_element, "get_property");
 
     if ((object == nullptr) || (value == nullptr) || (pspec == nullptr)) {
-        g_error("get_property got null parameter!");
+        GST_ERROR("get_property got null parameter!");
         return;
     }
 
@@ -190,7 +190,7 @@ GstFlowReturn HailoRecvImpl::handle_frame(GstVideoFilter */*filter*/, GstVideoFr
             return GST_FLOW_OK;
         case BUFFER_FLAG_NONE:
         default:
-            g_error("Unknown metadata type = %d", meta->flag);
+            GST_ERROR("Unknown metadata type = %d", meta->flag);
             break;
         }
     }
@@ -275,7 +275,7 @@ hailo_status HailoRecvImpl::set_output_vstreams(std::vector<OutputVStream> &&out
         m_props.m_outputs_max_pool_size.get());
     
     if ((0 != m_props.m_outputs_max_pool_size.get()) && (m_props.m_outputs_max_pool_size.get() < batch_size)) {
-        g_warning("outputs-max-pool-size is smaller than the batch size! Overall performance might be affected!");
+        GST_WARNING("outputs-max-pool-size is smaller than the batch size! Overall performance might be affected!");
     }
 
     m_output_vstreams = std::move(output_vstreams);
@@ -376,7 +376,7 @@ static GstFlowReturn gst_hailorecv_buffer_pool_acquire_callback(GstBufferPool *p
         gboolean result = gst_buffer_pool_config_get_params(pool_config, NULL, NULL, NULL, &max_buffers);
         gst_structure_free(pool_config);
         if (!result) {
-            g_error("Failed getting config params from buffer pool!");
+            GST_ERROR("Failed getting config params from buffer pool!");
             return GST_FLOW_ERROR;
         }
 

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -64,6 +64,7 @@ extern "C" {
 #define HAILO_SOC_ID_LENGTH (32)
 #define HAILO_ETH_MAC_LENGTH (6)
 #define HAILO_UNIT_LEVEL_TRACKING_BYTES_LENGTH (12)
+#define HAILO_CHIP_SERIAL_NUMBER_BYTES_LENGTH (12)
 #define HAILO_SOC_PM_VALUES_BYTES_LENGTH (24)
 #define HAILO_GPIO_MASK_VALUES_LENGTH (16)
 #define HAILO_MAX_TEMPERATURE_THROTTLING_LEVELS_NUMBER (4)
@@ -82,6 +83,11 @@ extern "C" {
 #define INVALID_QUANT_INFO {0.0f, 0.0f, 0.0f, 0.0f}
 
 #define HAILO_RANDOM_SEED (UINT32_MAX)
+
+#define HAILO_CURRENT_LIMIT_NA (0)
+#define HAILO_CURRENT_LIMIT_900_MA (900)
+#define HAILO_CURRENT_LIMIT_1500_MA (1500)
+#define HAILO_CURRENT_LIMIT_3000_MA (3000)
 
 typedef float float32_t;
 typedef double float64_t;
@@ -170,7 +176,7 @@ typedef uint16_t nms_bbox_counter_t;
     HAILO_STATUS__X(78, HAILO_INVALID_SERVICE_VERSION                 /*!< Invalid service version */)\
     HAILO_STATUS__X(79, HAILO_NOT_SUPPORTED                           /*!< Not supported operation */)\
     HAILO_STATUS__X(80, HAILO_NMS_BURST_INVALID_DATA                  /*!< Invalid data in NMS burst */)\
-    HAILO_STATUS__X(81, HAILO_OUT_OF_HOST_CMA_MEMORY                  /*!< Cannot allocate more CMA memory at host */)\
+    HAILO_STATUS__X(81, HAILO_RESOURCE_EXHAUSTED                      /*!< This resources was exhausted */)\
     HAILO_STATUS__X(82, HAILO_QUEUE_IS_FULL                           /*!< Cannot push more items into the queue */)\
     HAILO_STATUS__X(83, HAILO_DMA_MAPPING_ALREADY_EXISTS              /*!< DMA mapping already exists */)\
     HAILO_STATUS__X(84, HAILO_CANT_MEET_BUFFER_REQUIREMENTS           /*!< can't meet buffer requirements */)\
@@ -187,6 +193,7 @@ typedef uint16_t nms_bbox_counter_t;
     HAILO_STATUS__X(95, HAILO_OPERATION_ABORTED                       /*!< Operation was aborted */)\
     HAILO_STATUS__X(96, HAILO_DEVICE_NOT_CONNECTED                    /*!< Device is not connected */)\
     HAILO_STATUS__X(97, HAILO_DEVICE_TEMPORARILY_UNAVAILABLE          /*!< Device is temporarily unavailable, try again later */)\
+    HAILO_STATUS__X(98, HAILO_LIBUSB_FAILURE                          /*!< libusb operation failed */)\
 
 typedef enum {
 #define HAILO_STATUS__X(value, name) name = value,
@@ -374,6 +381,12 @@ typedef struct {
     uint32_t func;
 } hailo_pcie_device_info_t;
 
+/** USB device information */
+typedef struct {
+    uint8_t bus;
+    uint8_t device_address;
+} hailo_usb_device_info_t;
+
 /** Hailo device ID string - BDF for PCIe devices, IP address for Ethernet devices. **/
 typedef struct {
     char id[HAILO_MAX_DEVICE_ID_LENGTH];
@@ -384,6 +397,7 @@ typedef enum {
     HAILO_DEVICE_TYPE_PCIE,
     HAILO_DEVICE_TYPE_ETH,
     HAILO_DEVICE_TYPE_INTEGRATED,
+    HAILO_DEVICE_TYPE_USB,
 
     /** Max enum value to maintain ABI Integrity */
     HAILO_DEVICE_TYPE_MAX_ENUM = HAILO_MAX_ENUM
@@ -524,6 +538,8 @@ typedef struct {
     uint8_t soc_pm_values[HAILO_SOC_PM_VALUES_BYTES_LENGTH];
     /** Hailo device GPIO mask values */
     uint16_t gpio_mask;
+    /** Hailo device chip serial number */
+    uint8_t chip_serial_number[HAILO_CHIP_SERIAL_NUMBER_BYTES_LENGTH];
 } hailo_extended_device_information_t;
 
 /** Endianness (byte order) */
@@ -1999,30 +2015,6 @@ HAILORTAPI hailo_status hailo_get_chip_temperature(hailo_device device, hailo_ch
 HAILORTAPI hailo_status hailo_reset_device(hailo_device device, hailo_reset_device_mode_t mode);
 
 /**
- * Updates firmware to device flash.
- * 
- * @param[in]  device                 A ::hailo_device object.
- * @param[in]  firmware_buffer        A pointer to a buffer that contains the firmware to be updated on the @a device.
- * @param[in]  firmware_buffer_size   The size in bytes of the buffer pointed by @a firmware_buffer.
- * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
- * @note Check ::hailo_extended_device_information_t.boot_source returned from ::hailo_get_extended_device_information
- *       to verify if the fw is booted from flash.
- */
-HAILORTAPI hailo_status hailo_update_firmware(hailo_device device, void *firmware_buffer, uint32_t firmware_buffer_size);
-
-/**
- * Updates second stage to device flash.
- * 
- * @param[in]  device                 A ::hailo_device object.
- * @param[in]  second_stage_buffer        A pointer to a buffer that contains the second_stage to be updated on the @a device.
- * @param[in]  second_stage_buffer_size   The size in bytes of the buffer pointed by @a second_stage_buffer.
- * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
- * @note Check ::hailo_extended_device_information_t.boot_source returned from ::hailo_get_extended_device_information
- *       to verify if the fw is booted from flash.
- */
-HAILORTAPI hailo_status hailo_update_second_stage(hailo_device device, void *second_stage_buffer, uint32_t second_stage_buffer_size);
-
-/**
  * Sets a callback to be called when a notification with ID @a notification_id will be received
  *
  * @param[in] device                A ::hailo_device to register the callback to.
@@ -2044,34 +2036,6 @@ HAILORTAPI hailo_status hailo_set_notification_callback(hailo_device device,
  */
 HAILORTAPI hailo_status hailo_remove_notification_callback(hailo_device device,
     hailo_notification_id_t notification_id);
-
-/**
- * Reset the sensor that is related to the section index config.
- *
- * @param[in] device                A ::hailo_device object.
- * @param[in] section_index         Flash section index to load config from. [0-6]
- * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
- */
-HAILORTAPI hailo_status hailo_reset_sensor(hailo_device device, uint8_t section_index);
-
-/**
- * Set the I2C bus to which the sensor of the specified type is connected.
- *
- * @param[in] device                A ::hailo_device object.
- * @param[in] sensor_type           The sensor type.
- * @param[in] bus_index             The I2C bus index of the sensor.
- * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
- */
-HAILORTAPI hailo_status hailo_set_sensor_i2c_bus_index(hailo_device device, hailo_sensor_types_t sensor_type, uint8_t bus_index);
-
-/**
- * Load the configuration with I2C in the section index.
- *
- * @param[in] device                A ::hailo_device object.
- * @param[in] section_index         Flash section index to load config from. [0-6]
- * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
- */
-HAILORTAPI hailo_status hailo_load_and_start_sensor(hailo_device device, uint8_t section_index);
 
 /**
  *  Read data from an I2C slave over a hailo device.
@@ -2098,50 +2062,6 @@ HAILORTAPI hailo_status hailo_i2c_read(hailo_device device, const hailo_i2c_slav
 HAILORTAPI hailo_status hailo_i2c_write(hailo_device device, const hailo_i2c_slave_config_t *slave_config, uint32_t register_address, const uint8_t *data, uint32_t length);
 
 /**
- * Dump config of given section index into a csv file.
- *
- * @param[in] device                A ::hailo_device object.
- * @param[in] section_index         Flash section index to load config from. [0-7]
- * @param[in] config_file_path      File path to dump section configuration into.
- * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
- */
-HAILORTAPI hailo_status hailo_dump_sensor_config(hailo_device device, uint8_t section_index, const char *config_file_path);
-
-/**
- * Store sensor configuration to Hailo chip flash memory.
- *
- * @param[in] device                A ::hailo_device object.
- * @param[in] section_index         Flash section index to write to. [0-6]
- * @param[in] sensor_type           Sensor type.
- * @param[in] reset_config_size     Size of reset configuration.
- * @param[in] config_height         Configuration resolution height.
- * @param[in] config_width          Configuration resolution width.
- * @param[in] config_fps            Configuration FPS.
- * @param[in] config_file_path      Sensor configuration file path.
- * @param[in] config_name           Sensor configuration name.
- * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
- */
-HAILORTAPI hailo_status hailo_store_sensor_config(hailo_device device, uint32_t section_index,
-    hailo_sensor_types_t sensor_type, uint32_t reset_config_size, uint16_t config_height, uint16_t config_width,
-    uint16_t config_fps, const char *config_file_path, const char *config_name);
-
-/**
- * Store sensor ISP configuration to Hailo chip flash memory.
- *
- * @param[in] device                            A ::hailo_device object.
- * @param[in] reset_config_size                 Size of reset configuration.
- * @param[in] config_height                     Configuration resolution height.
- * @param[in] config_width                      Configuration resolution width.
- * @param[in] config_fps                        Configuration FPS.
- * @param[in] isp_static_config_file_path       ISP static configuration file path.
- * @param[in] isp_runtime_config_file_path      ISP runtime configuration file path.
- * @param[in] config_name                       Sensor configuration name.
- * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
- */
-HAILORTAPI hailo_status hailo_store_isp_config(hailo_device device, uint32_t reset_config_size, uint16_t config_height, uint16_t config_width,
-    uint16_t config_fps, const char *isp_static_config_file_path, const char *isp_runtime_config_file_path, const char *config_name);
-
-/**
  *  Test chip memories using smart BIST mechanism.
  * 
  * @param[in]     device - A ::hailo_device object.
@@ -2166,7 +2086,7 @@ HAILORTAPI hailo_status hailo_init_vdevice_params(hailo_vdevice_params_t *params
 /**
  * Creates a vdevice.
  * 
- * @param[in]  params        A @a hailo_vdevice_params_t (may be NULL). Can be initialzed to default values using ::hailo_init_vdevice_params.
+ * @param[in]  params        A @a hailo_vdevice_params_t (may be NULL). Can be initialized to default values using ::hailo_init_vdevice_params.
  * @param[out] vdevice       A pointer to a ::hailo_vdevice that receives the allocated vdevice.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns an ::hailo_status error.
  * @note To release a vdevice, call the ::hailo_release_vdevice function with the returned ::hailo_vdevice.
@@ -2178,7 +2098,7 @@ HAILORTAPI hailo_status hailo_create_vdevice(hailo_vdevice_params_t *params, hai
  *
  * @param[in]  vdevice                     A ::hailo_vdevice object to be configured.
  * @param[in]  hef                         A ::hailo_hef object to configure the @a vdevice by.
- * @param[in]  params                      A @a hailo_configure_params_t (may be NULL). Can be initialzed to default values using ::hailo_init_configure_params_by_vdevice.
+ * @param[in]  params                      A @a hailo_configure_params_t (may be NULL). Can be initialized to default values using ::hailo_init_configure_params_by_vdevice.
  * @param[out] network_groups              Array of network_groups that were loaded from the HEF file.
  * @param[inout] number_of_network_groups  As input - the size of network_groups array. As output - the number of network_groups loaded.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
@@ -2532,7 +2452,7 @@ HAILORTAPI hailo_status hailo_init_configure_network_group_params(hailo_hef hef,
  *
  * @param[in]  device                      A ::hailo_device object to be configured.
  * @param[in]  hef                         A ::hailo_hef object to configure the @a device by.
- * @param[in]  params                      A @a hailo_configure_params_t (may be NULL). Can be initialzed to default values using ::hailo_init_configure_params_by_device.
+ * @param[in]  params                      A @a hailo_configure_params_t (may be NULL). Can be initialized to default values using ::hailo_init_configure_params_by_device.
  * @param[out] network_groups              Array of network_groups that were loaded from the HEF file.
  * @param[inout] number_of_network_groups  As input - the size of network_groups array. As output - the number of network_groups loaded.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
@@ -2714,7 +2634,7 @@ HAILORTAPI hailo_status hailo_set_scheduler_timeout(hailo_configured_network_gro
  * @note Using this function is only allowed when scheduling_algorithm is not ::HAILO_SCHEDULING_ALGORITHM_NONE.
  * @note The default threshold is 1, which means HailoRT will apply an automatic heuristic to choose the threshold.
  * @note Currently, setting the threshold for a specific network is not supported.
- * @note The threshold may be ignored to prevent idle time from the device.
+ * @note The threshold may be ignored to prevent the device from becoming idle.
  */
 HAILORTAPI hailo_status hailo_set_scheduler_threshold(hailo_configured_network_group configured_network_group,
     uint32_t threshold, const char *network_name);
@@ -3356,7 +3276,7 @@ HAILORTAPI hailo_status hailo_release_output_demuxer(hailo_output_demuxer demuxe
  * 
  * @param[in]     demuxer            A ::hailo_output_demuxer object used for the demuxing.
  * @param[in]     src                A pointer to a buffer to be demultiplexed.
- * @param[in]     src_size           The number of bytes to demultiplexed. This number must be equal to the
+ * @param[in]     src_size           The number of bytes to demultiplex. This number must be equal to the
  *                                   hw_frame_size, and less than or equal to the size of @a src buffer.
  * @param[in,out] raw_buffers        A pointer to an array of ::hailo_stream_raw_buffer_t that receives the
  *                                   demultiplexed data read from the @a stream.
@@ -3373,7 +3293,7 @@ HAILORTAPI hailo_status hailo_demux_raw_frame_by_output_demuxer(hailo_output_dem
  *
  * @param[in]     demuxer              A ::hailo_output_demuxer object used for the demuxing.
  * @param[in]     src                  A pointer to a buffer to be demultiplexed.
- * @param[in]     src_size             The number of bytes to demultiplexed. This number must be equal to the
+ * @param[in]     src_size             The number of bytes to demultiplex. This number must be equal to the
  *                                     hw_frame_size, and less than or equal to the size of @a src buffer.
  * @param[in,out] raw_buffers_by_name  A pointer to an array of ::hailo_stream_raw_buffer_by_name_t that receives the
  *                                     demultiplexed data read from the @a stream. hailo_stream_raw_buffer_by_name_t::name should
@@ -3641,7 +3561,7 @@ HAILORTAPI hailo_status hailo_get_vstream_frame_size(hailo_vstream_info_t *vstre
 HAILORTAPI hailo_status hailo_vstream_write_raw_buffer(hailo_input_vstream input_vstream, const void *buffer, size_t buffer_size);
 
 /**
- * Writes thte buffer to hailo device via input virtual stream @a input_vstream.
+ * Writes the buffer to hailo device via input virtual stream @a input_vstream.
  *
  * @param[in] input_vstream    A ::hailo_input_vstream object.
  * @param[in] buffer           A pointer to the buffer containing

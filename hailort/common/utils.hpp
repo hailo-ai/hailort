@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -12,6 +12,7 @@
 #ifndef HAILO_UTILS_H_
 #define HAILO_UTILS_H_
 
+#include "utils.h"
 #include "hailo/hailort.h"
 #include "hailo/expected.hpp"
 #include "hailo/buffer.hpp"
@@ -39,6 +40,9 @@
 #include <iostream>
 #endif
 
+#if defined(__linux__) && !defined(__ANDROID__)
+#include <malloc.h>
+#endif
 
 namespace hailort
 {
@@ -253,6 +257,45 @@ inline hailo_status get_status(const Expected<T> &exp)
 #define _CHECK_EXPECTED _CHECK_SUCCESS
 #define CHECK_EXPECTED(obj, ...) _CHECK_EXPECTED(obj, ISEMPTY(__VA_ARGS__), "" __VA_ARGS__)
 #define CHECK_EXPECTED_AS_STATUS CHECK_EXPECTED
+
+// Variant of CHECK_SUCCESS that silently returns on device-unreachable statuses (no error log).
+// For all other failures, behaves exactly like CHECK_SUCCESS (logs error and returns).
+#define CHECK_SUCCESS_ACCEPT_DISCONNECT(expr, ...)                                          \
+    do {                                                                                    \
+        const auto &__check_disconnect_status = get_status(expr);                           \
+        if (is_device_unreachable(__check_disconnect_status)) {                             \
+            return make_unexpected(__check_disconnect_status);                              \
+        }                                                                                   \
+        _CHECK_SUCCESS(__check_disconnect_status, ISEMPTY(__VA_ARGS__), "" __VA_ARGS__);    \
+    } while(0)
+
+// Like CHECK_SUCCESS_ACCEPT_DISCONNECT but for Expected — unwraps the value on success.
+// On device-unreachable statuses, silently returns make_unexpected(status).
+// On other failures, logs an error and returns make_unexpected(status).
+#define _TRY_WITH_ACCEPTABLE_DISCONNECT(expected_var_name, var_decl, expr, ...) \
+    auto expected_var_name = (expr); \
+    CHECK_SUCCESS_ACCEPT_DISCONNECT(expected_var_name, __VA_ARGS__); \
+    var_decl = expected_var_name.release()
+
+#define TRY_WITH_ACCEPTABLE_DISCONNECT(var_decl, expr, ...) \
+    _TRY_WITH_ACCEPTABLE_DISCONNECT(_HAILO_CONCAT(_expected_disconnect, __COUNTER__), var_decl, expr, __VA_ARGS__)
+
+// Destructor helper: checks an Expected or hailo_status, and if failed:
+//   - Device unreachable: logs INFO and returns (void)
+//   - Otherwise: logs CRITICAL with the provided format string and returns (void)
+#define DTOR_LOG_ON_FAILURE(expr, ...)                                                  \
+    do {                                                                                \
+        const auto &__dtor_log_status = get_status(expr);                               \
+        if (HAILO_SUCCESS != __dtor_log_status) {                                       \
+            if (is_device_unreachable(__dtor_log_status)) {                             \
+                LOGGER__INFO("Operation skipped, device is not reachable (status {})",  \
+                    __dtor_log_status);                                                 \
+            } else {                                                                    \
+                LOGGER__ERROR("" __VA_ARGS__, __dtor_log_status);                       \
+            }                                                                           \
+            return;                                                                     \
+        }                                                                               \
+    } while(0)
 
 // Define macro CHECK_IN_DEBUG - that checks cond in debug with CHECK macro but in release does nothing and will get optimized out
 #ifdef NDEBUG
@@ -502,6 +545,28 @@ Expected<hailo_format_type_t> get_hailo_format_type()
     return make_unexpected(HAILO_NOT_FOUND);
 }
 
+// DEFER is used to call a cleanup function when the scope is exited.
+// Example usages:
+//
+// auto file = open_file("file.txt");
+// DEFER(close_file(file));
+//
+// auto resource = acquire_resource();
+// DEFER_IF({ release_resource(resource); LOG("Resource released!") }, resource != nullptr);
+//
+// Note that DEFERs will be called in LIFO order, and caputre all of their used variables by reference.
+
+#define __DEFER(var, closure, condition) auto var = defer([&]() { if (condition) { closure; } })
+
+#define DEFER_IF(closure, condition) __DEFER(_HAILO_CONCAT(__defer_guard, __COUNTER__), closure, condition)
+#define DEFER(closure) DEFER_IF(closure, true)
+
+template<class F>
+auto defer(F f) noexcept(noexcept(F(std::move(f)))) {
+    auto x = [f = std::move(f)](void*){ f(); };
+    return std::unique_ptr<void, decltype(x)>((void*)1, std::move(x));
+}
+
 class CRC32 {
 public:
     CRC32() {
@@ -612,6 +677,8 @@ class StringUtils final
 public:
     StringUtils() = delete;
 
+    static constexpr const char* WHITESPACE_CHARS = " \t\n\r";
+
     static Expected<int32_t> to_int32(const std::string &str, int base);
     static Expected<uint8_t> to_uint8(const std::string &str, int base);
     static Expected<uint32_t> to_uint32(const std::string &str, int base);
@@ -622,6 +689,27 @@ public:
         std::transform(lower_str.begin(), lower_str.end(), lower_str.begin(),
             [](auto ch) { return static_cast<char>(::tolower(ch)); });
         return lower_str;
+    }
+
+    static std::string trim(const std::string &str)
+    {
+        if (str.empty()) {
+            return str;
+        }
+        
+        auto trimmed = str;
+        // Trim leading whitespace
+        auto start = trimmed.find_first_not_of(WHITESPACE_CHARS);
+        if (std::string::npos == start) {
+            return "";
+        }
+        trimmed.erase(0, start);
+        
+        // Trim trailing whitespace
+        auto end = trimmed.find_last_not_of(WHITESPACE_CHARS);
+        trimmed.erase(end + 1);
+        
+        return trimmed;
     }
 
     static std::string to_hex_string(const uint8_t *array, size_t size, bool uppercase, const std::string &delimiter="");
@@ -711,6 +799,28 @@ private:
     std::chrono::milliseconds m_total_timeout;
 };
 
+/**
+ * @brief Releases freed memory back to the operating system.
+ * 
+ * On Linux systems, glibc may hold onto freed memory in its heap cache rather than
+ * immediately returning it to the OS. This function forces the allocator to release
+ * that cached memory back to the system, which can help prevent out-of-memory
+ * conditions in long-running processes.
+ * 
+ * This should be called after freeing large amounts of memory, such as:
+ * - Destroying large objects or resources
+ * - Clearing caches
+ * - Closing connections or sessions that held significant memory
+ * 
+ * @note On non-Linux platforms or Android, this function is a no-op.
+ */
+static inline void release_free_memory()
+{
+#if defined(__linux__) && !defined(__ANDROID__)
+    (void)malloc_trim(0);
+#endif
+}
+
 #ifdef __unix__
 // RAII helper used to block SIGINT/SIGTERM in child threads
 class SigwaitThreadCreationContext
@@ -761,6 +871,13 @@ private:
     bool m_was_ctor_successful{false};
 };
 #endif
+
+/// Returns true if the status indicates the device is unreachable (physically disconnected
+/// or communication channel closed). Used to suppress noisy error logs in cleanup paths.
+inline bool is_device_unreachable(hailo_status status)
+{
+    return (HAILO_DEVICE_NOT_CONNECTED == status) || (HAILO_COMMUNICATION_CLOSED == status);
+}
 
 } /* namespace hailort */
 

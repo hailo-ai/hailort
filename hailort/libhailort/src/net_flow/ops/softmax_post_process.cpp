@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -44,11 +44,11 @@ hailo_status SoftmaxPostProcessOp::softmax(float32_t *src, float32_t *dst, size_
 
     src_eigen = src_eigen.array().exp(); // Compute exponentials in place
 
-    assert(!src_eigen.hasNaN()); // Checks if any element in the array is NaN (Not a Number)
+    CHECK(!src_eigen.hasNaN(), HAILO_INVALID_ARGUMENT); // Checks if any element in the array is NaN (Not a Number)
 
     float sum_exp = src_eigen.sum(); // Compute the sum of exponentials
 
-    assert(0.0f != sum_exp); // Checks for division by zero
+    CHECK(0.0f != sum_exp, HAILO_INVALID_OPERATION); // Checks for division by zero
     dst_eigen = src_eigen / sum_exp; // Perform softmax operation
 
     return HAILO_SUCCESS;
@@ -131,11 +131,12 @@ hailo_status SoftmaxPostProcessOp::execute(const std::map<std::string, MemoryVie
     std::map<std::string, MemoryView> &outputs)
 {
     auto &input_name = inputs.begin()->first;
+    CHECK(contains(m_op_metadata->inputs_metadata(), input_name), HAILO_INVALID_ARGUMENT);
     auto &output_name = outputs.begin()->first;
-    assert(contains(m_op_metadata->inputs_metadata(), input_name));
-    auto &input_metadata = m_op_metadata->inputs_metadata().at(input_name);
-    assert(contains(m_op_metadata->outputs_metadata(), output_name));
+    CHECK(contains(m_op_metadata->outputs_metadata(), output_name), HAILO_INVALID_ARGUMENT);
+
     auto &output_metadata = m_op_metadata->outputs_metadata().at(output_name);
+    auto &input_metadata = m_op_metadata->inputs_metadata().at(input_name);
 
     uint8_t format_index = UINT8_MAX;
     switch (input_metadata.format.order) {
@@ -173,8 +174,8 @@ std::string SoftmaxOpMetadata::get_op_description()
 
 hailo_status SoftmaxOpMetadata::validate_params()
 {
-    assert(m_inputs_metadata.size() == hailort::net_flow::SOFTMAX_NUMBER_OF_SRCS);
-    assert(m_outputs_metadata.size() == hailort::net_flow::SOFTMAX_NUMBER_OF_DSTS);
+    CHECK(m_inputs_metadata.size() == hailort::net_flow::SOFTMAX_NUMBER_OF_SRCS, HAILO_INVALID_ARGUMENT);
+    CHECK(m_outputs_metadata.size() == hailort::net_flow::SOFTMAX_NUMBER_OF_DSTS, HAILO_INVALID_ARGUMENT);
 
     auto &input_metadata = m_inputs_metadata.begin()->second;
     auto &output_metadata = m_outputs_metadata.begin()->second;
@@ -241,7 +242,7 @@ Expected<hailo_vstream_info_t> SoftmaxOpMetadata::get_output_vstream_info()
     vstream_info.format.type = m_outputs_metadata.begin()->second.format.type;
     vstream_info.format.flags = HAILO_FORMAT_FLAGS_NONE;
 
-    assert(m_inputs_metadata.size() == 1);
+    CHECK(m_inputs_metadata.size() == 1, HAILO_INVALID_OPERATION);
     vstream_info.format = SoftmaxOpMetadata::expand_output_format_autos(vstream_info.format, m_inputs_metadata.begin()->second.format);
     vstream_info.shape = m_outputs_metadata.begin()->second.shape;
 

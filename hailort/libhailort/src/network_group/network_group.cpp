@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -352,6 +352,13 @@ hailo_status ConfiguredNetworkGroupBase::set_nms_max_accumulated_mask_size(const
         "Failed to `set_nms_max_accumulated_mask_size` for `{}`. Op's metadata is not YOLOv5-Seg metadata", edge_name);
 
     nms_metadata->yolov5seg_config().max_accumulated_mask_size = max_accumulated_mask_size;
+    return HAILO_SUCCESS;
+}
+
+hailo_status ConfiguredNetworkGroupBase::set_nms_classes_filter_mask(const std::string &edge_name, const std::vector<bool> &classes_filter_mask)
+{
+    TRY(auto nms_op_metadata, get_nms_meta_data(edge_name));
+    nms_op_metadata->nms_config().classes_filter_mask = classes_filter_mask;
     return HAILO_SUCCESS;
 }
 

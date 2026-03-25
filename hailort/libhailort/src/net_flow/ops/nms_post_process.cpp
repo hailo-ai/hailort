@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -12,10 +12,19 @@
 #include "net_flow/ops/nms_post_process.hpp"
 #include "hailo/hailort_defaults.hpp"
 
+#include <algorithm>
+
 namespace hailort
 {
 namespace net_flow
 {
+
+static bool should_keep_class(const NmsPostProcessConfig &nms_config, size_t class_id)
+{
+    return nms_config.classes_filter_mask.empty() ||
+        (class_id >= nms_config.classes_filter_mask.size()) ||
+        nms_config.classes_filter_mask[class_id];
+}
 
 Expected<std::shared_ptr<OpMetadata>> NmsOpMetadata::create(const std::unordered_map<std::string, BufferMetaData> &inputs_metadata,
     const std::unordered_map<std::string, BufferMetaData> &outputs_metadata, const NmsPostProcessConfig &nms_post_process_config,
@@ -105,6 +114,10 @@ std::string NmsOpMetadata::get_nms_config_description()
     if (m_nms_config.background_removal) {
         config_info += fmt::format(", Background removal index: {}", m_nms_config.background_removal_index);
     }
+    if (!m_nms_config.classes_filter_mask.empty()) {
+        config_info += fmt::format(", Filtering {} out of {} classes", std::count(m_nms_config.classes_filter_mask.begin(), m_nms_config.classes_filter_mask.end(), false),
+            m_nms_config.classes_filter_mask.size());
+    }
     return config_info;
 }
 
@@ -161,6 +174,10 @@ void NmsPostProcessOp::fill_nms_by_class_format_buffer(MemoryView &buffer, const
     std::vector<uint32_t> num_of_detections_before(nms_config.number_of_classes, 0);
     uint32_t ignored_detections_count = 0;
     for (size_t class_idx = 0; class_idx < nms_config.number_of_classes; class_idx++) {
+        if (!should_keep_class(nms_config, class_idx)) {
+            classes_detections_count[class_idx] = 0;
+        }
+
         if (classes_detections_count[class_idx] > nms_config.max_proposals_per_class) {
             ignored_detections_count += (classes_detections_count[class_idx] - nms_config.max_proposals_per_class);
             classes_detections_count[class_idx] = nms_config.max_proposals_per_class;
@@ -218,6 +235,10 @@ void NmsPostProcessOp::fill_nms_by_score_format_buffer(MemoryView &buffer, std::
     for (auto detection_bbox : detections) {
         if (REMOVED_CLASS_SCORE == detection_bbox.m_bbox.score) {
             // Detection overlapped with a higher score detection and removed in remove_overlapping_boxes()
+            continue;
+        }
+
+        if (!should_keep_class(nms_config, detection_bbox.m_class_id)) {
             continue;
         }
 

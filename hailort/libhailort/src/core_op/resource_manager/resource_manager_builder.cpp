@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -611,9 +611,13 @@ static hailo_status push_edge_layer_activation_actions(
     // We parse ddr inputs before boundary/inter-context because otherwise on C2C mode we may lose some credit.
 
     for (const EdgeLayer &edge_layer : context_resources.get_edge_layers(LayerType::DDR, HAILO_D2H_STREAM)) {
+        TRY(const auto ddr_channels_info,
+            context_resources.get_ddr_channels_info(edge_layer.layer_info.stream_index));
+        const auto h2d_channel_id = ddr_channels_info.h2d_channel_id;
+
         TRY(const auto activate_action, ActivateDdrOutputChannelAction::create(edge_layer.channel_id,
             edge_layer.layer_info.stream_index, edge_layer.layer_info.nn_stream_config, edge_layer.buffer_info,
-            edge_layer.layer_info.ddr_info.min_buffered_rows));
+            edge_layer.layer_info.ddr_info.min_buffered_rows, h2d_channel_id));
         actions.emplace_back(std::move(activate_action));
     }
 

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
@@ -32,22 +32,19 @@ public:
     using eigen_map_2d_t = Eigen::Map<eigen_matrix_2d_t>;
 
     static Expected<std::unique_ptr<TokenEmbedder>> create(BufferPtr embeddings, size_t rows, size_t cols,
-        int image_token_id = INVALID_TOKEN_VALUE, int video_token_id = INVALID_TOKEN_VALUE,
-        size_t special_token_embeddings_count = 1)
+        int image_token_id = INVALID_TOKEN_VALUE, int video_token_id = INVALID_TOKEN_VALUE)
     {
-        TRY(auto ptr, create(embeddings->as_view(), rows, cols, image_token_id, video_token_id, special_token_embeddings_count));
+        TRY(auto ptr, create(embeddings->as_view(), rows, cols, image_token_id, video_token_id));
         ptr->set_resource_guard(embeddings);
         return ptr;
     }
 
     static Expected<std::unique_ptr<TokenEmbedder>> create(const MemoryView &embeddings, size_t rows, size_t cols,
-        int image_token_id = INVALID_TOKEN_VALUE, int video_token_id = INVALID_TOKEN_VALUE,
-        size_t special_token_embeddings_count = 1)
+        int image_token_id = INVALID_TOKEN_VALUE, int video_token_id = INVALID_TOKEN_VALUE)
     {
         eigen_map_2d_t embeddings_matrix(embeddings.as_pointer<T>(), rows, cols);
 
-        auto ptr = std::make_unique<TokenEmbedder>(std::move(embeddings_matrix), image_token_id, video_token_id,
-            special_token_embeddings_count);
+        auto ptr = std::make_unique<TokenEmbedder>(std::move(embeddings_matrix), image_token_id, video_token_id);
         CHECK_NOT_NULL_AS_EXPECTED(ptr, HAILO_OUT_OF_HOST_MEMORY); // Consider returning different status
 
         return ptr;
@@ -74,12 +71,10 @@ public:
         }
     }
 
-    TokenEmbedder(eigen_map_2d_t &&embeddings_matrix, int image_token_id, int video_token_id, size_t special_token_embeddings_count) :
+    TokenEmbedder(eigen_map_2d_t &&embeddings_matrix, int image_token_id, int video_token_id) :
         m_embeddings_matrix(std::move(embeddings_matrix)),
         m_image_token_id(image_token_id),
-        m_video_token_id(video_token_id),
-        m_video_frames_count_per_video(),
-        m_special_token_embeddings_count(special_token_embeddings_count)
+        m_video_token_id(video_token_id)
     {}
 
     size_t cols() const
@@ -95,39 +90,50 @@ public:
         return MemoryView::create_const(row_ptr, row_bytes);
     }
 
-    std::vector<EmbeddingViewWrapper> tokens_to_embeddings(const std::vector<int> &tokens) const
+    Expected<std::vector<EmbeddingViewWrapper>> tokens_to_embeddings(const std::vector<int> &tokens) const
     {
         std::vector<EmbeddingViewWrapper> views;
         views.reserve(tokens.size());
+        size_t current_image_idx = 0;
         size_t current_video_idx = 0;
         for (int token : tokens) {
             if ((INVALID_TOKEN_VALUE != m_image_token_id) && (token == m_image_token_id)) {
-                // Special tokens are not a part of the embeddings-vocab. Setting empty view for placeholder 'special_token_embeddings_size' times
-                for (size_t i = 0; i < m_special_token_embeddings_count; i++) {
-                        views.emplace_back(MemoryView(), EmbeddingViewWrapper::EmbeddingType::IMAGE);
-                    }
+                // Special tokens are not a part of the embeddings-vocab. Setting empty view for placeholder
+                CHECK(current_image_idx < m_embeddings_count_per_image.size(), HAILO_INVALID_ARGUMENT,
+                    "More image tokens ({}) than actual images provided ({})",
+                    current_image_idx + 1, m_embeddings_count_per_image.size());
+                size_t embeddings_count = m_embeddings_count_per_image[current_image_idx];
+                for (size_t i = 0; i < embeddings_count; i++) {
+                    views.emplace_back(MemoryView(), EmbeddingViewWrapper::EmbeddingType::IMAGE);
+                }
+                current_image_idx++;
             } else if ((INVALID_TOKEN_VALUE != m_video_token_id) && (token == m_video_token_id)) {
-                // Special tokens are not a part of the embeddings-vocab. Setting empty view for placeholder 'special_token_embeddings_size' times
-                // TODO (HRT-19393): Return error if current_video_idx is out of bounds
-                assert(current_video_idx < m_video_frames_count_per_video.size());
-                size_t frames_count_for_this_video = (current_video_idx < m_video_frames_count_per_video.size()) ? m_video_frames_count_per_video[current_video_idx] : 1;
-                for (size_t i = 0; i < (m_special_token_embeddings_count * frames_count_for_this_video); i++) {
+                // Special tokens are not a part of the embeddings-vocab. Setting empty view for placeholder
+                CHECK(current_video_idx < m_embeddings_count_per_video.size(), HAILO_INVALID_ARGUMENT,
+                    "More video tokens ({}) than actual videos provided ({})",
+                    current_video_idx + 1, m_embeddings_count_per_video.size());
+                size_t embeddings_count = m_embeddings_count_per_video[current_video_idx];
+                for (size_t i = 0; i < embeddings_count; i++) {
                     views.emplace_back(MemoryView(), EmbeddingViewWrapper::EmbeddingType::VIDEO);
                 }
                 current_video_idx++;
             } else {
-                assert((0 <= token) && (token < m_embeddings_matrix.rows()));
+                CHECK((0 <= token) && (token < m_embeddings_matrix.rows()), HAILO_INVALID_ARGUMENT,
+                    "Token {} is out of embeddings matrix range [0, {})", token, m_embeddings_matrix.rows());
                 views.emplace_back(get_text_embedding(token));
             }
         }
         return views;
     }
 
-    void set_video_frames_count(const std::vector<size_t> &processed_frames_per_video)
+    void set_special_tokens_embeddings_count(
+        const std::vector<size_t> &embeddings_count_per_image,
+        const std::vector<size_t> &embeddings_count_per_video)
     {
-        // Whenever a text with video appears, we should set here the number of video-frames per video that will be inferenced by the VLM
-        //   -> the number of outputs from the vision-encoder for each video on this generation request
-        m_video_frames_count_per_video = processed_frames_per_video;
+        // Set per-image and per-video embedding counts before generation.
+        // Each entry represents the total embedding count for that image/video.
+        m_embeddings_count_per_image = embeddings_count_per_image;
+        m_embeddings_count_per_video = embeddings_count_per_video;
     }
 
     TokenEmbedder(TokenEmbedder &&) = delete;
@@ -140,8 +146,8 @@ private:
     eigen_map_2d_t m_embeddings_matrix;
     int m_image_token_id;
     int m_video_token_id;
-    std::vector<size_t> m_video_frames_count_per_video;
-    size_t m_special_token_embeddings_count;
+    std::vector<size_t> m_embeddings_count_per_image;
+    std::vector<size_t> m_embeddings_count_per_video;
     BufferPtr m_embeddings;
 };
 
