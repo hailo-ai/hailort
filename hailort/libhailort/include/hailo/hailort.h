@@ -1187,7 +1187,9 @@ typedef struct {
 // TODO: warning C4200
 #pragma warning(push)
 #pragma warning(disable: 4200)
-#endif
+#else
+/* GCC/Clang support zero-length arrays natively without warnings */
+#endif /* defined(_MSC_VER) */
 typedef struct {
     /** Number of detections */
     uint16_t count;
@@ -1197,7 +1199,9 @@ typedef struct {
 } hailo_detections_t;
 #if defined(_MSC_VER)
 #pragma warning(pop)
-#endif
+#else
+/* No action needed — GCC/Clang did not push warnings */
+#endif /* defined(_MSC_VER) */
 
 typedef struct {
     /** Detection's box coordinates */

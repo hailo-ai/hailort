@@ -1,6 +1,7 @@
 """
 Builds hailo_platform python package and its C++ dependencies using cmake
 """
+# TODO HRT-19340: Remove this file once meta-hailo kirkstone migrates to pyproject.toml
 
 import logging
 import os
@@ -29,7 +30,12 @@ for handler in logging.getLogger().handlers:
     if isinstance(handler, logging.StreamHandler):
         handler.setLevel(logging.ERROR)
 
-# Global variables
+# Read version from pyproject.toml (single source of truth for Python version)
+_PYPROJECT = Path(__file__).parent / "pyproject.toml"
+_VERSION_MATCH = re.search(r'^version = "([^"]+)"', _PYPROJECT.read_text(), re.MULTILINE)
+if not _VERSION_MATCH:
+    raise RuntimeError(f"Could not parse version from {_PYPROJECT}")
+_VERSION = _VERSION_MATCH.group(1)
 _BUILD_TYPE = os.environ.get("CMAKE_BUILD_TYPE", "Release")
 _PY_VERSION = f"{sys.version_info.major}.{sys.version_info.minor}"
 _plat_name = ""
@@ -198,6 +204,8 @@ class build_ext(orig_build_ext):
             f"-DCMAKE_BUILD_TYPE={_BUILD_TYPE}",
             f"-DCMAKE_LIBRARY_OUTPUT_DIRECTORY={build_dir}",
             f'-DPYBIND11_PYTHON_VERSION="{_PY_VERSION}"',
+            f"-DHAILORT_VERSION={_VERSION}",
+            f"-DCMAKE_INSTALL_PREFIX={build_dir}",
         ]
         _logger.info(f"cmake args: {cmake_args}")
 
@@ -257,6 +265,6 @@ if __name__ == "__main__":
             "linux_aarch64",
         ],
         url="https://hailo.ai/",
-        version="5.3.0",
+        version=_VERSION,
         zip_safe=False,
     )

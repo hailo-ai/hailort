@@ -85,7 +85,7 @@ Expected<std::unique_ptr<VLM::Impl>> VLM::Impl::create_unique(std::shared_ptr<ha
     TRY(auto acquire_kv_cache_reply, session_wrapper->execute(MemoryView(acquire_kv_cache_request)));
     auto acquire_status = LLMAcquireKvCacheSerializer::deserialize_reply(MemoryView(*acquire_kv_cache_reply));
     CHECK_SUCCESS(acquire_status, "Failed to acquire KV-Cache. KV-Cache is already in use by another model.");
-    // Note: If any subsequent step fails, the server-side KV cache is release when LLMServerManager is destroyed on session close.
+    // Note: If any subsequent step fails, the server-side KV cache guard is released in ~LLMServer on session close.
 
     // Translate vlm_params.hef() to an absolute path if it is not already
     std::string hef_path = vlm_params.hef();

@@ -13,11 +13,11 @@
 #include "common/os_utils.hpp"
 #include "common/mmap_buffer.hpp"
 
-#if defined(_MSC_VER)
+#if defined(_WIN32)
 #include "common/os/windows/virtual_alloc_guard.hpp"
 #else
 #include <sys/mman.h>
-#endif /* defined(_MSC_VER) */
+#endif /* defined(_WIN32) */
 
 
 #if defined(__QNX__)
@@ -59,7 +59,7 @@ private:
     void *m_user_address;
 };
 
-#if defined(__linux__) || defined(_MSC_VER)
+#if defined(__linux__) || defined(_WIN32)
 
 #if defined(__linux__)
 class PageAlignedDmaAbleBuffer : public DmaAbleBuffer {
@@ -87,7 +87,7 @@ private:
     MmapBuffer<void> m_mmapped_buffer;
 };
 
-#elif defined(_MSC_VER)
+#elif defined(_WIN32)
 class PageAlignedDmaAbleBuffer : public DmaAbleBuffer {
 public:
     static Expected<DmaAbleBufferPtr> create(size_t size)

@@ -21,7 +21,7 @@
  * @file hailo_gst.h
  * @brief Includes the hailo_gst header file with the required compiler instructions
  **/
-#ifdef _MSC_VER
+#if defined(_MSC_VER)
     #pragma warning(push)
     #pragma warning(disable : 4244)  // Disable conversion warnings
     #include <gst/gst.h>

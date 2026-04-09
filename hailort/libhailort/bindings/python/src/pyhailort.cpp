@@ -3,6 +3,12 @@
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 
+/*
+ * platform.h must be included before pybind11 (which pulls in Python.h -> windows.h)
+ * to ensure Windows architecture macros (_AMD64_) and NOMINMAX are defined first.
+ */
+#include "hailo/platform.h"
+
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
 #include <pybind11/detail/common.h>
@@ -13,13 +19,13 @@
 #include <exception>
 using namespace std;
 
+#include "hailo/hailort.h"
+
 #if defined(_WIN32)
 #include <winsock2.h>
 #else
 #include <netinet/in.h>
 #endif
-
-#include "hailo/hailort.h"
 #include "hailo/hailort_defaults.hpp"
 
 #include "infer_model_api.hpp"

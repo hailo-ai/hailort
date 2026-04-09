@@ -1,0 +1,41 @@
+# ---- How to build ----
+#
+# Native (links system-installed libhailort via find_package):
+#   pip install .
+#
+# With pre-built libhailort (cross-compiled or custom path):
+#   CMAKE_ARGS="-DLIBHAILORT_PATH=/path/to/libhailort.so -DHAILORT_INCLUDE_DIR=/path/to/include" pip install .
+#
+# Debug build:
+#   SKBUILD_CMAKE_BUILD_TYPE=Debug pip install .
+#
+# Specific Python version (use that Python's pip):
+#   python3.10 -m pip install .
+#   python3.12 -m pip install .
+#
+# Cross-compile for a different architecture (SKBUILD_WHEEL_PLAT_NAME is needed
+# because the wheel is tagged with the host platform by default):
+#   CMAKE_ARGS="-DCMAKE_TOOLCHAIN_FILE=/path/to/aarch64-toolchain.cmake -DLIBHAILORT_PATH=/path/to/libhailort.so -DHAILORT_INCLUDE_DIR=/path/to/include" \
+#     SKBUILD_WHEEL_PLAT_NAME=linux_aarch64 pip wheel . -w dist/
+
+[build-system]
+requires = ["scikit-build-core>=0.10", "pybind11>=2.13.6,<2.14"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "hailort"
+version = "5.3.0"
+description = "HailoRT"
+authors = [{ name = "Hailo team", email = "contact@hailo.ai" }]
+requires-python = ">=3.8"
+dependencies = ["numpy"]
+
+[project.urls]
+Homepage = "https://hailo.ai/"
+
+[tool.scikit-build]
+cmake.source-dir = "../src"       # C++ sources live one dir up
+cmake.build-type = "Release"
+build-dir = "build/{wheel_tag}"   # cache builds per Python version + platform
+wheel.platlib = true              # always platform-tagged (native extension)
+wheel.packages = ["hailo_platform", "hailo_tutorials"]

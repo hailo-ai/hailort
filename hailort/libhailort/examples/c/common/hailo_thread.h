@@ -68,7 +68,7 @@ void hailo_atomic_store(hailo_atomic_int *atomic, int value)
     atomic_store(atomic, value);
 }
 
-#elif defined _MSC_VER // __unix__ || __QNX__
+#elif defined _WIN32 // __unix__ || __QNX__
 
 #include <winnt.h>              // HANDLE, DWORD, LONG, INFINITE
 #include <synchapi.h>           // WaitForSingleObject

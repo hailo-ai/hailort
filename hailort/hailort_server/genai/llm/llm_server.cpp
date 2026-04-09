@@ -848,7 +848,7 @@ void LLMServer::reset_cnversation_context()
     m_tokens_history.clear();
     m_pre_process->reset_local_cache();
     m_post_process.reset_random_generator();
-    m_inference_manager_prefill->init_cache(0); // TODO (HRT-16833): Check if required
+    m_inference_manager_prefill->init_cache(0);
 
     prepare_for_new_generation();
 }

@@ -71,7 +71,7 @@ typedef ULONGLONG uint64_t;
 #endif /*  !defined(__cplusplus) && defined(NTDDI_VERSION) */
 
 
-#ifdef _MSC_VER
+#ifdef _WIN32
 
 #include <initguid.h>
 
@@ -130,7 +130,7 @@ static ULONG FORCEINLINE _IOC_(ULONG nr, ULONG type, ULONG size, bool read, bool
 #define _IOWR_(type,nr,size) _IOC_(nr, type, sizeof(size), true, true)
 #define _IO_(type,nr) _IOC_(nr, type, 0, false, false)
 
-#elif defined(__linux__) // #ifdef _MSC_VER
+#elif defined(__linux__) // #ifdef _WIN32
 #ifndef __KERNEL__
 // include the userspace headers only if this file is included by user space program
 // It is discourged to include them when compiling the driver (https://lwn.net/Articles/113349/)
@@ -155,7 +155,7 @@ static ULONG FORCEINLINE _IOC_(ULONG nr, ULONG type, ULONG size, bool read, bool
 #define HAILO_NNC_IOCTL_MAGIC       'n'
 #define HAILO_PCI_EP_IOCTL_MAGIC    'p'
 
-#elif defined(__QNX__) // #ifdef _MSC_VER
+#elif defined(__QNX__) // #ifdef _WIN32
 #include <devctl.h>
 #include <stdint.h>
 #include <sys/types.h>
@@ -170,7 +170,7 @@ static ULONG FORCEINLINE _IOC_(ULONG nr, ULONG type, ULONG size, bool read, bool
 #define HAILO_GENERAL_IOCTL_MAGIC   _DCMD_ALL
 #define HAILO_VDMA_IOCTL_MAGIC      _DCMD_MISC
 
-#else // #ifdef _MSC_VER
+#else // #ifdef _WIN32
 #error "unsupported platform!"
 #endif
 
@@ -482,7 +482,7 @@ struct hailo_pci_ep_close_params {
     uint8_t output_channel_index;   // in
 };
 
-#ifdef _MSC_VER
+#ifdef _WIN32
 struct tCompatibleHailoIoctlData
 {
     tCompatibleHailoIoctlParam Parameters;
@@ -512,7 +512,7 @@ struct tCompatibleHailoIoctlData
         struct hailo_vdma_cancel_prepared_transfer_params DescListResetParams;
     } Buffer;
 };
-#endif // _MSC_VER
+#endif // _WIN32
 
 #pragma pack(pop)
 

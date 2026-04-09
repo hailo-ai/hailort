@@ -23,7 +23,7 @@ namespace hailort
 #define SHARED_MEMORY_NAME_SEPERATOR '_'
 #define INVALID_SHARED_MEMORY_CHAR '/'
 
-#if defined(_MSC_VER)
+#if defined(_WIN32)
 #define SHARED_MEMORY_NAME_PREFIX "Local\\"
 #else
 #define SHARED_MEMORY_NAME_PREFIX '/'

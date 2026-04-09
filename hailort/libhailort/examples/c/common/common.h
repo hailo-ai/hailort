@@ -13,7 +13,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#if defined(_MSC_VER)
+#if defined(_WIN32)
+#include "hailo/platform.h"
 #include <synchapi.h>
 #endif
 
@@ -42,9 +43,9 @@
 
 #if defined(__unix__)
 #define hailo_sleep(seconds) sleep((seconds))
-#elif defined(_MSC_VER)
+#elif defined(_WIN32)
 #define hailo_sleep(seconds) Sleep((seconds) * 1000)
-#else /* defined(_MSC_VER) */
+#else /* defined(_WIN32) */
 #pragma error("sleep not supported")
 #endif
 

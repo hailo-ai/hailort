@@ -157,32 +157,35 @@ int LLMPostProcess::sample_from_probabilities(const std::vector<int> &filtered_i
 int LLMPostProcess::get_next_token(MemoryView next_token_scores_view,
     const std::unordered_set<int> &context_tokens_history, const LLMGeneratorParams &params)
 {
-    // Try to make it nicer
     Eigen::VectorXf next_token_scores = Eigen::VectorXf::Map(reinterpret_cast<float32_t*>(next_token_scores_view.data()),
         (next_token_scores_view.size() / sizeof(float32_t)));
 
-    // Apply temperature and repetition penalty
-    if (FLOAT_IGNORE_OPERATION != params.temperature()) {
-        // Cosdiering removing it if eigen can handle it
-        next_token_scores /= params.temperature();
-    }
+    // 1. Apply repetition penalty (always — affects both greedy and sampling)
     if (FLOAT_IGNORE_OPERATION != params.frequency_penalty()) {
-        // Cosdiering removing it if eigen can handle it
         apply_repetition_penalty(next_token_scores, context_tokens_history, params.frequency_penalty());
     }
 
+    // 2. Greedy decoding — return argmax immediately, no further processing needed
     if (!params.do_sample()) {
         return get_maximum_probability_token(next_token_scores);
     }
 
+    // 3. Apply temperature (sampling only)
+    if (FLOAT_IGNORE_OPERATION != params.temperature()) {
+        next_token_scores /= params.temperature();
+    }
+
+    // 4. Top-k filtering
     auto top_k_pair = get_top_k_scores(next_token_scores, params.top_k());
     auto &top_k_indices = top_k_pair.first;
     auto &top_k_scores = top_k_pair.second;
 
+    // 5. Top-p filtering + softmax normalization
     auto top_p_pair = filter_by_top_p(top_k_indices, top_k_scores, params);
     auto &filtered_indices = top_p_pair.first;
     auto &filtered_scores = top_p_pair.second;
 
+    // 6. Sample from distribution
     return sample_from_probabilities(filtered_indices, filtered_scores);
 }
 

@@ -17,13 +17,17 @@
 #if defined(_MSC_VER)
 #pragma warning(push)
 #pragma warning(disable : 4244 4101)
-#endif
+#else
+/* GCC/Clang do not emit these warnings for minja headers */
+#endif /* defined(_MSC_VER) */
 
 #include <minja/chat-template.hpp>
 
-#ifdef _MSC_VER
+#if defined(_MSC_VER)
 #pragma warning(pop)
-#endif
+#else
+/* No action needed — GCC/Clang did not push warnings */
+#endif /* defined(_MSC_VER) */
 
 namespace hailort
 {

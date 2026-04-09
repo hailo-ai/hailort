@@ -36,7 +36,7 @@ namespace hailort
 {
 
 // underlying_waitable_handle_t
-#if defined(_MSC_VER) || defined(__linux__)
+#if defined(_WIN32) || defined(__linux__)
     typedef underlying_handle_t underlying_waitable_handle_t; 
 #elif defined(__QNX__)
     typedef neosmart::neosmart_event_t_* underlying_waitable_handle_t;

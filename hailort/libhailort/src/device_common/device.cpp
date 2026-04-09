@@ -32,7 +32,7 @@
 #include "control_protocol.h"
 #include <memory>
 #include <algorithm>
-#ifndef _MSC_VER
+#ifndef _WIN32
 #include <sys/utsname.h>
 #endif
 
@@ -48,7 +48,7 @@ Device::Device(Type type) :
     m_is_control_version_supported(false),
     m_device_architecture(HAILO_ARCH_MAX_ENUM)
 {
-#ifndef _MSC_VER
+#ifndef _WIN32
     struct utsname uname_data;
     if (-1 != uname(&uname_data)) {
         LOGGER__INFO("OS Version: {} {} {} {}", uname_data.sysname, uname_data.release,

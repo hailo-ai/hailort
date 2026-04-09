@@ -10,13 +10,16 @@
 #include "common/utils.hpp"
 
 #include "hef/hef_internal.hpp"
+#include "hef/layer_info.hpp"
 #include "core_op/resource_manager/internal_buffer_planner.hpp"
 #include "core_op/resource_manager/config_buffer.hpp"
+#include "core_op/resource_manager/cache_manager.hpp"
 #include "common/internal_env_vars.hpp"
 #include "vdma/memory/buffer_requirements.hpp"
 #include "vdma/memory/descriptor_list.hpp"
 
 #include <numeric>
+#include <unordered_set>
 
 namespace hailort
 {
@@ -124,13 +127,64 @@ static Expected<DescSizesParamsPerType> get_desc_params(Hef &hef)
     return DescSizesParamsPerType{get_ccb_desc_size_params(min_ccb_desc_count), get_sg_desc_size_params()};
 }
 
+// Calculates the descriptor list CMA memory for one side (input or output) of a cache buffer.
+static Expected<size_t> get_cache_desc_memory(const CacheIoInfo &io_info, const DescSizesParams &sg_desc_params)
+{
+    const auto length = static_cast<uint16_t>(io_info.io_size / io_info.padded_entry_size);
+    const auto max_desc_size = std::min(io_info.padded_entry_size, static_cast<uint32_t>(sg_desc_params.max_page_size));
+    TRY(const auto buffer_req, vdma::BufferSizesRequirements::get_buffer_requirements_single_transfer(
+        vdma::BufferType::SCATTER_GATHER, sg_desc_params, static_cast<uint16_t>(max_desc_size),
+        length, length, io_info.entry_size,
+        false /* is_circular */, false /* force_default_page_size */, true /* force_batch_size */,
+        true /* is_vdma_aligned_buffer */, false /* is_ddr */));
+    return vdma::DescriptorList::descriptors_buffer_allocation_size(buffer_req.descs_count());
+}
+
+// Gets the memory requirements for cache buffers (KV-cache in GenAI models).
+// Uses shared cache info calculation from cache_manager.hpp, without allocating actual buffers.
+static Expected<EdgeTypeMemoryRequirements> get_cache_memory_requirements(const CoreOpMetadata &core_op_metadata,
+    const DescSizesParams &sg_desc_params)
+{
+    TRY(auto cache_infos, CacheManager::get_cache_infos(core_op_metadata, sg_desc_params));
+
+    if (cache_infos.empty()) {
+        return EdgeTypeMemoryRequirements{};
+    }
+
+    // Get per-side IO info for descriptor calculation
+    TRY(auto cache_ios, CacheManager::get_cache_ios_infos(core_op_metadata, sg_desc_params));
+    auto &cache_inputs = cache_ios.first;
+    auto &cache_outputs = cache_ios.second;
+
+    EdgeTypeMemoryRequirements requirements{};
+    for (const auto &cache_info_pair : cache_infos) {
+        const auto cache_id = cache_info_pair.first;
+        const auto &cache_info = cache_info_pair.second;
+
+        // Cache backing buffer size (pinned memory for SG buffer)
+        requirements.pinned_memory += cache_info.size;
+
+        // Descriptor list CMA memory for input and output sides.
+        // Note: assumes desc_list_count=1 (the default). The HAILO_CACHE_DESC_LISTS_COUNT_ENV_VAR
+        // override is not accounted for in this offline calculation.
+        TRY(const auto input_desc_mem, get_cache_desc_memory(cache_inputs[cache_id], sg_desc_params));
+        requirements.cma_memory_for_descriptors += input_desc_mem;
+
+        TRY(const auto output_desc_mem, get_cache_desc_memory(cache_outputs[cache_id], sg_desc_params));
+        requirements.cma_memory_for_descriptors += output_desc_mem;
+    }
+
+    return requirements;
+}
+
 // Gets the memory requirements for a single model
 static Expected<MemoryRequirements> get_model_memory_requirements(const CoreOpMetadata &core_op_metadata, uint16_t batch_size,
     HailoRTDriver::DmaType dma_type, bool zero_copy_config_over_descs, const DescSizesParamsPerType &desc_params)
 {
     TRY(auto intermediate, get_intermediate_requirements(core_op_metadata, batch_size, dma_type, desc_params));
     TRY(auto config, get_cfg_requirements(core_op_metadata, dma_type, zero_copy_config_over_descs, desc_params));
-    return MemoryRequirements{intermediate, config};
+    TRY(auto cache, get_cache_memory_requirements(core_op_metadata, desc_params.sg));
+    return MemoryRequirements{intermediate, config, cache};
 }
 
 static Expected<HailoRTDriver::DmaType> get_dma_type(Hef &hef)
@@ -178,6 +232,9 @@ Expected<FullMemoryRequirements> MemoryRequirementsCalculator::get_memory_requir
         full_memory_requirements.total_memory_requirements.intermediate_buffers = join_requirements(
             full_memory_requirements.total_memory_requirements.intermediate_buffers, req.intermediate_buffers);
 
+        // Add cache buffers to total (no sharing between models)
+        full_memory_requirements.total_memory_requirements.cache_buffers = join_requirements(
+            full_memory_requirements.total_memory_requirements.cache_buffers, req.cache_buffers);
 
         if (!hef.pimpl->zero_copy_config_over_descs()) {
             // Add config buffers to total

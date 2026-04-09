@@ -53,7 +53,7 @@ static const char *RUNTIME_DATA_OUTPUT_PATH_HEF_PLACE_HOLDER = "<hef>";
 static const char *RUNTIME_DATA_BATCH_TO_MEASURE_OPT_LAST = "last";
 static const char *RUNTIME_DATA_BATCH_TO_MEASURE_OPT_DEFAULT = "2";
 
-#ifndef _MSC_VER
+#ifndef _WIN32
 void user_signal_handler_func(int signum)
 {
     if (USER_SIGNAL == signum)

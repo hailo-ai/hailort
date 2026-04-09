@@ -19,6 +19,8 @@ option(HAILO_BUILD_FUNCTIONFS_LISTENER "Build FunctionFS listener" OFF)
 option(HAILO_BUILD_OLLAMA "Build Hailo-Ollama GenAI Model Server" OFF)
 
 # Ensure Windows SDK knows the target architecture to avoid "No Target Architecture" errors.
+# The canonical definition lives in hailo/platform.h, but this CMake-level define acts as a
+# safety net for internal code that may include Windows SDK headers without platform.h.
 if (WIN32)
     if (CMAKE_SIZEOF_VOID_P EQUAL 8)
         add_compile_definitions(_AMD64_=1)

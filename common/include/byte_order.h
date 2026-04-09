@@ -18,7 +18,7 @@ extern "C" {
 
 #if !defined(__BYTE_ORDER__)
 // TODO: Check this better?
-#if defined(_MSC_VER)
+#if defined(_WIN32)
 #define __ORDER_LITTLE_ENDIAN__ (1)
 #define __BYTE_ORDER__ __ORDER_LITTLE_ENDIAN__
 #else

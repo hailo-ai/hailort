@@ -161,12 +161,12 @@ Expected<std::unique_ptr<HailoRTDriver>> HailoRTDriver::create_integrated_nnc()
 
 bool HailoRTDriver::is_integrated_nnc_loaded()
 {
-#if defined(_MSC_VER)
+#if defined(_WIN32)
     // windows is not supported for integrated_nnc driver
     return false;
 #else
     return (access(INTEGRATED_NNC_DRIVER_PATH.c_str(), F_OK) == 0);
-#endif // defined(_MSC_VER)
+#endif // defined(_WIN32)
 }
 
 Expected<std::unique_ptr<HailoRTDriver>> HailoRTDriver::create_pcie_ep()
@@ -176,12 +176,12 @@ Expected<std::unique_ptr<HailoRTDriver>> HailoRTDriver::create_pcie_ep()
 
 bool HailoRTDriver::is_pcie_ep_loaded()
 {
-#if defined(_MSC_VER)
+#if defined(_WIN32)
     // windows is not supported for pcie_ep driver
     return false;
 #else
     return (access(PCIE_EP_DRIVER_PATH.c_str(), F_OK) == 0);
-#endif // defined(_MSC_VER)
+#endif // defined(_WIN32)
 }
 
 static hailo_status validate_driver_version(const hailo_driver_info &driver_info)

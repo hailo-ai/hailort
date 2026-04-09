@@ -54,7 +54,6 @@ elseif (WIN32)
     set(HAILORT_COMPILE_OPTIONS
         ${HAILORT_COMPILE_OPTIONS}
         /DWIN32_LEAN_AND_MEAN
-        /DNOMINMAX                  # NOMINMAX is required in order to avoid conflicts with std::min/std::max (otherwise Windows.h defines it's own)
         /D_HAILO_EXPORTING
         /wd4201                     # Anonymous union/struct
         /wd4251                     # C++ ABI with STL
