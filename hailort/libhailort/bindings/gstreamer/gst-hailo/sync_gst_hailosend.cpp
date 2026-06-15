@@ -99,7 +99,6 @@ void HailoSendImpl::set_property(GObject *object, guint property_id, const GValu
 
     if ((object == nullptr) || (value == nullptr) || (pspec == nullptr)) {
         g_error("set_property got null parameter!");
-        return;
     }
 
     switch (property_id) {
@@ -118,7 +117,6 @@ void HailoSendImpl::get_property(GObject *object, guint property_id, GValue *val
 
     if ((object == nullptr) || (value == nullptr) || (pspec == nullptr)) {
         g_error("get_property got null parameter!");
-        return;
     }
 
     switch (property_id) {

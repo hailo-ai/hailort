@@ -15,6 +15,7 @@
 #include "vdma/memory/descriptor_list.hpp"
 #include "control_protocol.h"
 #include "vdma/memory/vdma_buffer.hpp"
+#include "utils.h"
 
 namespace hailort {
 namespace vdma {
@@ -36,7 +37,7 @@ public:
     VdmaEdgeLayer& operator=(VdmaEdgeLayer &&) = delete;
 
     virtual Type type() const = 0;
-    virtual uint64_t dma_address() const = 0;
+    virtual desc_list_handle_t handle() const = 0;
     virtual uint16_t desc_page_size() const = 0;
     virtual uint32_t descs_count() const = 0;
 
@@ -64,7 +65,7 @@ public:
         size_t desc_offset, size_t buffer_offset = 0, uint32_t batch_size = 1, bool should_bind = false, uint32_t stride = 0) = 0;
 
     CONTROL_PROTOCOL__host_buffer_info_t get_host_buffer_info(uint32_t transfer_size);
-    static CONTROL_PROTOCOL__host_buffer_info_t get_host_buffer_info(Type type, uint64_t dma_address,
+    static CONTROL_PROTOCOL__host_buffer_info_t get_host_buffer_info(Type type, desc_list_handle_t handle,
         uint16_t desc_page_size, uint32_t total_desc_count, uint32_t transfer_size);
 protected:
     VdmaEdgeLayer(std::shared_ptr<VdmaBuffer> &&buffer, const size_t size, const size_t offset);

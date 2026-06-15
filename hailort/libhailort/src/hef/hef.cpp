@@ -1024,10 +1024,9 @@ hailo_status Hef::Impl::transfer_protobuf_field_ownership(ProtoHEFHef &hef_messa
     m_supported_features = get_supported_features(m_header, m_hef_extensions, m_included_features,
         m_hef_optional_extensions);
 
-    m_hef_external_resources.reserve(hef_message.external_resources().size());
     for (const auto &external_resouce : hef_message.external_resources()) {
-        ExternalResourceInfo external_resource_info{external_resouce.name(), external_resouce.size(), external_resouce.offset()};
-        m_hef_external_resources.emplace_back(external_resource_info);
+        ExternalResourceInfo external_resource_info{external_resouce.name(), external_resouce.size(), external_resouce.offset(), external_resouce.xxhash()};
+        m_hef_external_resources.emplace(external_resouce.name(), external_resource_info);
     }
 
     return HAILO_SUCCESS;
@@ -4078,6 +4077,54 @@ Expected<std::string> Hef::Impl::get_description(bool stream_infos, bool vstream
     return hef_infos;
 }
 
+Expected<MemoryView> Hef::get_external_resources(const std::string &resource_name) const
+{
+    return pimpl->get_external_resources(resource_name);
+}
+
+std::vector<std::string> Hef::get_external_resource_names() const
+{
+    return pimpl->get_external_resource_names();
+}
+
+Expected<MemoryView> Hef::Impl::get_external_resources(const std::string &resource_name) const
+{
+    MemoryView resource_memview = {};
+    auto hef_reader = get_hef_reader();
+    CHECK_SUCCESS(hef_reader->open());
+    for (auto &name_to_external_resource_info : m_hef_external_resources) {
+        if (resource_name == name_to_external_resource_info.first) {
+            auto &external_resource_info = name_to_external_resource_info.second;
+            const auto offset = external_resource_info.offset + get_offset_zero_point();
+            const auto size = external_resource_info.size;
+            const auto checksum = external_resource_info.xxhash;
+            TRY(resource_memview, hef_reader->read_from_offset_as_memview(offset, size));
+
+            if (checksum != 0) { // validate checksum only if filled in the HEF
+                TRY(auto resource_checksum, Xxhash::calc_xxh3_on_buffer(resource_memview));
+                CHECK(checksum == resource_checksum, HAILO_HEF_FILE_CORRUPTED,
+                    "Resource '{}' checksum does not match", resource_name);
+            }
+            CHECK_SUCCESS(hef_reader->close());
+            return resource_memview;
+        }
+    }
+    CHECK_SUCCESS(hef_reader->close());
+    return make_unexpected(HAILO_NOT_FOUND);
+}
+
+std::vector<std::string> Hef::Impl::get_external_resource_names() const
+{
+    std::vector<std::string> resource_names;
+    resource_names.reserve(m_hef_external_resources.size());
+
+    for (const auto &name_to_external_resource_info : m_hef_external_resources) {
+        resource_names.push_back(name_to_external_resource_info.first);
+    }
+
+    return resource_names;
+}
+
 Expected<std::map<std::string, std::string>> Hef::get_external_resources() const
 {
     return pimpl->get_external_resources();
@@ -4088,7 +4135,8 @@ Expected<std::map<std::string, std::string>> Hef::Impl::get_external_resources()
     std::map<std::string, std::string> external_resources;
     auto hef_reader = get_hef_reader();
     CHECK_SUCCESS(hef_reader->open());
-    for (auto &external_resource_info : m_hef_external_resources) {
+    for (auto &name_to_external_resource_info : m_hef_external_resources) {
+        const auto &external_resource_info = name_to_external_resource_info.second;
         const auto offset = external_resource_info.offset + get_offset_zero_point();
         const auto size = external_resource_info.size;
         std::string resource_data(size, '\0');

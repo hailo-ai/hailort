@@ -105,7 +105,7 @@ public:
             /**
              * Sets the edge's buffer to a new one, of type hailo_pix_buffer_t.
              *
-             * Each plane in the \ref hailo_pix_buffer_t must feet the requirements listed in \ref set_buffer.
+             * Each plane in the \ref hailo_pix_buffer_t must fit the requirements listed in \ref set_buffer.
              *
              * @param[in] pix_buffer      The new buffer to be set.
              * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.

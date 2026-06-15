@@ -217,6 +217,11 @@ void HailoRTLogger::set_levels(spdlog::level::level_enum console_level, spdlog::
     } else {
         m_hailort_logger->flush_on(flush_level);
     }
+
+#ifdef __unix__
+    // We block certain signals in the flush thread so that a sigwait thread (if present) will be the one receiving them.
+    SigwaitThreadCreationContext sigwait_thread_creation_context;
+#endif
     spdlog::flush_every(std::chrono::seconds(PERIODIC_FLUSH_INTERVAL_IN_SECONDS));
 }
 

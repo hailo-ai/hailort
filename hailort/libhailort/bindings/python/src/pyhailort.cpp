@@ -438,12 +438,12 @@ PYBIND11_MODULE(_pyhailort, m) {
         .def_readonly("protocol_version", &hailo_device_identity_t::protocol_version)
         .def_readonly("fw_version", &hailo_device_identity_t::fw_version)
         .def_readonly("logger_version", &hailo_device_identity_t::logger_version)
-        .def_readonly("board_name_length", &hailo_device_identity_t::board_name_length)
+        .def_property_readonly("board_name_length", [](const hailo_device_identity_t&) -> uint8_t { return 0; })
         .def_readonly("is_release", &hailo_device_identity_t::is_release)
         .def_readonly("extended_context_switch_buffer", &hailo_device_identity_t::extended_context_switch_buffer)
         .def_readonly("device_architecture", &hailo_device_identity_t::device_architecture)
-        .def_property_readonly("board_name", [](const hailo_device_identity_t& board_info) -> py::str {
-            return py::str(board_info.board_name, board_info.board_name_length);
+        .def_property_readonly("board_name", [](const hailo_device_identity_t&) -> py::str {
+            return py::str("");
         })
         .def_readonly("serial_number_length", &hailo_device_identity_t::serial_number_length)
         .def_property_readonly("serial_number", [](const hailo_device_identity_t& board_info) -> py::str {

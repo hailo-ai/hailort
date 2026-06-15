@@ -42,6 +42,9 @@ namespace hailort
 
 #define CLOCKS_IN_MHZ (1000 * 1000)
 
+static constexpr uint32_t HAILO8_CLOCK_RATE = (400 * 1000 * 1000);
+static constexpr uint32_t HAILO8R_CLOCK_RATE = (200 * 1000 * 1000);
+
 enum class HEFHwArch // Must be aligned to ProtoHEFHwArch
 {
     HW_ARCH__HAILO8 = 0,

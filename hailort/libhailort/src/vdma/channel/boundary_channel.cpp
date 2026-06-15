@@ -218,7 +218,7 @@ Expected<std::vector<TransferRequest>> BoundaryChannel::split_messages(TransferR
     }
 
     // From original_request, create a vector of several TransferRequests.
-    // Each TransferRequest may be splitted into serveral buffers, but the total size of the buffers in each
+    // Each TransferRequest may be split into serveral buffers, but the total size of the buffers in each
     // TransferRequest will not exceed chunk_size (which is the optimal amount of bytes for single transfer).
     // In addition, each TransferRequest should hold no more than MAX_TRANSFER_BUFFERS_IN_REQUEST buffers.
     // Notice that each new transfer will consume a full descriptor in bytes (even if the size is smaller than

@@ -18,66 +18,34 @@ namespace vdma {
 Expected<DescriptorList> DescriptorList::create(uint32_t desc_count, uint16_t desc_page_size, bool is_circular,
     HailoRTDriver &driver)
 {
-    hailo_status status = HAILO_UNINITIALIZED;
-    assert(desc_page_size <= driver.desc_max_page_size());
+    CHECK(desc_page_size <= driver.desc_max_page_size(), HAILO_INVALID_ARGUMENT, "Desc-page size is larger than max");
 
-    CHECK_AS_EXPECTED(desc_count <= MAX_SG_DESCS_COUNT, HAILO_INVALID_ARGUMENT,
-        "descs_count {} must be smaller/equal to {}", desc_count, MAX_SG_DESCS_COUNT);
+    CHECK(desc_count <= MAX_SG_DESCS_COUNT, HAILO_INVALID_ARGUMENT, "descs_count is larger than max");
 
-    DescriptorList object(desc_count, desc_page_size, is_circular, driver, status);
-    if (HAILO_SUCCESS != status) {
-        return make_unexpected(status);
-    }
+    CHECK(!is_circular || is_powerof2(desc_count), HAILO_INVALID_ARGUMENT,
+          "Desc-count for circular lists must be a power of 2");
 
-    // No need to initialize descriptors here because they are initialized in driver in hailo_vdma_program_descriptor()
+    TRY(auto handle, driver.descriptors_list_create(desc_count, desc_page_size, is_circular));
 
-    return object;
-}
-
-DescriptorList::DescriptorList(uint32_t desc_count, uint16_t desc_page_size, bool is_circular, HailoRTDriver &driver,
-                               hailo_status &status) :
-    m_desc_list_info(),
-    m_desc_count(desc_count),
-    m_is_circular(is_circular),
-    m_driver(driver),
-    m_desc_page_size(desc_page_size)
-{
-    if (m_is_circular && !is_powerof2(desc_count)) {
-        LOGGER__ERROR("Descriptor count ({}) for circular descriptor list must be power of 2", desc_count);
-        status = HAILO_INVALID_ARGUMENT;
-        return;
-    }
-
-    auto desc_list_info = m_driver.descriptors_list_create(desc_count, m_desc_page_size, m_is_circular);
-    if (!desc_list_info) {
-        status = desc_list_info.status();
-        return;
-    }
-
-    m_desc_list_info = desc_list_info.release();
-
-    status = HAILO_SUCCESS;
+    return DescriptorList(handle, desc_count, desc_page_size, driver);
 }
 
 DescriptorList::~DescriptorList()
 {
-    if (0 != m_desc_list_info.handle) {
-        auto status = m_driver.descriptors_list_release(m_desc_list_info);
+    if (m_handle != INVALID_DESC_LIST_HANDLE) {
+        auto status = m_driver.descriptors_list_release(m_handle);
         if(HAILO_SUCCESS != status) {
-            LOGGER__ERROR("Failed to release descriptor list {} with status {}", m_desc_list_info.handle, status);
+            LOGGER__ERROR("Failed to release descriptor list {} with status {}", m_handle, status);
         }
     }
 }
 
 DescriptorList::DescriptorList(DescriptorList &&other) noexcept :
-    m_desc_list_info(),
     m_desc_count(other.m_desc_count),
-    m_is_circular(std::move(other.m_is_circular)),
     m_driver(other.m_driver),
     m_desc_page_size(other.m_desc_page_size)
 {
-    m_desc_list_info.handle = std::exchange(other.m_desc_list_info.handle, 0);
-    m_desc_list_info.dma_address = std::exchange(other.m_desc_list_info.dma_address, 0);
+    m_handle = std::exchange(other.m_handle, INVALID_DESC_LIST_HANDLE);
 }
 
 hailo_status DescriptorList::program(MappedBuffer& buffer, size_t buffer_size,
@@ -89,7 +57,7 @@ hailo_status DescriptorList::program(MappedBuffer& buffer, size_t buffer_size,
         "Can't bind a buffer larger than the descriptor list's capacity. Buffer size {}, descriptor list capacity {}",
         buffer_size, desc_list_capacity);
 
-    return m_driver.descriptors_list_program(m_desc_list_info.handle, buffer.handle(), buffer_size,
+    return m_driver.descriptors_list_program(m_handle, buffer.handle(), buffer_size,
         buffer_offset, channel_id.channel_index, starting_desc, batch_size, should_bind, last_desc_interrupts, stride);
 }
 

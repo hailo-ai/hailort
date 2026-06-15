@@ -39,7 +39,7 @@ extern "C" {
 #define HAILO_ETH_PORT_ANY (0)
 #define HAILO_MAX_NAME_SIZE (128)
 #define HAILO_MAX_STREAM_NAME_SIZE (HAILO_MAX_NAME_SIZE)
-#define HAILO_MAX_BOARD_NAME_LENGTH (32)
+#define HAILO_MAX_BOARD_NAME_LENGTH (32) /* 'HAILO_MAX_BOARD_NAME_LENGTH' is used by the ::hailo_device_identity_t board_name field, which is deprecated  */
 #define HAILO_MAX_DEVICE_ID_LENGTH (32)
 #define HAILO_MAX_SERIAL_NUMBER_LENGTH (16)
 #define HAILO_MAX_PART_NUMBER_LENGTH (16)
@@ -129,7 +129,7 @@ typedef uint16_t nms_bbox_counter_t;
     HAILO_STATUS__X(40, HAILO_INVALID_CONTENT_CERTIFICATE_SIZE        /*!< Invalid content certificate size */)\
     HAILO_STATUS__X(41, HAILO_MISMATCHING_FIRMWARE_BUFFER_SIZES       /*!< FW buffer sizes mismatch */)\
     HAILO_STATUS__X(42, HAILO_INVALID_FIRMWARE_CPU_ID                 /*!< Invalid CPU ID in FW */)\
-    HAILO_STATUS__X(43, HAILO_CONTROL_RESPONSE_MD5_MISMATCH           /*!< MD5 of control response does not match expected MD5 */)\
+    HAILO_STATUS__X(43, HAILO_CONTROL_RESPONSE_MD5_MISMATCH           /*!< deprecated, reserved (transport-level MD5 removed) */)\
     HAILO_STATUS__X(44, HAILO_GET_CONTROL_RESPONSE_FAIL               /*!< Get control response failed */)\
     HAILO_STATUS__X(45, HAILO_GET_D2H_EVENT_MESSAGE_FAIL              /*!< Reading device-to-host message failure */)\
     HAILO_STATUS__X(46, HAILO_MUTEX_INIT_FAIL                         /*!< Mutex initialization failure */)\
@@ -384,7 +384,7 @@ typedef struct {
 /** Hailo device type */
 typedef enum {
     HAILO_DEVICE_TYPE_PCIE,
-    HAILO_DEVICE_TYPE_ETH,
+    HAILO_DEVICE_TYPE_ETH, /* Deprecated: Ethernet devices no longer supported for hailo8 */
     HAILO_DEVICE_TYPE_INTEGRATED,
 
     /** Max enum value to maintain ABI Integrity */
@@ -459,8 +459,8 @@ typedef struct {
     uint32_t protocol_version;
     hailo_firmware_version_t fw_version;
     uint32_t logger_version;
-    uint8_t board_name_length;
-    char board_name[HAILO_MAX_BOARD_NAME_LENGTH];
+    uint8_t board_name_length DEPRECATED("board_name_length is deprecated. Use product_name_length instead.");
+    char board_name[HAILO_MAX_BOARD_NAME_LENGTH] DEPRECATED("board_name is deprecated. Use product_name instead.");
     bool is_release;
     bool extended_context_switch_buffer;
     hailo_device_architecture_t device_architecture;
@@ -2433,7 +2433,7 @@ HAILORTAPI hailo_status hailo_init_vdevice_params(hailo_vdevice_params_t *params
 /**
  * Creates a vdevice.
  * 
- * @param[in]  params        A @a hailo_vdevice_params_t (may be NULL). Can be initialzed to default values using ::hailo_init_vdevice_params.
+ * @param[in]  params        A @a hailo_vdevice_params_t (may be NULL). Can be initialized to default values using ::hailo_init_vdevice_params.
  * @param[out] vdevice       A pointer to a ::hailo_vdevice that receives the allocated vdevice.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns an ::hailo_status error.
  * @note To release a vdevice, call the ::hailo_release_vdevice function with the returned ::hailo_vdevice.
@@ -2445,7 +2445,7 @@ HAILORTAPI hailo_status hailo_create_vdevice(hailo_vdevice_params_t *params, hai
  *
  * @param[in]  vdevice                     A ::hailo_vdevice object to be configured.
  * @param[in]  hef                         A ::hailo_hef object to configure the @a vdevice by.
- * @param[in]  params                      A @a hailo_configure_params_t (may be NULL). Can be initialzed to default values using ::hailo_init_configure_params_by_vdevice.
+ * @param[in]  params                      A @a hailo_configure_params_t (may be NULL). Can be initialized to default values using ::hailo_init_configure_params_by_vdevice.
  * @param[out] network_groups              Array of network_groups that were loaded from the HEF file.
  * @param[inout] number_of_network_groups  As input - the size of network_groups array. As output - the number of network_groups loaded.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
@@ -2499,7 +2499,7 @@ HAILORTAPI hailo_status hailo_release_vdevice(hailo_vdevice vdevice);
  * @param[in]   dvm                Which DVM will be measured. Default (::HAILO_DVM_OPTIONS_AUTO) will be different according to the board: <br>
  *                                 - Default (::HAILO_DVM_OPTIONS_AUTO) for EVB is an approximation to the total power consumption of the chip in PCIe setups.
  *                                 It sums ::HAILO_DVM_OPTIONS_VDD_CORE, ::HAILO_DVM_OPTIONS_MIPI_AVDD and ::HAILO_DVM_OPTIONS_AVDD_H.
- *                                 Only ::HAILO_POWER_MEASUREMENT_TYPES__POWER can measured with this option.
+ *                                 Only ::HAILO_POWER_MEASUREMENT_TYPES__POWER can be measured with this option.
  *                                 - Default (::HAILO_DVM_OPTIONS_AUTO) for platforms supporting current monitoring (such as M.2 and mPCIe): OVERCURRENT_PROTECTION.
  * @param[in]   measurement_type   The type of the measurement. Choosing ::HAILO_POWER_MEASUREMENT_TYPES__AUTO
  *                                 will select the default value according to the supported features.
@@ -2536,7 +2536,7 @@ HAILORTAPI hailo_status hailo_start_power_measurement(hailo_device device,
  * @param[in]   dvm                Which DVM will be measured. Default (::HAILO_DVM_OPTIONS_AUTO) will be different according to the board: <br>
  *                                 - Default (::HAILO_DVM_OPTIONS_AUTO) for EVB is an approximation to the total power consumption of the chip in PCIe setups.
  *                                 It sums ::HAILO_DVM_OPTIONS_VDD_CORE, ::HAILO_DVM_OPTIONS_MIPI_AVDD and ::HAILO_DVM_OPTIONS_AVDD_H.
- *                                 Only ::HAILO_POWER_MEASUREMENT_TYPES__POWER can measured with this option.
+ *                                 Only ::HAILO_POWER_MEASUREMENT_TYPES__POWER can be measured with this option.
  *                                 - Default (::HAILO_DVM_OPTIONS_AUTO) for platforms supporting current monitoring (such as M.2 and mPCIe): OVERCURRENT_PROTECTION.
  * @param[in]   measurement_type   The type of the measurement. Choosing ::HAILO_POWER_MEASUREMENT_TYPES__AUTO
  *                                 will select the default value according to the supported features.
@@ -2851,7 +2851,7 @@ HAILORTAPI hailo_status hailo_init_configure_network_group_params_mipi_input(hai
  *
  * @param[in]  device                      A ::hailo_device object to be configured.
  * @param[in]  hef                         A ::hailo_hef object to configure the @a device by.
- * @param[in]  params                      A @a hailo_configure_params_t (may be NULL). Can be initialzed to default values using ::hailo_init_configure_params_by_device.
+ * @param[in]  params                      A @a hailo_configure_params_t (may be NULL). Can be initialized to default values using ::hailo_init_configure_params_by_device.
  * @param[out] network_groups              Array of network_groups that were loaded from the HEF file.
  * @param[inout] number_of_network_groups  As input - the size of network_groups array. As output - the number of network_groups loaded.
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
@@ -3013,7 +3013,7 @@ HAILORTAPI hailo_status hailo_get_latency_measurement(hailo_configured_network_g
  * @note Using this function is only allowed when scheduling_algorithm is not ::HAILO_SCHEDULING_ALGORITHM_NONE.
  * @note The default timeout is 0ms.
  * @note Currently, setting the timeout for a specific network is not supported.
- * @note The timeout may be ignored to prevent idle time from the device.
+ * @note The timeout may be ignored to prevent the device from becoming idle.
  */
 HAILORTAPI hailo_status hailo_set_scheduler_timeout(hailo_configured_network_group configured_network_group,
     uint32_t timeout_ms, const char *network_name);
@@ -3031,7 +3031,7 @@ HAILORTAPI hailo_status hailo_set_scheduler_timeout(hailo_configured_network_gro
  * @note Using this function is only allowed when scheduling_algorithm is not ::HAILO_SCHEDULING_ALGORITHM_NONE.
  * @note The default threshold is 0, which means HailoRT will apply an automatic heuristic to choose the threshold.
  * @note Currently, setting the threshold for a specific network is not supported.
- * @note The threshold may be ignored to prevent idle time from the device.
+ * @note The threshold may be ignored to prevent the device from becoming idle.
  */
 HAILORTAPI hailo_status hailo_set_scheduler_threshold(hailo_configured_network_group configured_network_group,
     uint32_t threshold, const char *network_name);
@@ -3673,7 +3673,7 @@ HAILORTAPI hailo_status hailo_release_output_demuxer(hailo_output_demuxer demuxe
  * 
  * @param[in]     demuxer            A ::hailo_output_demuxer object used for the demuxing.
  * @param[in]     src                A pointer to a buffer to be demultiplexed.
- * @param[in]     src_size           The number of bytes to demultiplexed. This number must be equal to the
+ * @param[in]     src_size           The number of bytes to demultiplex. This number must be equal to the
  *                                   hw_frame_size, and less than or equal to the size of @a src buffer.
  * @param[in,out] raw_buffers        A pointer to an array of ::hailo_stream_raw_buffer_t that receives the
  *                                   demultiplexed data read from the @a stream.
@@ -3690,7 +3690,7 @@ HAILORTAPI hailo_status hailo_demux_raw_frame_by_output_demuxer(hailo_output_dem
  *
  * @param[in]     demuxer              A ::hailo_output_demuxer object used for the demuxing.
  * @param[in]     src                  A pointer to a buffer to be demultiplexed.
- * @param[in]     src_size             The number of bytes to demultiplexed. This number must be equal to the
+ * @param[in]     src_size             The number of bytes to demultiplex. This number must be equal to the
  *                                     hw_frame_size, and less than or equal to the size of @a src buffer.
  * @param[in,out] raw_buffers_by_name  A pointer to an array of ::hailo_stream_raw_buffer_by_name_t that receives the
  *                                     demultiplexed data read from the @a stream. hailo_stream_raw_buffer_by_name_t::name should
@@ -3810,7 +3810,7 @@ HAILORTAPI hailo_status hailo_make_output_vstream_params(hailo_configured_networ
     size_t *output_params_count);
 
 /**
- * Gets output virtual stream groups for given network_group. The groups are splitted with respect to their low-level streams.
+ * Gets output virtual stream groups for given network_group. The groups are split with respect to their low-level streams.
  *
  * @param[in]  network_group                   Network group that owns the streams.
  * @param[out] output_name_by_group            List of params for output virtual streams.
@@ -3958,7 +3958,7 @@ HAILORTAPI hailo_status hailo_get_vstream_frame_size(hailo_vstream_info_t *vstre
 HAILORTAPI hailo_status hailo_vstream_write_raw_buffer(hailo_input_vstream input_vstream, const void *buffer, size_t buffer_size);
 
 /**
- * Writes thte buffer to hailo device via input virtual stream @a input_vstream.
+ * Writes the buffer to hailo device via input virtual stream @a input_vstream.
  *
  * @param[in] input_vstream    A ::hailo_input_vstream object.
  * @param[in] buffer           A pointer to the buffer containing

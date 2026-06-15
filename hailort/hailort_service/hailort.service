@@ -5,7 +5,7 @@ Documentation=https://github.com/hailo-ai/hailort
 [Service]
 Type=forking
 EnvironmentFile=/etc/default/hailort_service
-ExecStart=/usr/local/bin/hailort_service
+ExecStart=/usr/bin/hailort_service
 Restart=on-failure
 RemainAfterExit=yes
 PIDFile=/run/hailo/hailort_service.pid

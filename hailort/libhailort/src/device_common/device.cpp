@@ -39,9 +39,15 @@ namespace hailort
 #define WRITE_CHUNK_SIZE (1024)
 #define DEVICE_WORD_SIZE (4)
 
+static bool g_control_protocol__is_critical[HAILO_CONTROL_OPCODE_COUNT] = {
+#define CONTROL_PROTOCOL__OPCODE_X(name, is_critical, cpu_id) is_critical,
+    CONTROL_PROTOCOL__OPCODES_VARIABLES
+#undef CONTROL_PROTOCOL__OPCODE_X
+};
+
+
 Device::Device(Type type) :
     m_type(type),
-    m_control_sequence(0),
     m_is_control_version_supported(false),
     m_device_architecture(HAILO_ARCH_MAX_ENUM)
 {
@@ -221,11 +227,6 @@ bool Device::device_ids_equal(const std::string &first, const std::string &secon
         // first device does not match.
         return false;
     }
-}
-
-uint32_t Device::get_control_sequence()
-{
-    return m_control_sequence;
 }
 
 bool Device::is_control_version_supported()
@@ -545,35 +546,25 @@ hailo_status Device::update_fw_state()
     return HAILO_SUCCESS;
 }
 
-hailo_status Device::fw_interact(uint8_t *request_buffer, size_t request_size,
-    uint8_t *response_buffer, size_t *response_size)
+hailo_status Device::fw_interact(uint8_t *request_buffer, size_t request_size, uint8_t *response_buffer)
 {
     hailo_status status = HAILO_UNINITIALIZED;
     CONTROL_PROTOCOL__request_t *request = (CONTROL_PROTOCOL__request_t *)(request_buffer);
     uint32_t opcode = HAILO_CONTROL_OPCODE_COUNT;
     ASSERT(NULL != request_buffer);
     ASSERT(NULL != response_buffer);
-    hailo_cpu_id_t cpu_id;
 
-    opcode = BYTE_ORDER__ntohl(request->header.common_header.opcode);
+    opcode = BYTE_ORDER__dtohl(request->opcode);
+
     /* Make sure that the version is supported or opcode is critical */
-    if (!m_is_control_version_supported && 
-            !g_CONTROL_PROTOCOL__is_critical[opcode]){
+    if (!m_is_control_version_supported && !g_control_protocol__is_critical[opcode]) {
         LOGGER__ERROR(
                 "Operation {} is not allowed when FW version in not supported. Host supported FW version is {}.{}.{}",
-                BYTE_ORDER__ntohl(request->header.common_header.opcode),
-                FIRMWARE_VERSION_MAJOR, FIRMWARE_VERSION_MINOR, FIRMWARE_VERSION_REVISION
-                );     
+                opcode, FIRMWARE_VERSION_MAJOR, FIRMWARE_VERSION_MINOR, FIRMWARE_VERSION_REVISION);
         return HAILO_UNSUPPORTED_FW_VERSION;
     }
-    /* Get the CPU ID */
-    cpu_id = (hailo_cpu_id_t)g_CONTROL_PROTOCOL__cpu_id[opcode];
-    
-    status = this->fw_interact_impl(request_buffer, request_size, response_buffer, response_size, cpu_id);
 
-    // Always increment sequence
-    this->increment_control_sequence();
-    // Check this->fw_interact_impl
+    status = this->fw_interact_impl(request_buffer, request_size, response_buffer);
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;

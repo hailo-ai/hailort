@@ -5,7 +5,7 @@ include(FetchContent)
 FetchContent_Declare(
     pybind11
     GIT_REPOSITORY https://github.com/pybind/pybind11.git
-    GIT_TAG 80dc998efced8ceb2be59756668a7e90e8bef917 # Version 2.10.1
+    GIT_TAG a2e59f0e7065404b44dfe92a28aca47ba1378dc4 # Version 2.13.6
     GIT_SHALLOW TRUE
     SOURCE_DIR ${HAILO_EXTERNAL_DIR}/pybind11-src
     SUBBUILD_DIR ${HAILO_EXTERNAL_DIR}/pybind11-subbuild

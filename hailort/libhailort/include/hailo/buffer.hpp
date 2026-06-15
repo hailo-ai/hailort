@@ -32,7 +32,7 @@ using BufferPtr = std::shared_ptr<Buffer>;
 using BufferStoragePtr = std::shared_ptr<BufferStorage>;
 
 
-/*! Buffer storage parameters. Analogical to hailo_buffer_parameters_t */
+/*! Buffer storage parameters. Analogous to hailo_buffer_parameters_t */
 struct HAILORTAPI BufferStorageParams
 {
 public:

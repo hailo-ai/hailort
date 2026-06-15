@@ -27,10 +27,10 @@ public:
      * Creates vstreams pipelines to be used later for inference by calling the InferVStreams::infer() function. 
      *
      * @param[in] net_group                    A ConfiguredNetworkGroup to run the inference on.
-     * @param[in] input_params                 A mapping of input vstream name to its' params. Can be achieved by calling 
+     * @param[in] input_params                 A mapping of input vstream name to its params. Can be achieved by calling 
      *                                         ConfiguredNetworkGroup::make_input_vstream_params() or Hef::make_input_vstream_params
      *                                         functions.
-     * @param[in] output_params                A mapping of output vstream name to its' params. Can be achieved by calling 
+     * @param[in] output_params                A mapping of output vstream name to its params. Can be achieved by calling 
      *                                         ConfiguredNetworkGroup::make_output_vstream_params() or Hef::make_output_vstream_params()
      *                                         functions.
      * @return Upon success, returns Expected of InferVStreams. Otherwise, returns Unexpected of ::hailo_status error.

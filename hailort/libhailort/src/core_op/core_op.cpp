@@ -19,7 +19,6 @@
 #include "eth/eth_stream.hpp"
 #include "vdma/vdma_stream.hpp"
 #include "mipi/mipi_stream.hpp"
-#include "device_common/control_protocol.hpp"
 #include "stream_common/nms_stream.hpp"
 #include "stream_common/remote_process_stream.hpp"
 

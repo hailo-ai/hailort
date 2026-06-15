@@ -4,9 +4,12 @@
  **/
 /**
  * @file eth_device.hpp
- * @brief TODO: brief
+ * @brief EthernetDevice class.
  *
- * TODO: doc
+ * DEPRECATED: ethernet/UDP firmware control is no longer supported. This class
+ * is retained as a header-only stub so that legacy call sites continue to
+ * compile; every method now returns HAILO_NOT_SUPPORTED. The class will be
+ * removed in a future release.
  **/
 
 #ifndef HAILO_ETH_DEVICE_H_
@@ -23,59 +26,119 @@
 namespace hailort
 {
 
+// DEPRECATED: ethernet/UDP fw-control is no longer supported; all methods are stubs.
 class EthernetDevice : public DeviceBase {
 public:
-    virtual hailo_status fw_interact_impl(uint8_t *request_buffer, size_t request_size,
-        uint8_t *response_buffer, size_t *response_size, hailo_cpu_id_t cpu_id) override;
-    virtual Expected<size_t> read_log(MemoryView &buffer, hailo_cpu_id_t cpu_id) override;
-    virtual hailo_status wait_for_wakeup() override;
-    virtual void increment_control_sequence() override;
-    virtual void shutdown_core_ops() override;
-    virtual hailo_reset_device_mode_t get_default_reset_mode() override;
-    virtual hailo_status reset_impl(CONTROL_PROTOCOL__reset_type_t reset_type) override;
+    virtual hailo_status fw_interact_impl(uint8_t *request_buffer, size_t request_size, uint8_t *response_buffer) override
+    {
+        (void)request_buffer;
+        (void)request_size;
+        (void)response_buffer;
+        return HAILO_NOT_SUPPORTED;
+    }
+
+    virtual Expected<size_t> read_log(MemoryView &buffer, hailo_cpu_id_t cpu_id) override
+    {
+        (void)buffer;
+        (void)cpu_id;
+        return make_unexpected(HAILO_NOT_SUPPORTED);
+    }
+
+    virtual hailo_status wait_for_wakeup() override
+    {
+        return HAILO_NOT_SUPPORTED;
+    }
+
+    virtual void shutdown_core_ops() override {}
+
+    virtual hailo_reset_device_mode_t get_default_reset_mode() override
+    {
+        return HAILO_RESET_DEVICE_MODE_CHIP;
+    }
+
+    virtual hailo_status reset_impl(CONTROL_PROTOCOL__reset_type_t reset_type) override
+    {
+        (void)reset_type;
+        return HAILO_NOT_SUPPORTED;
+    }
 
     virtual bool is_stream_interface_supported(const hailo_stream_interface_t &stream_interface) const override
     {
-        switch (stream_interface) {
-        case HAILO_STREAM_INTERFACE_PCIE:
-        case HAILO_STREAM_INTERFACE_INTEGRATED:
-            return false;
-        case HAILO_STREAM_INTERFACE_ETH:
-        case HAILO_STREAM_INTERFACE_MIPI:
-            return true;
-        default:
-            LOGGER__ERROR("Invalid stream interface");
-            return false;
-        }
+        (void)stream_interface;
+        return false;
     }
 
     static Expected<std::vector<hailo_eth_device_info_t>> scan(const std::string &interface_name,
-        std::chrono::milliseconds timeout);
-    static Expected<std::vector<hailo_eth_device_info_t>> scan_by_host_address(const std::string &host_address,
-        std::chrono::milliseconds timeout);
-    static Expected<hailo_eth_device_info_t> parse_eth_device_info(const std::string &ip_addr, bool log_on_failure);
+        std::chrono::milliseconds timeout)
+    {
+        (void)interface_name;
+        (void)timeout;
+        return make_unexpected(HAILO_NOT_SUPPORTED);
+    }
 
-    static Expected<std::unique_ptr<EthernetDevice>> create(const hailo_eth_device_info_t &device_info);
-    static Expected<std::unique_ptr<EthernetDevice>> create(const std::string &ip_addr);
-    hailo_eth_device_info_t get_device_info() const;
-    virtual const char* get_dev_id() const override;
+    static Expected<std::vector<hailo_eth_device_info_t>> scan_by_host_address(const std::string &host_address,
+        std::chrono::milliseconds timeout)
+    {
+        (void)host_address;
+        (void)timeout;
+        return make_unexpected(HAILO_NOT_SUPPORTED);
+    }
+
+    static Expected<hailo_eth_device_info_t> parse_eth_device_info(const std::string &ip_addr, bool log_on_failure)
+    {
+        (void)ip_addr;
+        (void)log_on_failure;
+        return make_unexpected(HAILO_NOT_SUPPORTED);
+    }
+
+    static Expected<std::unique_ptr<EthernetDevice>> create(const hailo_eth_device_info_t &device_info)
+    {
+        (void)device_info;
+        return make_unexpected(HAILO_NOT_SUPPORTED);
+    }
+
+    static Expected<std::unique_ptr<EthernetDevice>> create(const std::string &ip_addr)
+    {
+        (void)ip_addr;
+        return make_unexpected(HAILO_NOT_SUPPORTED);
+    }
+
+    hailo_eth_device_info_t get_device_info() const
+    {
+        return {};
+    }
+
+    virtual const char* get_dev_id() const override
+    {
+        return "";
+    }
 
 protected:
-    virtual Expected<D2H_EVENT_MESSAGE_t> read_notification() override;
-    virtual hailo_status disable_notifications() override;
-    virtual Expected<ConfiguredNetworkGroupVector> add_hef(Hef &hef, const NetworkGroupsParamsMap &configure_params) override;
+    virtual Expected<D2H_EVENT_MESSAGE_t> read_notification() override
+    {
+        return make_unexpected(HAILO_NOT_SUPPORTED);
+    }
+
+    virtual hailo_status disable_notifications() override
+    {
+        return HAILO_NOT_SUPPORTED;
+    }
+
+    virtual Expected<ConfiguredNetworkGroupVector> add_hef(Hef &hef, const NetworkGroupsParamsMap &configure_params) override
+    {
+        (void)hef;
+        (void)configure_params;
+        return make_unexpected(HAILO_NOT_SUPPORTED);
+    }
 
 private:
-    EthernetDevice(const hailo_eth_device_info_t &device_info, Udp &&control_udp, hailo_status &status);
-    Expected<ConfiguredNetworkGroupVector> create_networks_group_vector(Hef &hef, const NetworkGroupsParamsMap &configure_params);
-    Expected<std::vector<WriteMemoryInfo>> create_core_op_metadata(Hef &hef, const std::string &core_op_name, uint32_t partial_clusters_layout_bitmap);
-
-    const hailo_eth_device_info_t m_device_info;
-    std::string m_device_id;
-    Udp m_control_udp;
-    // TODO - HRT-13234, move to DeviceBase
-    std::vector<std::weak_ptr<CoreOp>> m_core_ops;
-    ActiveCoreOpHolder m_active_core_op_holder;
+    EthernetDevice(const hailo_eth_device_info_t &device_info, Udp &&control_udp, hailo_status &status) :
+        DeviceBase::DeviceBase(Device::Type::ETH)
+    {
+        (void)device_info;
+        (void)control_udp;
+        status = HAILO_NOT_SUPPORTED;
+    }
 };
 
 } /* namespace hailort */

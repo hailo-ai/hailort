@@ -924,7 +924,7 @@ Expected<Buffer> IdentifyDeviceSerializer::serialize_reply(hailo_status status, 
     auto proto_identity = reply.mutable_identity();
     proto_identity->set_protocol_version(identity.protocol_version);
     proto_identity->set_logger_version(identity.logger_version);
-    proto_identity->set_board_name(identity.board_name);
+    proto_identity->set_board_name("");
     proto_identity->set_is_release(identity.is_release);
     proto_identity->set_extended_context_switch_buffer(identity.extended_context_switch_buffer);
     proto_identity->set_device_architecture(static_cast<DeviceArchitectureProto>(identity.device_architecture));
@@ -966,9 +966,6 @@ Expected<std::tuple<hailo_status, hailo_device_identity_t>> IdentifyDeviceSerial
     identity.is_release = reply.identity().is_release();
     identity.extended_context_switch_buffer = reply.identity().extended_context_switch_buffer();
     identity.device_architecture = static_cast<hailo_device_architecture_t>(reply.identity().device_architecture());
-
-    std::memcpy(identity.board_name, reply.identity().board_name().c_str(), reply.identity().board_name().size());
-    identity.board_name_length = static_cast<uint8_t>(reply.identity().board_name().size());
 
     std::transform(reply.identity().serial_number().begin(), reply.identity().serial_number().end(), identity.serial_number, [](uint32_t val) {
         return static_cast<uint8_t>(val);

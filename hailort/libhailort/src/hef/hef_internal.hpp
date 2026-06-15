@@ -37,7 +37,6 @@
 #include "hef/layer_info.hpp"
 #include "hef/context_switch_actions.hpp"
 #include "net_flow/ops/op.hpp"
-#include "device_common/control_protocol.hpp"
 
 #include "common/file_utils.hpp"
 
@@ -46,6 +45,7 @@
 #include <bitset>
 #include <memory>
 #include <fstream>
+#include <unordered_map>
 
 extern "C" {
 #include "md5.h"
@@ -274,6 +274,7 @@ struct ExternalResourceInfo
     std::string name;
     uint64_t size;
     uint64_t offset;
+    uint64_t xxhash;
 };
 
 class Hef::Impl final
@@ -378,6 +379,8 @@ public:
 
     Expected<std::string> get_description(bool stream_infos, bool vstream_infos, hailo_device_architecture_t device_arch);
     Expected<std::map<std::string, std::string>> get_external_resources() const; // Key is reosucre name, value is resource data in bytes
+    Expected<MemoryView> get_external_resources(const std::string &resource_name) const;
+    std::vector<std::string> get_external_resource_names() const;
 
 
     const MemoryView get_hash_as_memview() const
@@ -484,7 +487,7 @@ private:
     ProtoHEFHeader m_header;
     ProtoHEFIncludedFeatures m_included_features;
     SupportedFeatures m_supported_features;
-    std::vector<ExternalResourceInfo> m_hef_external_resources;
+    std::unordered_map<std::string, ExternalResourceInfo> m_hef_external_resources;
     std::vector<ProtoHEFNetworkGroupPtr> m_groups;
     std::map<std::string, std::vector<ProtoHEFCoreOpMock>> m_core_ops_per_group;
     std::map<std::string, std::vector<net_flow::PostProcessOpMetadataPtr>> m_post_process_ops_metadata_per_group;

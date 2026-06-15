@@ -46,9 +46,9 @@ SgEdgeLayer::SgEdgeLayer(std::shared_ptr<SgBuffer> &&buffer, DescriptorList &&de
     m_channel_id(channel_id)
 {}
 
-uint64_t SgEdgeLayer::dma_address() const
+desc_list_handle_t SgEdgeLayer::handle() const
 {
-    return m_desc_list.dma_address();
+    return m_desc_list.handle();
 }
 
 uint16_t SgEdgeLayer::desc_page_size() const

@@ -6,8 +6,10 @@
 #ifndef _HAILO_IOCTL_COMMON_H_
 #define _HAILO_IOCTL_COMMON_H_
 
+#include "control_protocol.h"
+
 #define HAILO_DRV_VER_MAJOR 4
-#define HAILO_DRV_VER_MINOR 23
+#define HAILO_DRV_VER_MINOR 24
 #define HAILO_DRV_VER_REVISION 0
 
 #define _STRINGIFY_EXPANDED( x ) #x
@@ -50,10 +52,6 @@ enum hailo_pcie_soc_interrupt_masks {
 
 #if !defined(__cplusplus) && defined(NTDDI_VERSION)
 #include <wdm.h>
-typedef ULONG uint32_t;
-typedef UCHAR uint8_t;
-typedef USHORT uint16_t;
-typedef ULONGLONG uint64_t;
 #endif /*  !defined(__cplusplus) && defined(NTDDI_VERSION) */
 
 
@@ -237,11 +235,10 @@ struct hailo_vdma_buffer_unmap_params {
 
 /* structure used in ioctl HAILO_DESC_LIST_CREATE */
 struct hailo_desc_list_create_params {
-    size_t desc_count;          // in
-    uint16_t desc_page_size;    // in
-    bool is_circular;           // in
-    uintptr_t desc_handle;      // out
-    uint64_t dma_address;       // out
+    size_t desc_count;       // in
+    uint16_t desc_page_size; // in
+    bool is_circular;        // in
+    uint64_t desc_handle;    // out
 };
 
 /* structure used in ioctl HAILO_DESC_LIST_RELEASE */
@@ -330,30 +327,18 @@ struct hailo_vdma_interrupts_read_timestamp_params {
     struct hailo_channel_interrupt_timestamp timestamps[CHANNEL_IRQ_TIMESTAMPS_SIZE];   // out
 };
 
-/* structure used in ioctl HAILO_FW_CONTROL */
-#define MAX_CONTROL_LENGTH  (1500)
-#define PCIE_EXPECTED_MD5_LENGTH (16)
-
-
-/* structure used in ioctl	HAILO_FW_CONTROL and HAILO_READ_LOG */
-enum hailo_cpu_id {
-    HAILO_CPU_ID_CPU0 = 0,
-    HAILO_CPU_ID_CPU1,
-    HAILO_CPU_ID_NONE,
-
-    /** Max enum value to maintain ABI Integrity */
-    HAILO_CPU_MAX_ENUM = INT_MAX,
-};
+#if !defined(HAILO_EMULATOR)
+#define FW_CONTROL_DEFAULT_TIMEOUT_MS (1000)
+#else /* !defined(HAILO_EMULATOR) */
+#define FW_CONTROL_DEFAULT_TIMEOUT_MS (50000)
+#endif /* !defined(HAILO_EMULATOR) */
 
 struct hailo_fw_control {
-    // expected_md5+buffer_len+buffer must be in this order at the start of the struct
-    uint8_t   expected_md5[PCIE_EXPECTED_MD5_LENGTH];
-    uint32_t  buffer_len;
-    uint8_t   buffer[MAX_CONTROL_LENGTH];
-    uint32_t timeout_ms;
-    enum hailo_cpu_id cpu_id;
+    uint32_t request_len;
+    CONTROL_PROTOCOL__request_t request;
+    uint32_t response_len;
+    CONTROL_PROTOCOL__response_t response;
 };
-
 
 
 /* structure used in ioctl HAILO_VDMA_BUFFER_SYNC */
@@ -432,9 +417,9 @@ struct hailo_driver_info {
 #define MAX_FW_LOG_BUFFER_LENGTH  (512)
 
 struct hailo_read_log_params {
-    enum hailo_cpu_id cpu_id;                   // in
-    uint8_t buffer[MAX_FW_LOG_BUFFER_LENGTH];   // out
+    bool is_app_cpu;                            // in
     size_t buffer_size;                         // in
+    uint8_t buffer[MAX_FW_LOG_BUFFER_LENGTH];   // out
     size_t read_bytes;                          // out
 };
 

@@ -294,7 +294,7 @@ public:
     }
 
     /**
-     * @returns the stream's description containing it's name and index.
+     * @returns the stream's description containing its name and index.
      */
     virtual std::string to_string() const;
 
@@ -428,7 +428,7 @@ public:
     }
 
     /**
-     * @returns the stream's description containing it's name and index.
+     * @returns the stream's description containing its name and index.
      */
     virtual std::string to_string() const;
 

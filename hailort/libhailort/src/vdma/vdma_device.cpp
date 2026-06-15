@@ -29,12 +29,6 @@
 namespace hailort
 {
 
-#ifndef HAILO_EMULATOR
-static constexpr std::chrono::milliseconds DEFAULT_TIMEOUT(1000);
-#else /* ifndef HAILO_EMULATOR */
-static constexpr std::chrono::milliseconds DEFAULT_TIMEOUT(50000);
-#endif /* ifndef HAILO_EMULATOR */
-
 VdmaDevice::VdmaDevice(std::unique_ptr<HailoRTDriver> &&driver, Device::Type type, hailo_status &status) :
     DeviceBase::DeviceBase(type),
     m_driver(std::move(driver)),
@@ -69,32 +63,9 @@ hailo_status VdmaDevice::disable_notifications()
     return m_driver->disable_notifications();
 }
 
-hailo_status VdmaDevice::fw_interact_impl(uint8_t *request_buffer, size_t request_size,
-        uint8_t *response_buffer, size_t *response_size, hailo_cpu_id_t cpu_id)
+hailo_status VdmaDevice::fw_interact_impl(uint8_t *request_buffer, size_t request_size, uint8_t *response_buffer)
 {
-    uint8_t request_md5[PCIE_EXPECTED_MD5_LENGTH];
-    MD5_CTX ctx;
-
-    MD5_Init(&ctx);
-    MD5_Update(&ctx, request_buffer, request_size);
-    MD5_Final(request_md5, &ctx);
-
-    uint8_t response_md5[PCIE_EXPECTED_MD5_LENGTH];
-    uint8_t expected_response_md5[PCIE_EXPECTED_MD5_LENGTH];
-
-    auto status = m_driver->fw_control(request_buffer, request_size, request_md5,
-        response_buffer, response_size, response_md5,
-        DEFAULT_TIMEOUT, cpu_id);
-    CHECK_SUCCESS(status, "Failed to send fw control");
-
-    MD5_Init(&ctx);
-    MD5_Update(&ctx, response_buffer, (*response_size));
-    MD5_Final(expected_response_md5, &ctx);
-
-    auto memcmp_result = memcmp(expected_response_md5, response_md5, sizeof(response_md5));
-    CHECK(0 == memcmp_result, HAILO_INTERNAL_FAILURE, "MD5 validation of control response failed.");
-
-    return HAILO_SUCCESS;
+    return m_driver->fw_control(request_buffer, request_size, response_buffer);
 }
 
 hailo_status VdmaDevice::clear_configured_apps()
@@ -195,14 +166,6 @@ Expected<size_t> VdmaDevice::read_log(MemoryView &buffer, hailo_cpu_id_t cpu_id)
     status = m_driver->read_log(buffer.data(), buffer.size(), &read_bytes, cpu_id);
     CHECK_SUCCESS_AS_EXPECTED(status);
     return read_bytes;
-}
-
-void VdmaDevice::increment_control_sequence()
-{
-    // To support multiprocess the sequence must remain 0 which is a number the FW ignores.
-    // Otherwise the FW might get the same sequence number from several processes which
-    // cause the command to be discarded.
-    m_control_sequence = 0;
 }
 
 hailo_reset_device_mode_t VdmaDevice::get_default_reset_mode()

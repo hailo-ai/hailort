@@ -101,7 +101,7 @@ namespace hailort
 /* Forces using descriptor-lists instead of CCB for inter-context-channels on h1x devices */
 #define HAILO_FORCE_INFER_CONTEXT_CHANNEL_OVER_DESC_ENV_VAR ("HAILO_FORCE_INFER_CONTEXT_CHANNEL_OVER_DESC")
 
-/* Determines the size of each mapped buffer into which the ccws section will be splitted to.
+/* Determines the size of each mapped buffer into which the ccws section will be split to.
     Relevant only when the aligned_ccws feature is enbabled */
 #define HAILO_ALIGNED_CCWS_MAPPED_BUFFER_SIZE_ENV_VAR ("HAILO_ALIGNED_CCWS_MAPPED_BUFFER_SIZE")
 #define HAILO_ALIGNED_CCWS_MAPPED_BUFFER_SIZE (2 * 1024 * 1024)

@@ -14,7 +14,6 @@
 #include "hailo/buffer.hpp"
 #include "vdma/driver/hailort_driver.hpp"
 #include "control_protocol.h"
-#include "common/internal_env_vars.hpp"
 
 #include <vector>
 
@@ -24,24 +23,39 @@ namespace hailort
 
 class ActionListBufferBuilder {
 public:
-    static Expected<std::shared_ptr<ActionListBufferBuilder>> create();
+    static Expected<std::shared_ptr<ActionListBufferBuilder>> create()
+    {
+        return make_shared_nothrow<ActionListBufferBuilder>();
+    }
 
     ActionListBufferBuilder() = default;
     ~ActionListBufferBuilder() = default;
 
-    hailo_status build_context(MemoryView action,
-        CONTROL_PROTOCOL__context_switch_context_type_t context_type, bool is_new_context);
-    size_t get_action_list_buffer_size() const;
-    Expected<uint64_t> write_controls_to_ddr(HailoRTDriver &driver);
+    hailo_status new_context(
+        std::vector<CONTROL_PROTOCOL__host_buffer_info_t> &&context_buffers,
+        CONTROL_PROTOCOL__context_switch_context_type_t context_type);
 
-    const std::vector<CONTROL_PROTOCOL__context_switch_context_info_chunk_t> &get_controls() const {
+    hailo_status add_action(MemoryView action);
+    size_t get_action_list_buffer_size() const;
+
+    const std::vector<CONTROL_PROTOCOL__context_switch_context_info_chunk_t> &get_list_in_chunks() const
+    {
         return m_controls;
     }
+
 private:
-    void start_new_control(CONTROL_PROTOCOL__context_switch_context_type_t context_type, bool is_new_context);
-    bool has_space_for_action(uint32_t action_size);
-    CONTROL_PROTOCOL__context_switch_context_info_chunk_t &current_control();
+    bool has_space_for_action(uint32_t action_size)
+    {
+        auto new_size = m_controls.back().context_network_data_length + action_size;
+        return new_size <= CONTROL_PROTOCOL__CONTEXT_NETWORK_DATA_SINGLE_CONTROL_MAX_SIZE;
+    }
+
+    void start_new_control();
+
     std::vector<CONTROL_PROTOCOL__context_switch_context_info_chunk_t> m_controls;
+    CONTROL_PROTOCOL__context_switch_dma_addr_translation_table_t m_translation_table;
+    CONTROL_PROTOCOL__context_switch_context_type_t m_context_type;
+    bool m_is_first_action_in_context = false;
 };
 
 } /* namespace hailort */

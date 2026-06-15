@@ -519,7 +519,6 @@ static hailo_status gst_hailonet_toggle_activation(GstHailoNet *self, gboolean o
 
     if (self->impl->props.m_scheduling_algorithm.was_changed() && (HAILO_SCHEDULING_ALGORITHM_NONE != self->impl->props.m_scheduling_algorithm.get())) {
         g_error("scheduling-algorithm different than HAILO_SCHEDULING_ALGORITHM_NONE in combination with 'is-active' is not supported.");
-        return HAILO_INVALID_OPERATION;
     }
 
     if (self->impl->has_called_activate) {
@@ -564,7 +563,6 @@ static void gst_hailonet_set_property(GObject *object, guint property_id, const 
         if (0 != self->impl->props.m_device_count.get()) {
             g_error("device-id and device-count excludes eachother. received device-id=%s, device-count=%d",
                 g_value_get_string(value), self->impl->props.m_device_count.get());
-            break;
         }
         if (self->impl->is_configured) {
             g_warning("The network was already configured so changing the device ID will not take place!");
@@ -576,7 +574,6 @@ static void gst_hailonet_set_property(GObject *object, guint property_id, const 
         if (!self->impl->props.m_device_id.get().empty()) {
             g_error("device-id and device-count excludes eachother. received device-id=%s, device-count=%d",
                 self->impl->props.m_device_id.get().c_str(), g_value_get_uint(value));
-            break;
         }
         if (self->impl->is_configured) {
             g_warning("The network was already configured so changing the device count will not take place!");
@@ -621,7 +618,6 @@ static void gst_hailonet_set_property(GObject *object, guint property_id, const 
         }
         if (self->impl->props.m_is_active.was_changed() && (g_value_get_enum(value) != HAILO_SCHEDULING_ALGORITHM_NONE)) {
             g_error("scheduling-algorithm different than HAILO_SCHEDULING_ALGORITHM_NONE in combination with 'is-active' is not supported.");
-            break;
         }
         self->impl->props.m_scheduling_algorithm = static_cast<hailo_scheduling_algorithm_t>(g_value_get_enum(value));
         break;

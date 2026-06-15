@@ -613,7 +613,7 @@ hailo_status DeviceBase::check_hef_is_compatible(Hef &hef)
 
     if ((static_cast<ProtoHEFHwArch>(HEFHwArch::HW_ARCH__HAILO8L) == hef.pimpl->get_device_arch()) &&
         (HAILO_ARCH_HAILO8 == device_arch)) {
-        LOGGER__WARNING("HEF was compiled for Hailo8L device, while the device itself is Hailo8. " \
+        LOGGER__DEBUG("HEF was compiled for Hailo8L device, while the device itself is Hailo8. " \
         "This will result in lower performance.");
     } else if ((static_cast<ProtoHEFHwArch>(HEFHwArch::HW_ARCH__HAILO15M) == hef.pimpl->get_device_arch()) &&
         (HAILO_ARCH_HAILO15H == device_arch)) {

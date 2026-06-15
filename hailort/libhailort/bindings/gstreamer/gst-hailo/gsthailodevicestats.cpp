@@ -113,7 +113,6 @@ void HailoDeviceStatsImpl::set_property(GObject *object, guint property_id, cons
 
     if ((object == nullptr) || (value == nullptr) || (pspec == nullptr)) {
         g_error("set_property got null parameter!");
-        return;
     }
 
     switch (property_id) {
@@ -145,7 +144,6 @@ void HailoDeviceStatsImpl::get_property(GObject *object, guint property_id, GVal
 
     if ((object == nullptr) || (value == nullptr) || (pspec == nullptr)) {
         g_error("get_property got null parameter!");
-        return;
     }
 
     switch (property_id) {

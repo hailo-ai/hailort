@@ -26,7 +26,7 @@ PowerMeasurementSubcommand::PowerMeasurementSubcommand(CLI::App &parent_app) :
                 "DVM type. \n\
 Which DVM will be measured. Default (AUTO) will be different according to the board: \n\
 Default (AUTO) for EVB is an approximation to the total power consumption of the chip in PCIe setups. \n\
-It sums VDD_CORE, MIPI_AVDD and AVDD_H. Only POWER can measured with this option. \n\
+It sums VDD_CORE, MIPI_AVDD and AVDD_H. Only POWER can be measured with this option. \n\
 Default (AUTO) for platforms supporting current monitoring (such as M.2 and mPCIe): OVERCURRENT_PROTECTION"));
     init_measurement_type_option(m_app->add_option("--type", m_params.measurement_type, "Power Measurement type"));
     init_sampling_period_option(sampling_period);

@@ -42,7 +42,7 @@ public:
         return Type::SCATTER_GATHER;
     }
 
-    virtual uint64_t dma_address() const override;
+    virtual desc_list_handle_t handle() const override;
     virtual uint16_t desc_page_size() const override;
     virtual uint32_t descs_count() const override;
 

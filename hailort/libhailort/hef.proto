@@ -16,6 +16,7 @@ message ProtoHEFExternalResource {
     uint64 offset = 1;
     uint64 size = 2;
     string name = 3;
+    uint64 xxhash = 4;
 }
 
 message ProtoHEFIncludedFeatures {
