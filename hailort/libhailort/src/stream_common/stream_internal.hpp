@@ -38,7 +38,6 @@
 #include "hailo/hailort_common.hpp"
 
 #include "vdma/channel/transfer_common.hpp"
-#include "device_common/control_protocol.hpp"
 #include "hef/layer_info.hpp"
 
 

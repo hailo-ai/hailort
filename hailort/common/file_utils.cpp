@@ -113,6 +113,14 @@ hailo_status FileReader::read_from_offset(uint64_t offset, MemoryView dst, size_
     return HAILO_SUCCESS;
 }
 
+Expected<MemoryView> FileReader::read_from_offset_as_memview(uint64_t offset, size_t size)
+{
+    (void)offset;
+    (void)size;
+    LOGGER__ERROR("Reading from offset as memview is not supported when reading from file");
+    return make_unexpected(HAILO_NOT_SUPPORTED);
+}
+
 hailo_status FileReader::open()
 {
     if (nullptr == m_fstream) { // The first call to open creates the ifstream object
@@ -203,6 +211,12 @@ hailo_status BufferReader::read_from_offset(uint64_t offset, MemoryView dst, siz
 {
     memcpy(dst.data(), m_memview.data() + offset, size);
     return HAILO_SUCCESS;
+}
+
+Expected<MemoryView> BufferReader::read_from_offset_as_memview(uint64_t offset, size_t size)
+{
+    assert(m_memview.data() + offset + size <= m_memview.data() + m_memview.size());
+    return MemoryView((m_memview.data() + offset), size);
 }
 
 hailo_status BufferReader::open()

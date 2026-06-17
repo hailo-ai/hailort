@@ -234,8 +234,9 @@ vdma::ChannelId ConfigBuffer::channel_id() const
 CONTROL_PROTOCOL__host_buffer_info_t ConfigBuffer::get_host_buffer_info() const
 {
     if (m_aligned_ccws) {
-        return vdma::VdmaEdgeLayer::get_host_buffer_info(vdma::VdmaEdgeLayer::Type::SCATTER_GATHER, m_desc_list->dma_address(),
-            m_desc_list->desc_page_size(), m_desc_list->count(), m_acc_desc_count * m_desc_list->desc_page_size());
+        return vdma::VdmaEdgeLayer::get_host_buffer_info(vdma::VdmaEdgeLayer::Type::SCATTER_GATHER,
+            m_desc_list->handle(), m_desc_list->desc_page_size(), m_desc_list->count(),
+            m_acc_desc_count * m_desc_list->desc_page_size());
     } else {
         return m_buffer->get_host_buffer_info(m_acc_desc_count * m_buffer->desc_page_size());
     }

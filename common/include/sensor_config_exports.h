@@ -1,6 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0
 /**
  * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
- * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
  * @file sensor_config_exports.h
@@ -10,6 +10,7 @@
 #ifndef __SENSOR_CONFIG_EXPORT__
 #define __SENSOR_CONFIG_EXPORT__
 
+#include "type_utils.h"
 
 #define MAX_CONFIG_NAME_LEN 100 
 

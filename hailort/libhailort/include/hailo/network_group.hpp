@@ -61,7 +61,7 @@ using InputStreamRefVector = std::vector<std::reference_wrapper<InputStream>>;
 /** Represents a vector of OutputStream */
 using OutputStreamRefVector = std::vector<std::reference_wrapper<OutputStream>>;
 
-/** Represents a mapping of vstream name to its' params */
+/** Represents a mapping of vstream name to its params */
 using NameToVStreamParamsMap = std::unordered_map<std::string, hailo_vstream_params_t>;
 
 /** Represents a vector of pairs of OutputStream and NameToVStreamParamsMap */
@@ -298,7 +298,7 @@ public:
         const std::string &network_name="") = 0;
 
     /**
-     * Creates output virtual stream params. The groups are splitted with respect to their low-level streams.
+     * Creates output virtual stream params. The groups are split with respect to their low-level streams.
      *
      * @param[in]  unused                   Unused.
      * @param[in]  format_type              The default format type for all output virtual streams.
@@ -311,7 +311,7 @@ public:
         bool unused, hailo_format_type_t format_type, uint32_t timeout_ms, uint32_t queue_size) = 0;
 
     /**
-     * Gets output virtual stream groups for given network_group. The groups are splitted with respect to their low-level streams.
+     * Gets output virtual stream groups for given network_group. The groups are split with respect to their low-level streams.
      *
      * @return Upon success, returns Expected of a map of vstream name to group index.
      *         Otherwise, returns Unexpected of ::hailo_status error.

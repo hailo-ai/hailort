@@ -4,9 +4,12 @@
  **/
 /**
  * @file eth_stream.hpp
- * @brief TODO: brief
+ * @brief EthernetInputStream / EthernetOutputStream classes.
  *
- * TODO: doc
+ * DEPRECATED: ethernet/UDP firmware control is no longer supported. These
+ * classes are retained as header-only stubs so that legacy call sites continue
+ * to compile; every method now returns HAILO_NOT_SUPPORTED. They will be
+ * removed in a future release.
  **/
 
 #ifndef HAILO_ETH_STREAM_H_
@@ -17,7 +20,6 @@
 #include "hailo/device.hpp"
 #include "hailo/event.hpp"
 
-#include "eth/token_bucket.hpp"
 #include "eth/udp.hpp"
 #include "stream_common/stream_internal.hpp"
 
@@ -29,7 +31,8 @@
 namespace hailort
 {
 
-// TODO: move those structs to hailort.h when implemented
+// DEPRECATED: ethernet/UDP fw-control is no longer supported. Configuration
+// structs and stream classes below are stubs retained for source compatibility.
 typedef struct {
     uint16_t max_payload_size;
     bool use_dataflow_padding;
@@ -46,150 +49,180 @@ typedef struct {
     uint32_t buffers_threshold;
 } hailo_stream_eth_output_configuration_t;
 
+// DEPRECATED: ethernet/UDP fw-control is no longer supported; all methods are stubs.
 class EthernetInputStream : public InputStreamBase {
 private:
-    hailo_stream_eth_input_configuration_t configuration;
-    Udp m_udp;
-    bool m_is_stream_activated;
-    Device &m_device;
-
-    hailo_status eth_stream__config_input_sync_params(uint32_t frames_per_sync);
-    hailo_status eth_stream__write_all_no_sync(const void *buffer, size_t offset, size_t size);
-    hailo_status eth_stream__write_all_with_sync(const void *buffer, size_t offset, size_t size);
-    hailo_status set_timeout(std::chrono::milliseconds timeout);
-    void set_max_payload_size(uint16_t size);
+    hailo_status set_timeout(std::chrono::milliseconds timeout) override
+    {
+        (void)timeout;
+        return HAILO_NOT_SUPPORTED;
+    }
 
 protected:
-    virtual hailo_status eth_stream__write_with_remainder(const void *buffer, size_t offset, size_t size, size_t remainder_size);
-    Expected<size_t> sync_write_raw_buffer(const MemoryView &buffer);
-    virtual hailo_status write_impl(const MemoryView &buffer) override;
+    virtual hailo_status eth_stream__write_with_remainder(const void *buffer, size_t offset, size_t size, size_t remainder_size)
+    {
+        (void)buffer;
+        (void)offset;
+        (void)size;
+        (void)remainder_size;
+        return HAILO_NOT_SUPPORTED;
+    }
+
+    virtual hailo_status write_impl(const MemoryView &buffer) override
+    {
+        (void)buffer;
+        return HAILO_NOT_SUPPORTED;
+    }
 
 public:
     EthernetInputStream(Device &device, Udp &&udp, EventPtr &&core_op_activated_event, const LayerInfo &layer_info, hailo_status &status) :
-        InputStreamBase(layer_info, std::move(core_op_activated_event), status), m_udp(std::move(udp)), m_device(device) {}
-    virtual ~EthernetInputStream();
+        InputStreamBase(layer_info, std::move(core_op_activated_event), status)
+    {
+        (void)device;
+        (void)udp;
+        status = HAILO_NOT_SUPPORTED;
+    }
+
+    virtual ~EthernetInputStream() = default;
 
     static Expected<std::unique_ptr<EthernetInputStream>> create(Device &device,
-        const LayerInfo &edge_layer, const hailo_eth_input_stream_params_t &params, EventPtr core_op_activated_event);
+        const LayerInfo &edge_layer, const hailo_eth_input_stream_params_t &params, EventPtr core_op_activated_event)
+    {
+        (void)device;
+        (void)edge_layer;
+        (void)params;
+        (void)core_op_activated_event;
+        return make_unexpected(HAILO_NOT_SUPPORTED);
+    }
 
     virtual hailo_status set_buffer_mode(StreamBufferMode buffer_mode) override
     {
-        CHECK(buffer_mode == StreamBufferMode::OWNING, HAILO_INVALID_ARGUMENT,
-            "Ethernet streams supports only sync api");
-        return HAILO_SUCCESS;
+        (void)buffer_mode;
+        return HAILO_NOT_SUPPORTED;
     }
 
-    virtual hailo_status activate_stream() override;
-    virtual hailo_status deactivate_stream() override;
+    virtual hailo_status activate_stream() override { return HAILO_NOT_SUPPORTED; }
+    virtual hailo_status deactivate_stream() override { return HAILO_NOT_SUPPORTED; }
     virtual hailo_stream_interface_t get_interface() const override { return HAILO_STREAM_INTERFACE_ETH; }
-    virtual std::chrono::milliseconds get_timeout() const override;
-    virtual hailo_status abort_impl() override;
-    virtual hailo_status clear_abort_impl() override {return HAILO_SUCCESS;}; // TODO (HRT-3799): clear abort state in the eth stream
+    virtual std::chrono::milliseconds get_timeout() const override { return std::chrono::milliseconds(0); }
+    virtual hailo_status abort_impl() override { return HAILO_NOT_SUPPORTED; }
+    virtual hailo_status clear_abort_impl() override { return HAILO_NOT_SUPPORTED; }
 };
 
+// DEPRECATED: ethernet/UDP fw-control is no longer supported; all methods are stubs.
 class EthernetInputStreamRateLimited : public EthernetInputStream {
 protected:
     const uint32_t rate_bytes_per_sec;
 
 public:
     EthernetInputStreamRateLimited(Device &device, Udp &&udp, EventPtr &&core_op_activated_event,
-        uint32_t rate_bytes_per_sec, const LayerInfo &layer_info, hailo_status &status);
+        uint32_t rate_bytes_per_sec, const LayerInfo &layer_info, hailo_status &status) :
+        EthernetInputStream(device, std::move(udp), std::move(core_op_activated_event), layer_info, status),
+        rate_bytes_per_sec(rate_bytes_per_sec)
+    {
+        status = HAILO_NOT_SUPPORTED;
+    }
+
     virtual ~EthernetInputStreamRateLimited() = default;
 };
 
+// DEPRECATED: ethernet/UDP fw-control is no longer supported; all methods are stubs.
 class TokenBucketEthernetInputStream : public EthernetInputStreamRateLimited {
-private:
-    DynamicTokenBucket token_bucket;
-    // Note:
-    // * We set the token bucket's burst size to be our MTU. If we'd use larger burst sizes
-    //   we could send packets faster than the desired rate.
-    // * We send packets with at most MAX_UDP_PAYLOAD_SIZE bytes of data. Hence we won't
-    //   consume more than MAX_UDP_PAYLOAD_SIZE tokens from the token bucket.
-    static const uint32_t BURST_SIZE = MAX_UDP_PAYLOAD_SIZE;
-    static const uint32_t MAX_CONSUME_SIZE = MAX_UDP_PAYLOAD_SIZE;
 
 protected:
-    virtual hailo_status eth_stream__write_with_remainder(const void *buffer, size_t offset, size_t size, size_t remainder_size) override;
+    virtual hailo_status eth_stream__write_with_remainder(const void *buffer, size_t offset, size_t size, size_t remainder_size) override
+    {
+        (void)buffer;
+        (void)offset;
+        (void)size;
+        (void)remainder_size;
+        return HAILO_NOT_SUPPORTED;
+    }
 
 public:
     TokenBucketEthernetInputStream(Device &device, Udp &&udp, EventPtr &&core_op_activated_event,
-        uint32_t rate_bytes_per_sec, const LayerInfo &layer_info, hailo_status &status);
+        uint32_t rate_bytes_per_sec, const LayerInfo &layer_info, hailo_status &status) :
+        EthernetInputStreamRateLimited(device, std::move(udp), std::move(core_op_activated_event),
+            rate_bytes_per_sec, layer_info, status)
+    {
+        status = HAILO_NOT_SUPPORTED;
+    }
+
     virtual ~TokenBucketEthernetInputStream() = default;
 };
 
 
 #if defined(__GNUC__)
+// DEPRECATED: ethernet/UDP fw-control is no longer supported; all methods are stubs.
 class TrafficControlEthernetInputStream : public EthernetInputStreamRateLimited {
 public:
     static Expected<std::unique_ptr<TrafficControlEthernetInputStream>> create(Device &device, Udp &&udp,
-        EventPtr &&core_op_activated_event, uint32_t rate_bytes_per_sec, const LayerInfo &layer_info);
+        EventPtr &&core_op_activated_event, uint32_t rate_bytes_per_sec, const LayerInfo &layer_info)
+    {
+        (void)device;
+        (void)udp;
+        (void)core_op_activated_event;
+        (void)rate_bytes_per_sec;
+        (void)layer_info;
+        return make_unexpected(HAILO_NOT_SUPPORTED);
+    }
+
     virtual ~TrafficControlEthernetInputStream() = default;
 
 private:
     TrafficControlEthernetInputStream(Device &device, Udp &&udp, EventPtr &&core_op_activated_event,
-        uint32_t rate_bytes_per_sec, TrafficControl &&tc, const LayerInfo &layer_info, hailo_status &status);
-    static Expected<std::string> get_interface_address(const struct in_addr *addr);
-
-    TrafficControl m_tc;
+        uint32_t rate_bytes_per_sec, TrafficControl &&tc, const LayerInfo &layer_info, hailo_status &status) :
+        EthernetInputStreamRateLimited(device, std::move(udp), std::move(core_op_activated_event),
+            rate_bytes_per_sec, layer_info, status)
+    {
+        (void)tc;
+        status = HAILO_NOT_SUPPORTED;
+    }
 };
 #endif
 
+// DEPRECATED: ethernet/UDP fw-control is no longer supported; all methods are stubs.
 class EthernetOutputStream : public OutputStreamBase {
 private:
-    uint8_t leftover_buffer[MAX_UDP_PAYLOAD_SIZE];
-    size_t leftover_size = 0;
-    uint32_t last_seen_sync_index;
-    bool encountered_timeout;
-    hailo_stream_eth_output_configuration_t configuration;
-    Udp m_udp;
-    bool m_is_stream_activated;
-    Device &m_device;
-
     EthernetOutputStream(Device &device, const LayerInfo &edge_layer, Udp &&udp, EventPtr &&core_op_activated_event, hailo_status &status) :
-        OutputStreamBase(edge_layer, std::move(core_op_activated_event), status),
-        leftover_buffer(),
-        leftover_size(0),
-        // Firmware starts sending sync sequence from 0, so treating the first previous as max value (that will be overflowed to 0)
-        last_seen_sync_index(std::numeric_limits<uint32_t>::max()),
-        encountered_timeout(false),
-        configuration(),
-        m_udp(std::move(udp)),
-        m_device(device)
-    {}
+        OutputStreamBase(edge_layer, std::move(core_op_activated_event), status)
+    {
+        (void)device;
+        (void)udp;
+        status = HAILO_NOT_SUPPORTED;
+    }
 
     virtual hailo_status set_buffer_mode(StreamBufferMode buffer_mode) override
     {
-        CHECK(buffer_mode == StreamBufferMode::OWNING, HAILO_INVALID_ARGUMENT,
-            "Ethernet streams supports only sync api");
-        return HAILO_SUCCESS;
+        (void)buffer_mode;
+        return HAILO_NOT_SUPPORTED;
     }
 
-    hailo_status read_impl(MemoryView buffer) override;
-    hailo_status read_all_with_sync(void *buffer, size_t offset, size_t size);
-    hailo_status read_all_no_sync(void *buffer, size_t offset, size_t size);
-
-    static bool is_sync_packet(const void* buffer, size_t offset, size_t transfer_size);
-    static bool is_sync_expected(size_t offset, size_t initial_offset, size_t frame_size);
-    hailo_status handle_timeout(const void* buffer, size_t offset, size_t initial_offset, size_t frame_size);
-    hailo_status set_timeout(std::chrono::milliseconds timeout);
-    hailo_status get_last_sync();
-
-    static hailo_status fill_output_stream_ptr_with_info(const hailo_eth_output_stream_params_t &params, EthernetOutputStream *stream);
+    hailo_status read_impl(MemoryView buffer) override
+    {
+        (void)buffer;
+        return HAILO_NOT_SUPPORTED;
+    }
 
 public:
-    virtual ~EthernetOutputStream();
-
-    Expected<size_t> sync_read_raw_buffer(MemoryView &buffer);
+    virtual ~EthernetOutputStream() = default;
 
     static Expected<std::unique_ptr<EthernetOutputStream>> create(Device &device, const LayerInfo &edge_layer,
-        const hailo_eth_output_stream_params_t &params, EventPtr core_op_activated_event);
+        const hailo_eth_output_stream_params_t &params, EventPtr core_op_activated_event)
+    {
+        (void)device;
+        (void)edge_layer;
+        (void)params;
+        (void)core_op_activated_event;
+        return make_unexpected(HAILO_NOT_SUPPORTED);
+    }
 
-    virtual hailo_status activate_stream() override;
-    virtual hailo_status deactivate_stream() override;
+    virtual hailo_status activate_stream() override { return HAILO_NOT_SUPPORTED; }
+    virtual hailo_status deactivate_stream() override { return HAILO_NOT_SUPPORTED; }
     virtual hailo_stream_interface_t get_interface() const override { return HAILO_STREAM_INTERFACE_ETH; }
-    virtual std::chrono::milliseconds get_timeout() const override;
-    virtual hailo_status abort_impl() override;
-    virtual hailo_status clear_abort_impl() override {return HAILO_SUCCESS;}; // TODO (HRT-3799): clear abort state in the eth stream
+    virtual std::chrono::milliseconds get_timeout() const override { return std::chrono::milliseconds(0); }
+    virtual hailo_status abort_impl() override { return HAILO_NOT_SUPPORTED; }
+    virtual hailo_status clear_abort_impl() override { return HAILO_NOT_SUPPORTED; }
 };
 
 } /* namespace hailort */

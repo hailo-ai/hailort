@@ -2,6 +2,7 @@ from enum import Enum, IntEnum
 from typing import List
 import signal
 import struct
+import warnings
 
 import sys
 
@@ -1588,7 +1589,7 @@ class HailoFormatFlags(_pyhailort.FormatFlags):
 
 SUPPORTED_PROTOCOL_VERSION = 2
 SUPPORTED_FW_MAJOR = 4
-SUPPORTED_FW_MINOR = 23
+SUPPORTED_FW_MINOR = 24
 SUPPORTED_FW_REVISION = 0
 
 MEGA_MULTIPLIER = 1000.0 * 1000.0
@@ -1607,20 +1608,44 @@ class DeviceArchitectureTypes(IntEnum):
         return self.name
 
 class BoardInformation(object):
+
     def __init__(self, protocol_version, fw_version_major, fw_version_minor, fw_version_revision,
                  logger_version, board_name, is_release, extended_context_switch_buffer, device_architecture,
                  serial_number, part_number, product_name):
+        """Initialize a new BoardInformation object.
+
+        Args:
+            protocol_version (int): Control protocol version.
+            fw_version_major (int): Firmware major version.
+            fw_version_minor (int): Firmware minor version.
+            fw_version_revision (int): Firmware revision.
+            logger_version (int): Logger version.
+            board_name (str): Board name string. Deprecated, use ``product_name`` instead.
+            is_release (bool): Whether the firmware is a release build.
+            extended_context_switch_buffer (bool): Whether firmware uses extended context switch buffer.
+            device_architecture (int): Device architecture type.
+            serial_number (str): Device serial number.
+            part_number (str): Device part number.
+            product_name (str): Device product name.
+        """
         self.protocol_version = protocol_version
         self.firmware_version = HailoFirmwareVersion.construct_from_params(fw_version_major, fw_version_minor, fw_version_revision, is_release,
             extended_context_switch_buffer, HailoFirmwareType.APP)
         self.logger_version = logger_version
-        self.board_name = board_name
+        self._board_name = board_name
         self.is_release = is_release
         self.device_architecture = DeviceArchitectureTypes(device_architecture)
         self.serial_number = serial_number
         self.part_number = part_number
         self.product_name = product_name
-    
+
+    @property
+    def board_name(self):
+        """Board name string. Deprecated, use ``product_name`` instead."""
+        warnings.warn("'board_name' is deprecated. Use 'product_name' instead.",
+                      DeprecationWarning, stacklevel=2)
+        return self._board_name
+
     def _string_field_str(self, string_field):
         # Return <N/A> if the string field is empty
         return string_field.rstrip('\x00') or BOARD_INFO_NOT_CONFIGURED_ATTR
@@ -1632,7 +1657,6 @@ class BoardInformation(object):
         return 'Control Protocol Version: {}\n' \
                'Firmware Version: {}\n' \
                'Logger Version: {}\n' \
-               'Board Name: {}\n' \
                'Device Architecture: {}\n' \
                'Serial Number: {}\n' \
                'Part Number: {}\n' \
@@ -1640,7 +1664,6 @@ class BoardInformation(object):
             self.protocol_version,
             self.firmware_version,
             self.logger_version,
-            self.board_name.rstrip('\x00'),
             str(self.device_architecture),
             self._string_field_str(self.serial_number),
             self._string_field_str(self.part_number),
@@ -2006,7 +2029,7 @@ class Control:
                  Default (:class:`~hailo_platform.pyhailort.pyhailort.DvmTypes.AUTO`) for EVB is an approximation to the total power consumption of the chip in PCIe setups.
                  It sums :class:`~hailo_platform.pyhailort.pyhailort.DvmTypes.VDD_CORE`,
                  :class:`~hailo_platform.pyhailort.pyhailort.DvmTypes.MIPI_AVDD` and :class:`~hailo_platform.pyhailort.pyhailort.DvmTypes.AVDD_H`.
-                 Only :class:`~hailo_platform.pyhailort.pyhailort.PowerMeasurementTypes.POWER` can measured with this option. \n
+                 Only :class:`~hailo_platform.pyhailort.pyhailort.PowerMeasurementTypes.POWER` can be measured with this option. \n
                  Default (:class:`~hailo_platform.pyhailort.pyhailort.DvmTypes.AUTO`) for platforms supporting current monitoring (such as M.2 and mPCIe): :class:`~hailo_platform.pyhailort.pyhailort.DvmTypes.OVERCURRENT_PROTECTION`
             measurement_type
              (:class:`~hailo_platform.pyhailort.pyhailort.PowerMeasurementTypes`):
@@ -2068,7 +2091,7 @@ class Control:
                  Default (:class:`~hailo_platform.pyhailort.pyhailort.DvmTypes.AUTO`) for EVB is an approximation to the total power consumption of the chip in PCIe setups.
                  It sums :class:`~hailo_platform.pyhailort.pyhailort.DvmTypes.VDD_CORE`,
                  :class:`~hailo_platform.pyhailort.pyhailort.DvmTypes.MIPI_AVDD` and :class:`~hailo_platform.pyhailort.pyhailort.DvmTypes.AVDD_H`.
-                 Only :class:`~hailo_platform.pyhailort.pyhailort.PowerMeasurementTypes.POWER` can measured with this option. \n
+                 Only :class:`~hailo_platform.pyhailort.pyhailort.PowerMeasurementTypes.POWER` can be measured with this option. \n
                  Default (:class:`~hailo_platform.pyhailort.pyhailort.DvmTypes.AUTO`) for platforms supporting current monitoring (such as M.2 and mPCIe): :class:`~hailo_platform.pyhailort.pyhailort.DvmTypes.OVERCURRENT_PROTECTION`
             measurement_type
              (:class:`~hailo_platform.pyhailort.pyhailort.PowerMeasurementTypes`):
@@ -2509,7 +2532,7 @@ class Control:
             callback_func (function): Callback function with the parameters (device, notification, opaque).
                 Note that throwing exceptions is not supported and will cause the program to terminate with an error!
             notification_id (NotificationId): Notification ID to register the callback to.
-            opauqe (object): User defined data.
+            opaque (object): User defined data.
 
         Note:
             The notifications thread is started and closed in the use_device() context, so
@@ -3167,7 +3190,7 @@ class ConfiguredInferModel:
             Gets an output's InferStream object.
 
             Args:
-                name (str, optional): the name of the output stream. Required in cae of multiple outputs.
+                name (str, optional): the name of the output stream. Required in case of multiple outputs.
 
             Returns:
                 :class:`ConfiguredInferModel.Bindings.InferStream` - the output infer stream of the configured infer model.
@@ -3776,7 +3799,7 @@ class OutputVStreamParams(object):
     @staticmethod
     def make_groups(configured_network, quantized=None, format_type=None, timeout_ms=None, queue_size=None):
         """Create output virtual stream params from a configured network group. These params determine the format of the
-        data that will be returned from the network group. The params groups are splitted with respect to their underlying streams for multi process usges.
+        data that will be returned from the network group. The params groups are split with respect to their underlying streams for multi process usages.
 
         Args:
             configured_network (:class:`ConfiguredNetwork`): The configured network group for which
@@ -3793,7 +3816,7 @@ class OutputVStreamParams(object):
 
         Returns:
             list of dicts: Each element in the list represent a group of params, where the keys are the vstreams names, and the values are the
-            params. The params groups are splitted with respect to their underlying streams for multi process usges.
+            params. The params groups are split with respect to their underlying streams for multi process usages.
         """
         all_params = OutputVStreamParams.make(configured_network=configured_network, format_type=format_type, timeout_ms=timeout_ms, queue_size=queue_size)
         low_level_streams_names = [stream_info.name for stream_info in configured_network.get_output_stream_infos()]

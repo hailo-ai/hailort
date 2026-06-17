@@ -936,17 +936,16 @@ static hailo_status handle_repeated_actions(std::vector<ContextSwitchConfigActio
     return HAILO_SUCCESS;
 }
 
-static hailo_status write_action_list(const ContextResources & context_resources,
-    std::shared_ptr<ActionListBufferBuilder> &builder, const std::vector<ContextSwitchConfigActionPtr> &actions)
+static hailo_status write_action_list(const ContextResources &context_resources,
+    ActionListBufferBuilder &builder, const std::vector<ContextSwitchConfigActionPtr> &actions)
 {
-    // Mark first action buffer of context to know when new context is starting (needed for dynamic contexts)
-    bool is_first_action_buffer_of_context = true;
+    auto status = builder.new_context(context_resources.get_host_buffer_infos(), context_resources.get_context_type());
+    CHECK_SUCCESS(status);
+
     for (const auto &action : actions) {
         TRY(auto action_buffers, action->serialize(context_resources));
-
         for (auto &action_buffer : action_buffers) {
-            builder->build_context(MemoryView(action_buffer), context_resources.get_context_type(), is_first_action_buffer_of_context);
-            is_first_action_buffer_of_context = false;
+            builder.add_action(MemoryView(action_buffer));
         }
     }
 

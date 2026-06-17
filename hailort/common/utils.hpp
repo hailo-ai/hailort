@@ -32,6 +32,12 @@
 #include <fstream>
 #include <algorithm>
 
+#ifdef __unix__
+#include <pthread.h>
+#include <csignal>
+#include <cstring>
+#include <iostream>
+#endif
 
 namespace hailort
 {
@@ -462,6 +468,28 @@ Expected<hailo_format_type_t> get_hailo_format_type()
     return make_unexpected(HAILO_NOT_FOUND);
 }
 
+// DEFER is used to call a cleanup function when the scope is exited.
+// Example usages:
+//
+// auto file = open_file("file.txt");
+// DEFER(close_file(file));
+//
+// auto resource = acquire_resource();
+// DEFER_IF({ release_resource(resource); LOG("Resource released!") }, resource != nullptr);
+//
+// Note that DEFERs will be called in LIFO order, and caputre all of their used variables by reference.
+
+#define __DEFER(var, closure, condition) auto var = defer([&]() { if (condition) { closure; } })
+
+#define DEFER_IF(closure, condition) __DEFER(_HAILO_CONCAT(__defer_guard, __COUNTER__), closure, condition)
+#define DEFER(closure) DEFER_IF(closure, true)
+
+template<class F>
+auto defer(F f) noexcept(noexcept(F(std::move(f)))) {
+    auto x = [f = std::move(f)](void*){ f(); };
+    return std::unique_ptr<void, decltype(x)>((void*)1, std::move(x));
+}
+
 class CRC32 {
 public:
     CRC32() {
@@ -668,6 +696,57 @@ private:
     std::chrono::steady_clock::time_point m_start_time;
     std::chrono::milliseconds m_total_timeout;
 };
+
+#ifdef __unix__
+// RAII helper used to block SIGINT/SIGTERM in child threads
+class SigwaitThreadCreationContext
+{
+public:
+    SigwaitThreadCreationContext()
+    {
+        sigset_t new_mask{};
+        auto rc = sigemptyset(&new_mask);
+        if (0 != rc) {
+            std::cerr << "Failed to empty signal mask: " << strerror(errno) << std::endl;
+            return;
+        }
+
+        rc = sigaddset(&new_mask, SIGINT);
+        if (0 != rc) {
+            std::cerr << "Failed to add SIGINT to signal mask: " << strerror(errno) << std::endl;
+            return;
+        }
+
+        rc = sigaddset(&new_mask, SIGTERM);
+        if (0 != rc) {
+            std::cerr << "Failed to add SIGTERM to signal mask: " << strerror(errno) << std::endl;
+            return;
+        }
+
+        rc = pthread_sigmask(SIG_BLOCK, &new_mask, &m_original_mask);
+        if (0 != rc) {
+            std::cerr << "Failed to block SIGINT and SIGTERM + restore previous mask: " << strerror(rc) << std::endl;
+            return;
+        }
+
+        m_was_ctor_successful = true;
+    }
+
+    ~SigwaitThreadCreationContext()
+    {
+        if (m_was_ctor_successful) {
+            auto pthread_rc = pthread_sigmask(SIG_SETMASK, &m_original_mask, nullptr);
+            if (0 != pthread_rc) {
+                std::cerr << "Failed to restore signal mask: " << strerror(pthread_rc) << std::endl;
+            }
+        }
+    }
+
+private:
+    sigset_t m_original_mask{};
+    bool m_was_ctor_successful{false};
+};
+#endif
 
 } /* namespace hailort */
 

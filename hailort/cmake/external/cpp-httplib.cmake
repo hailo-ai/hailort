@@ -11,6 +11,13 @@ FetchContent_Declare(
     SUBBUILD_DIR ${HAILO_EXTERNAL_DIR}/cpp-httplib-subbuild
 )
 
+# cpp-httplib auto-detects optional deps (Brotli/ZLIB/OpenSSL) via find_package and links whatever the
+# host provides. We don't use them, and during cross-compile they resolve to host libs and break linking
+# ("file in wrong format"). Disable them for deterministic, host-independent builds.
+set(HTTPLIB_USE_BROTLI_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
+set(HTTPLIB_USE_ZLIB_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
+set(HTTPLIB_USE_OPENSSL_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
+
 # https://stackoverflow.com/questions/65527126/disable-install-for-fetchcontent
 FetchContent_GetProperties(cpp-httplib)
 if(NOT cpp-httplib_POPULATED)

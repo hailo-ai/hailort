@@ -10,7 +10,6 @@
 #include "byte_order.h"
 #include "firmware_status.h"
 
-
 using namespace hailort;
 
 /* Function prototype for control operations */
@@ -63,12 +62,6 @@ static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_rx_error(D2H_EVENT_MESSAGE_t *d2h
 {
     HAILO_COMMON_STATUS_t status = HAILO_COMMON_STATUS__UNINITIALIZED;
 
-    if (D2H_EVENT_RX_ERROR_EVENT_PARAMETER_COUNT != d2h_notification_message->header.parameter_count) {
-        LOGGER__ERROR("d2h notification invalid parameter count: {}", d2h_notification_message->header.parameter_count);
-        status = HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_COUNT;
-        goto l_exit;
-    }
-
     if(d2h_notification_message->header.payload_length != sizeof(d2h_notification_message->message_parameters.rx_error_event)) {
         LOGGER__ERROR("d2h notification invalid payload_length: {}", d2h_notification_message->header.payload_length);
         status = HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_LENGTH;
@@ -88,12 +81,6 @@ static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_host_info_notification(D2H_EVENT_
 {
     HAILO_COMMON_STATUS_t status = HAILO_COMMON_STATUS__UNINITIALIZED;
 
-    if (D2H_EVENT_HOST_INFO_EVENT_PARAMETER_COUNT != d2h_notification_message->header.parameter_count) {
-        LOGGER__ERROR("d2h notification invalid parameter count: {}", d2h_notification_message->header.parameter_count);
-        status = HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_COUNT;
-        goto l_exit;
-    }
-
     if(d2h_notification_message->header.payload_length != sizeof(d2h_notification_message->message_parameters.host_info_event)) {
         LOGGER__ERROR("d2h notification invalid payload_length: {}", d2h_notification_message->header.payload_length);
         status = HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_LENGTH;
@@ -112,12 +99,6 @@ l_exit:
 static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_health_monitor_temperature_alarm_notification(D2H_EVENT_MESSAGE_t *d2h_notification_message) 
 {
     HAILO_COMMON_STATUS_t status = HAILO_COMMON_STATUS__UNINITIALIZED;
-
-    if (D2H_EVENT_HEALTH_MONITOR_TEMPERATURE_ALARM_EVENT_PARAMETER_COUNT != d2h_notification_message->header.parameter_count) {
-        LOGGER__ERROR("d2h notification invalid parameter count: {}", d2h_notification_message->header.parameter_count);
-        status = HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_COUNT;
-        goto l_exit;
-    }
 
     switch (d2h_notification_message->message_parameters.health_monitor_temperature_alarm_event.temperature_zone) {
         case HAILO_TEMPERATURE_PROTECTION_TEMPERATURE_ZONE__GREEN:
@@ -155,49 +136,23 @@ l_exit:
 
 static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_health_monitor_clock_changed_event_notification(D2H_EVENT_MESSAGE_t *d2h_notification_message)
 {
-    HAILO_COMMON_STATUS_t status = HAILO_COMMON_STATUS__UNINITIALIZED;
-
-    if (D2H_EVENT_HEALTH_MONITOR_CLOCK_CHANGED_EVENT_PARAMETER_COUNT != d2h_notification_message->header.parameter_count) {
-        LOGGER__ERROR("d2h notification invalid parameter count: {}", d2h_notification_message->header.parameter_count);
-        status = HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_COUNT;
-        goto l_exit;
-    }
     LOGGER__WARNING("Got health monitor notification - System's clock has been changed from {} to {}",
                         d2h_notification_message->message_parameters.health_monitor_clock_changed_event.previous_clock,
                         d2h_notification_message->message_parameters.health_monitor_clock_changed_event.current_clock);
 
-    status = HAILO_COMMON_STATUS__SUCCESS;
-
-l_exit:
-    return status;
+    return HAILO_COMMON_STATUS__SUCCESS;
 }
 
 static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_hw_infer_manager_infer_done_notification(D2H_EVENT_MESSAGE_t *d2h_notification_message)
 {
-    HAILO_COMMON_STATUS_t status = HAILO_COMMON_STATUS__UNINITIALIZED;
-
-    if (D2H_EVENT_HW_INFER_MANAGER_INFER_DONE_PARAMETER_COUNT != d2h_notification_message->header.parameter_count) {
-        LOGGER__ERROR("d2h notification invalid parameter count: {}", d2h_notification_message->header.parameter_count);
-        status = HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_COUNT;
-        goto l_exit;
-    }
-
     LOGGER__INFO("Got hw infer done notification - Infer took {} cycles",
         d2h_notification_message->message_parameters.hw_infer_manager_infer_done_event.infer_cycles);
 
-    status = HAILO_COMMON_STATUS__SUCCESS;
-
-l_exit:
-    return status;
+    return HAILO_COMMON_STATUS__SUCCESS;
 }
 
 static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_start_update_cache_offset(D2H_EVENT_MESSAGE_t *d2h_notification_message)
 {
-    if (D2H_EVENT_START_UPDATE_CACHE_OFFSET_PARAMETER_COUNT != d2h_notification_message->header.parameter_count) {
-        LOGGER__ERROR("d2h notification invalid parameter count: {}", d2h_notification_message->header.parameter_count);
-        return HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_COUNT;
-    }
-
     if(d2h_notification_message->header.payload_length != sizeof(d2h_notification_message->message_parameters.start_update_cache_offset_event)) {
         LOGGER__ERROR("d2h notification invalid payload_length: {}", d2h_notification_message->header.payload_length);
         return HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_LENGTH;
@@ -212,12 +167,6 @@ static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_start_update_cache_offset(D2H_EVE
 static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_health_monitor_closed_streams_notification(D2H_EVENT_MESSAGE_t *d2h_notification_message) 
 {
     HAILO_COMMON_STATUS_t status = HAILO_COMMON_STATUS__UNINITIALIZED;
-
-    if (D2H_EVENT_HEALTH_MONITOR_CLOSED_STREAMS_EVENT_PARAMETER_COUNT != d2h_notification_message->header.parameter_count) {
-        LOGGER__ERROR("d2h notification invalid parameter count: {}", d2h_notification_message->header.parameter_count);
-        status = HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_COUNT;
-        goto l_exit;
-    }
 
     if(d2h_notification_message->header.payload_length != sizeof(d2h_notification_message->message_parameters.health_monitor_closed_streams_event)) {
         LOGGER__ERROR("d2h notification invalid payload_length: {} vs {}", d2h_notification_message->header.payload_length,
@@ -239,12 +188,6 @@ l_exit:
 static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_health_monitor_overcurrent_alert_notification(D2H_EVENT_MESSAGE_t *d2h_notification_message)
 {
     HAILO_COMMON_STATUS_t status = HAILO_COMMON_STATUS__UNINITIALIZED;
-
-    if (D2H_EVENT_HEALTH_MONITOR_OVERCURRENT_ALERT_EVENT_PARAMETER_COUNT != d2h_notification_message->header.parameter_count) {
-        LOGGER__ERROR("d2h event invalid parameter count: {}", d2h_notification_message->header.parameter_count);
-        status = HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_COUNT;
-        goto l_exit;
-    }
 
     if(d2h_notification_message->header.payload_length != sizeof(d2h_notification_message->message_parameters.health_monitor_overcurrent_alert_event)) {
         LOGGER__ERROR("d2h event invalid payload_length: {}", d2h_notification_message->header.payload_length);
@@ -284,12 +227,6 @@ static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_health_monitor_lcu_ecc_nonfatal_n
 {
     HAILO_COMMON_STATUS_t status = HAILO_COMMON_STATUS__UNINITIALIZED;
 
-    if (D2H_EVENT_HEALTH_MONITOR_LCU_ECC_ERROR_EVENT_PARAMETER_COUNT != d2h_notification_message->header.parameter_count) {
-        LOGGER__ERROR("d2h event lcu ecc uncorrectable error invalid parameter count: {}", d2h_notification_message->header.parameter_count);
-        status = HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_COUNT;
-        goto l_exit;
-    }
-
     if(sizeof(d2h_notification_message->message_parameters.health_monitor_lcu_ecc_error_event) != d2h_notification_message->header.payload_length) {
         LOGGER__ERROR("d2h event invalid payload_length: {}", d2h_notification_message->header.payload_length);
         status = HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_LENGTH;
@@ -309,12 +246,6 @@ static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_health_monitor_lcu_ecc_fatal_noti
     D2H_EVENT_MESSAGE_t *d2h_notification_message)
 {
     HAILO_COMMON_STATUS_t status = HAILO_COMMON_STATUS__UNINITIALIZED;
-
-    if (D2H_EVENT_HEALTH_MONITOR_LCU_ECC_ERROR_EVENT_PARAMETER_COUNT != d2h_notification_message->header.parameter_count) {
-        LOGGER__ERROR("d2h event invalid lcu ecc uncorrectable error parameter count: {}", d2h_notification_message->header.parameter_count);
-        status = HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_COUNT;
-        goto l_exit;
-    }
 
     if(sizeof(d2h_notification_message->message_parameters.health_monitor_lcu_ecc_error_event) != d2h_notification_message->header.payload_length) {
         LOGGER__ERROR("d2h event invalid payload_length: {}", d2h_notification_message->header.payload_length);
@@ -336,10 +267,6 @@ static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_health_monitor_cpu_ecc_error_noti
 {
     HAILO_COMMON_STATUS_t status = HAILO_COMMON_STATUS__UNINITIALIZED;
 
-    CHECK_COMMON_STATUS(D2H_EVENT_HEALTH_MONITOR_CPU_ECC_EVENT_PARAMETER_COUNT == d2h_notification_message->header.parameter_count,
-            HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_COUNT,
-            "d2h event invalid parameter count: {}", d2h_notification_message->header.parameter_count);
-
     CHECK_COMMON_STATUS(sizeof(d2h_notification_message->message_parameters.health_monitor_cpu_ecc_event) == d2h_notification_message->header.payload_length,
             HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_LENGTH,
             "d2h event invalid payload_length: {}", d2h_notification_message->header.payload_length);
@@ -356,12 +283,6 @@ static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_health_monitor_cpu_ecc_fatal_noti
     D2H_EVENT_MESSAGE_t *d2h_notification_message)
 {
     HAILO_COMMON_STATUS_t status = HAILO_COMMON_STATUS__UNINITIALIZED;
-
-    if (D2H_EVENT_HEALTH_MONITOR_CPU_ECC_EVENT_PARAMETER_COUNT != d2h_notification_message->header.parameter_count) {
-        LOGGER__ERROR("d2h event invalid cpu ecc uncorrectable error parameter count: {}", d2h_notification_message->header.parameter_count);
-        status = HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_COUNT;
-        goto l_exit;
-    }
 
     if(sizeof(d2h_notification_message->message_parameters.health_monitor_cpu_ecc_event) != d2h_notification_message->header.payload_length) {
         LOGGER__ERROR("d2h event invalid payload_length: {}", d2h_notification_message->header.payload_length);
@@ -382,11 +303,7 @@ static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_context_switch_breakpoint_reached
 {
     HAILO_COMMON_STATUS_t status = HAILO_COMMON_STATUS__UNINITIALIZED;
 
-    CHECK_COMMON_STATUS(D2H_EVENT_CONTEXT_SWITCH_BREAKPOINT_REACHED_EVENT_PARAMETER_COUNT == d2h_notification_message->header.parameter_count,
-            HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_COUNT,
-            "d2h event invalid parameter count: {}", d2h_notification_message->header.parameter_count);
-
-    CHECK_COMMON_STATUS(d2h_notification_message->header.payload_length == 
+    CHECK_COMMON_STATUS(d2h_notification_message->header.payload_length ==
             sizeof(d2h_notification_message->message_parameters.context_switch_breakpoint_reached_event),
             HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_LENGTH,
             "d2h event invalid payload_length: {}", d2h_notification_message->header.payload_length);
@@ -408,11 +325,7 @@ static HAILO_COMMON_STATUS_t D2H_EVENTS__parse_context_switch_run_time_error_not
     const char *run_time_error_status_text = NULL;
     uint32_t run_time_error_status = 0;
 
-    CHECK_COMMON_STATUS(D2H_EVENT_CONTEXT_SWITCH_RUN_TIME_ERROR_EVENT_PARAMETER_COUNT == d2h_notification_message->header.parameter_count,
-            HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_COUNT,
-            "d2h event invalid parameter count: {}", d2h_notification_message->header.parameter_count);
-
-    CHECK_COMMON_STATUS(d2h_notification_message->header.payload_length == 
+    CHECK_COMMON_STATUS(d2h_notification_message->header.payload_length ==
             sizeof(d2h_notification_message->message_parameters.context_switch_run_time_error_event),
             HAILO_STATUS__D2H_EVENTS__INCORRECT_PARAMETER_LENGTH,
             "d2h event invalid payload_length: {}", d2h_notification_message->header.payload_length);

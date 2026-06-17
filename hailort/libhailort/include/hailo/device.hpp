@@ -383,11 +383,11 @@ public:
      * @param[in]   dvm                Which DVM will be measured. Default (::HAILO_DVM_OPTIONS_AUTO) will be different according to the board: <br>
      *                                 - Default (::HAILO_DVM_OPTIONS_AUTO) for EVB is an approximation to the total power consumption of the chip in PCIe setups.
      *                                 It sums ::HAILO_DVM_OPTIONS_VDD_CORE, ::HAILO_DVM_OPTIONS_MIPI_AVDD and ::HAILO_DVM_OPTIONS_AVDD_H.
-     *                                 Only ::HAILO_POWER_MEASUREMENT_TYPES__POWER can measured with this option.
+     *                                 Only ::HAILO_POWER_MEASUREMENT_TYPES__POWER can be measured with this option.
      *                                 - Default (::HAILO_DVM_OPTIONS_AUTO) for platforms supporting current monitoring (such as M.2 and mPCIe): OVERCURRENT_PROTECTION.
      * @param[in]   measurement_type   The type of the measurement. Choosing ::HAILO_POWER_MEASUREMENT_TYPES__AUTO
      *                                 will select the default value according to the supported features.
-     * @return Upon success, returns @a uint32_t mesuremenet. Measured units are determined due to ::hailo_power_measurement_types_t.
+     * @return Upon success, returns @a float32_t measurement. Measured units are determined due to ::hailo_power_measurement_types_t.
      *         Otherwise, returns a ::hailo_status error.
      */
     virtual Expected<float32_t> power_measurement(hailo_dvm_options_t dvm, hailo_power_measurement_types_t measurement_type);
@@ -416,7 +416,7 @@ public:
      * @param[in]   dvm                Which DVM will be measured. Default (::HAILO_DVM_OPTIONS_AUTO) will be different according to the board: <br>
      *                                 - Default (::HAILO_DVM_OPTIONS_AUTO) for EVB is an approximation to the total power consumption of the chip in PCIe setups.
      *                                 It sums ::HAILO_DVM_OPTIONS_VDD_CORE, ::HAILO_DVM_OPTIONS_MIPI_AVDD and ::HAILO_DVM_OPTIONS_AVDD_H.
-     *                                 Only ::HAILO_POWER_MEASUREMENT_TYPES__POWER can measured with this option.
+     *                                 Only ::HAILO_POWER_MEASUREMENT_TYPES__POWER can be measured with this option.
      *                                 - Default (::HAILO_DVM_OPTIONS_AUTO) for platforms supporting current monitoring (such as M.2 and mPCIe): OVERCURRENT_PROTECTION.
      * @param[in]   measurement_type   The type of the measurement. Choosing ::HAILO_POWER_MEASUREMENT_TYPES__AUTO
      *                                 will select the default value according to the supported features.
@@ -832,22 +832,18 @@ protected:
     static Expected<std::unique_ptr<Device>> create_core();
 
     virtual hailo_status wait_for_wakeup() = 0;
-    virtual void increment_control_sequence() = 0;
-    hailo_status fw_interact(uint8_t *request_buffer, size_t request_size, uint8_t *response_buffer, size_t *response_size);
-    virtual hailo_status fw_interact_impl(uint8_t *request_buffer, size_t request_size, uint8_t *response_buffer, 
-                                          size_t *response_size, hailo_cpu_id_t cpu_id) = 0;
+    hailo_status fw_interact(uint8_t *request_buffer, size_t request_size, uint8_t *response_buffer);
+    virtual hailo_status fw_interact_impl(uint8_t *request_buffer, size_t request_size, uint8_t *response_buffer) = 0;
     // Update the state of the fw, as seen by this device
     hailo_status update_fw_state();
 
     Type m_type;
-    uint32_t m_control_sequence;
     bool m_is_control_version_supported;
     hailo_device_architecture_t m_device_architecture;
 
 private:
     virtual Expected<bool> has_INA231();
     bool is_control_version_supported();
-    uint32_t get_control_sequence();
 
     friend class Control;
 };

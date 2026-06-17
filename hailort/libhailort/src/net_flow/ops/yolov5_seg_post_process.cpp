@@ -209,10 +209,10 @@ hailo_status Yolov5SegPostProcess::crop_and_copy_mask(const DetectionBbox &detec
         static_cast<uint32_t>(yolov5_config.image_height), 0, 1, STBIR_ALPHA_CHANNEL_NONE, 0,
         STBIR_EDGE_CLAMP, STBIR_FILTER_TRIANGLE, STBIR_COLORSPACE_LINEAR, NULL);
 
-    auto x_min = static_cast<uint32_t>(MAX(std::ceil(detection.m_bbox.x_min * yolov5_config.image_width), 0.0f));
-    auto x_max = static_cast<uint32_t>(MIN(std::ceil(detection.m_bbox.x_max * yolov5_config.image_width), yolov5_config.image_width));
-    auto y_min = static_cast<uint32_t>(MAX(std::ceil(detection.m_bbox.y_min * yolov5_config.image_height), 0.0f));
-    auto y_max = static_cast<uint32_t>(MIN(std::ceil(detection.m_bbox.y_max * yolov5_config.image_height), yolov5_config.image_height));
+    auto x_min = static_cast<uint32_t>(std::max(std::ceil(detection.m_bbox.x_min * yolov5_config.image_width), 0.0f));
+    auto x_max = static_cast<uint32_t>(std::min(std::ceil(detection.m_bbox.x_max * yolov5_config.image_width), yolov5_config.image_width));
+    auto y_min = static_cast<uint32_t>(std::max(std::ceil(detection.m_bbox.y_min * yolov5_config.image_height), 0.0f));
+    auto y_max = static_cast<uint32_t>(std::min(std::ceil(detection.m_bbox.y_max * yolov5_config.image_height), yolov5_config.image_height));
     auto box_width = detection.get_bbox_width(yolov5_config.image_width);
 
     uint8_t *dst_mask = (uint8_t*)(buffer.data() + buffer_offset);

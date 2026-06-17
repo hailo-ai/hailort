@@ -57,17 +57,16 @@ VdmaEdgeLayer::VdmaEdgeLayer(std::shared_ptr<VdmaBuffer> &&buffer, const size_t 
 
 CONTROL_PROTOCOL__host_buffer_info_t VdmaEdgeLayer::get_host_buffer_info(uint32_t transfer_size)
 {
-    return get_host_buffer_info(type(), dma_address(), desc_page_size(), descs_count(), transfer_size);
+    return get_host_buffer_info(type(), handle(), desc_page_size(), descs_count(), transfer_size);
 }
 
-CONTROL_PROTOCOL__host_buffer_info_t VdmaEdgeLayer::get_host_buffer_info(Type type, uint64_t dma_address,
+CONTROL_PROTOCOL__host_buffer_info_t VdmaEdgeLayer::get_host_buffer_info(Type type, desc_list_handle_t handle,
     uint16_t desc_page_size, uint32_t desc_count, uint32_t transfer_size)
 {
     CONTROL_PROTOCOL__host_buffer_info_t buffer_info{};
     buffer_info.buffer_type = static_cast<uint8_t>((type == vdma::VdmaEdgeLayer::Type::SCATTER_GATHER) ?
-        CONTROL_PROTOCOL__HOST_BUFFER_TYPE_EXTERNAL_DESC :
-        CONTROL_PROTOCOL__HOST_BUFFER_TYPE_CCB);
-    buffer_info.dma_address = dma_address;
+        CONTROL_PROTOCOL__HOST_BUFFER_TYPE_EXTERNAL_DESC : CONTROL_PROTOCOL__HOST_BUFFER_TYPE_CCB);
+    buffer_info.dma_addr_handle = handle;
     buffer_info.desc_page_size = desc_page_size;
     buffer_info.total_desc_count = desc_count;
     buffer_info.bytes_in_pattern = transfer_size;

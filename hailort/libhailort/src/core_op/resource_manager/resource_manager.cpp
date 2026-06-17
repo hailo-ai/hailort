@@ -156,6 +156,22 @@ const std::vector<DdrChannelsInfo> &ContextResources::get_ddr_channels_infos() c
     return m_ddr_channels_infos;
 }
 
+std::vector<CONTROL_PROTOCOL__host_buffer_info_t> ContextResources::get_host_buffer_infos() const
+{
+    std::vector<CONTROL_PROTOCOL__host_buffer_info_t> res;
+    res.reserve(m_config_buffers.size() + m_edge_layers.size());
+
+    for (auto &config_buffer : m_config_buffers) {
+        res.push_back(config_buffer.get_host_buffer_info());
+    }
+
+    for (auto &buffer : m_edge_layers) {
+        res.push_back(buffer.buffer_info);
+    }
+
+    return res;
+}
+
 hailo_status ContextResources::validate_edge_layer(const LayerInfo &layer_info, vdma::ChannelId channel_id,
     const SupportedFeatures &supported_features)
 {
@@ -646,25 +662,18 @@ Expected<std::map<uint32_t, Buffer>> ResourcesManager::read_cache_buffers()
 
 hailo_status ResourcesManager::configure()
 {
-    m_is_configured = true;
-
+    auto &action_list_builder = get_action_list_buffer_builder();
     TRY(auto core_op_header, get_control_core_op_header());
-    if ((Device::Type::INTEGRATED == m_vdma_device.get_type())
-        && ((CONTEXT_SWITCH_CONFIG__MAX_BUFFER_SIZE_WITHOUT_HEADERS < get_action_list_buffer_builder()->get_action_list_buffer_size())
-        || (is_env_variable_on(DDR_ACTION_LIST_ENV_VAR, DDR_ACTION_LIST_ENV_VAR_VALUE)))) {
-        TRY(auto dma_address ,get_action_list_buffer_builder()->write_controls_to_ddr(m_driver));
-        CHECK(IS_FIT_IN_UINT32(dma_address), HAILO_INVALID_ARGUMENT, "Invalid Mapped Address {} must fit in uint32",
-            dma_address);
-        core_op_header.external_action_list_address = static_cast<uint32_t>(dma_address);
 
-        auto status = Control::context_switch_set_network_group_header(m_vdma_device, core_op_header);
-        CHECK_SUCCESS(status);
-    } else {
-        auto status = Control::context_switch_set_network_group_header(m_vdma_device, core_op_header);
-        CHECK_SUCCESS(status);
-        status = Control::context_switch_set_context_info(m_vdma_device, get_action_list_buffer_builder()->get_controls());
-        CHECK_SUCCESS(status);
-    }
+    CHECK(Device::Type::PCIE == m_vdma_device.get_type(), HAILO_INVALID_OPERATION, "Hailo-8 allows PCIe devices only");
+
+    auto status = Control::context_switch_set_network_group_header(m_vdma_device, core_op_header);
+    CHECK_SUCCESS(status);
+
+    status = Control::context_switch_set_context_info(m_vdma_device, action_list_builder.get_list_in_chunks());
+    CHECK_SUCCESS(status);
+
+    m_is_configured = true;
 
     return HAILO_SUCCESS;
 }
@@ -739,20 +748,12 @@ hailo_status ResourcesManager::stop_vdma_transfer_launcher()
 Expected<CONTROL_PROTOCOL__host_buffer_info_t> ResourcesManager::get_boundary_buffer_info(vdma::BoundaryChannel &channel,
     uint32_t transfer_size)
 {
-    if (CONTROL_PROTOCOL__DESC_BOUNDARY_CHANNEL == get_hw_infer_boundary_channel_mode()) {
-        auto &desc_list = channel.get_desc_list();
-        return vdma::VdmaEdgeLayer::get_host_buffer_info(vdma::VdmaEdgeLayer::Type::SCATTER_GATHER, desc_list.dma_address(),
-            desc_list.desc_page_size(), desc_list.count(), transfer_size);
-    } else {
-        CHECK(m_hw_only_ccb_boundary_buffers.end() != m_hw_only_ccb_boundary_buffers.find(channel.get_channel_id()),
-            HAILO_INTERNAL_FAILURE, "Error could not find channel info for channel {}", channel.get_channel_id());
-        const auto &ccb_boundary_channel_buffer = m_hw_only_ccb_boundary_buffers[channel.get_channel_id()];
-        const uint32_t desc_count = static_cast<uint32_t>(DIV_ROUND_UP(ccb_boundary_channel_buffer->size(),
-            HW_INFER_CCB_DESC_PAGE_SIZE));
-        return vdma::VdmaEdgeLayer::get_host_buffer_info(vdma::VdmaEdgeLayer::Type::CONTINUOUS,
-            ccb_boundary_channel_buffer->dma_address(), HW_INFER_CCB_DESC_PAGE_SIZE, desc_count,
-            static_cast<uint32_t>(ccb_boundary_channel_buffer->size()));
-    }
+    CHECK(CONTROL_PROTOCOL__DESC_BOUNDARY_CHANNEL == get_hw_infer_boundary_channel_mode(),
+        HAILO_NOT_SUPPORTED, "CCB boundary-channels are not supported on Hailo8");
+
+    auto &desc_list = channel.get_desc_list();
+    return vdma::VdmaEdgeLayer::get_host_buffer_info(vdma::VdmaEdgeLayer::Type::SCATTER_GATHER,
+        desc_list.handle(), desc_list.desc_page_size(), desc_list.count(), transfer_size);
 }
 
 Expected<uint16_t> ResourcesManager::program_desc_for_hw_only_flow(vdma::DescriptorList &desc_list,
@@ -1079,7 +1080,7 @@ hailo_status ResourcesManager::map_and_set_ccws_section_buffer(BufferPtr hef_as_
     /*
     * Optimization for the aligned_ccws feature.
     *
-    * Previously, we used to have a single huge mapped buffer for the entire CCWS section, that is splitted to sg entries (each sg entry is offset + size).
+    * Previously, we used to have a single huge mapped buffer for the entire CCWS section, that is split to sg entries (each sg entry is offset + size).
     * That way - if we configure from offset 1Gb in the ccws section - we will have to iterate over all of the entries until that offset to find the right sg entry - it was very inefficient.
     *
     * With this optimization, we split the huge mapped buffer to smaller buffers, such that the search for each sg entry will be much faster.

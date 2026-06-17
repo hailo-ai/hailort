@@ -1,6 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0
 /**
  * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
- * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
  * @file firmware_version.h
@@ -9,7 +9,9 @@
 
 #ifndef __FIRMWARE_VERSION__
 #define __FIRMWARE_VERSION__
-#include <stdint.h>
+
+#include "type_utils.h"
+
 typedef struct {
     uint32_t firmware_major;
     uint32_t firmware_minor;

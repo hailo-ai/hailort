@@ -7,7 +7,6 @@ set(SRC_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/d2h_event_queue.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/control.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/control_soc.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/control_protocol.cpp
 )
 
 set(HAILORT_CPP_SOURCES ${HAILORT_CPP_SOURCES} ${SRC_FILES} PARENT_SCOPE)

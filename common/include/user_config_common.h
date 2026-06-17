@@ -1,6 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0
 /**
  * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
- * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
  * @file user_config_common.h

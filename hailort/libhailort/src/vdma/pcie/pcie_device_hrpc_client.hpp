@@ -58,9 +58,8 @@ public:
     virtual bool is_stream_interface_supported(const hailo_stream_interface_t &/*stream_interface*/) const override { return false; }
 
     virtual hailo_status wait_for_wakeup() override { return make_unexpected(HAILO_NOT_IMPLEMENTED); }
-    virtual void increment_control_sequence() override {}
-    virtual hailo_status fw_interact_impl(uint8_t */*request_buffer*/, size_t /*request_size*/, uint8_t */*response_buffer*/, 
-                                          size_t */*response_size*/, hailo_cpu_id_t /*cpu_id*/) override { return HAILO_NOT_IMPLEMENTED; }
+    virtual hailo_status fw_interact_impl(uint8_t */*request_buffer*/, size_t /*request_size*/,
+                                          uint8_t */*response_buffer*/) override { return HAILO_NOT_IMPLEMENTED; }
 
     virtual Expected<hailo_device_identity_t> identify() override;
     virtual Expected<hailo_extended_device_information_t> get_extended_device_information() override;

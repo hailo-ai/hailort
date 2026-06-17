@@ -18,7 +18,6 @@
 #include "vdma/channel/channel_id.hpp"
 #include "hef/layer_info.hpp"
 
-#include "device_common/control_protocol.hpp"
 #include "context_switch_defs.h"
 
 namespace hailort

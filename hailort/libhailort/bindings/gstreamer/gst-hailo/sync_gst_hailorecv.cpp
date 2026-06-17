@@ -126,7 +126,6 @@ void HailoRecvImpl::set_property(GObject *object, guint property_id, const GValu
 
     if ((object == nullptr) || (value == nullptr) || (pspec == nullptr)) {
         g_error("set_property got null parameter!");
-        return;
     }
 
     switch (property_id) {
@@ -151,7 +150,6 @@ void HailoRecvImpl::get_property(GObject *object, guint property_id, GValue *val
 
     if ((object == nullptr) || (value == nullptr) || (pspec == nullptr)) {
         g_error("get_property got null parameter!");
-        return;
     }
 
     switch (property_id) {
@@ -191,7 +189,6 @@ GstFlowReturn HailoRecvImpl::handle_frame(GstVideoFilter */*filter*/, GstVideoFr
         case BUFFER_FLAG_NONE:
         default:
             g_error("Unknown metadata type = %d", meta->flag);
-            break;
         }
     }
 
@@ -377,7 +374,6 @@ static GstFlowReturn gst_hailorecv_buffer_pool_acquire_callback(GstBufferPool *p
         gst_structure_free(pool_config);
         if (!result) {
             g_error("Failed getting config params from buffer pool!");
-            return GST_FLOW_ERROR;
         }
 
         if (hailo_pool->buffers_acquired.load() == max_buffers) {

@@ -323,7 +323,6 @@ void HailoSyncNetImpl::set_property(GObject *object, guint property_id, const GV
 
     if ((object == nullptr) || (value == nullptr) || (pspec == nullptr)) {
         g_error("set_property got null parameter!");
-        return;
     }
 
     switch (property_id) {
@@ -338,7 +337,6 @@ void HailoSyncNetImpl::set_property(GObject *object, guint property_id, const GV
         if (0 != m_props.m_device_count.get()) {
             g_error("device-id and device-count excludes eachother. received device-id=%s, device-count=%d",
                 g_value_get_string(value), m_props.m_device_count.get());
-            break;
         }
         if (m_was_configured) {
             g_warning("The network was already configured so changing the device ID will not take place!");
@@ -353,7 +351,6 @@ void HailoSyncNetImpl::set_property(GObject *object, guint property_id, const GV
         if (nullptr != m_props.m_device_id.get()) {
             g_error("device-id and device-count excludes eachother. received device-id=%s, device-count=%d",
                 m_props.m_device_id.get(), g_value_get_uint(value));
-            break;
         }
         if (m_was_configured) {
             g_warning("The network was already configured so changing the device count will not take place!");
@@ -415,7 +412,6 @@ void HailoSyncNetImpl::set_property(GObject *object, guint property_id, const GV
 
         if (m_props.m_scheduling_algorithm.was_changed() && (HAILO_SCHEDULING_ALGORITHM_NONE != m_props.m_scheduling_algorithm.get())) {
             g_error("scheduling-algorithm different than HAILO_SCHEDULING_ALGORITHM_NONE in combination with 'is-active' is not supported.");
-            break;
         }
 
         if (m_has_called_activate) {
@@ -425,13 +421,11 @@ void HailoSyncNetImpl::set_property(GObject *object, guint property_id, const GV
                 hailo_status status = deactivate_network_group();
                 if (HAILO_SUCCESS != status) {
                     g_error("Deactivating network group failed, status = %d", status);
-                    return;
                 }
             } else if (!m_props.m_is_active.get() && new_is_active) {
                 hailo_status status = m_net_group_handle->activate_network_group();
                 if (HAILO_SUCCESS != status) {
                     g_error("Failed activating network group, status = %d", status);
-                    break;
                 }
                 m_props.m_is_active = true;
             } else {
@@ -450,7 +444,6 @@ void HailoSyncNetImpl::set_property(GObject *object, guint property_id, const GV
         }
         if (m_props.m_is_active.was_changed() && (g_value_get_enum(value) != HAILO_SCHEDULING_ALGORITHM_NONE)) {
             g_error("scheduling-algorithm different than HAILO_SCHEDULING_ALGORITHM_NONE in combination with 'is-active' is not supported.");
-            break;
         }
         m_props.m_scheduling_algorithm = static_cast<hailo_scheduling_algorithm_t>(g_value_get_enum(value));
         break;
@@ -461,7 +454,6 @@ void HailoSyncNetImpl::set_property(GObject *object, guint property_id, const GV
         }
         if (m_props.m_is_active.was_changed()) {
             g_error("scheduler usage (scheduler-timeout-ms) in combination with 'is-active' is not supported.");
-            break;
         }
         m_props.m_scheduler_timeout_ms = g_value_get_uint(value);
         break;
@@ -472,7 +464,6 @@ void HailoSyncNetImpl::set_property(GObject *object, guint property_id, const GV
         }
         if (m_props.m_is_active.was_changed()) {
             g_error("scheduler usage (scheduler-threshold) in combination with 'is-active' is not supported.");
-            break;
         }
         m_props.m_scheduler_threshold = g_value_get_uint(value);
         break;
@@ -483,7 +474,6 @@ void HailoSyncNetImpl::set_property(GObject *object, guint property_id, const GV
         }
         if (m_props.m_is_active.was_changed()) {
             g_error("scheduler usage (scheduler-priority) in combination with 'is-active' is not supported.");
-            break;
         }
         m_props.m_scheduler_priority = static_cast<guint8>(g_value_get_uint(value));
         break;
@@ -541,7 +531,6 @@ void HailoSyncNetImpl::get_property(GObject *object, guint property_id, GValue *
 
     if ((object == nullptr) || (value == nullptr) || (pspec == nullptr)) {
         g_error("get_property got null parameter!");
-        return;
     }
 
     switch (property_id) {

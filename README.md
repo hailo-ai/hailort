@@ -20,15 +20,15 @@ HailoRT supports Linux and Windows, and it can be compiled from sources to be in
 
 ## Usage
 
-See [**hailo.ai developer zone documentation**](https://hailo.ai/developer-zone/documentation/hailort/latest/) (registration is required for  full documentation access).
+See [**hailo.ai developer zone documentation**](https://hailo.ai/developer-zone/documentation/hailort/latest-hailo8/).
 
-For compilation instructions, see  [**Compiling HailoRT from Sources**](https://hailo.ai/developer-zone/documentation/hailort/latest/?sp_referrer=install/install.html#compiling-from-sources).
+For compilation instructions, see  [**Compiling HailoRT from Sources**](https://hailo.ai/developer-zone/documentation/hailort/latest-hailo8/?sp_referrer=install/install.html#compiling-from-sources).
 
 For HailoRT API examples - see [**HailoRT examples**](https://github.com/hailo-ai/hailort/tree/master/hailort/libhailort/examples).
 
 ## Changelog
 
-See [**hailo.ai developer zone - HailoRT changelog**](https://hailo.ai/developer-zone/documentation/hailort/latest/?sp_referrer=changelog/changelog.html) (registration required).
+See [**hailo.ai developer zone - HailoRT changelog**](https://hailo.ai/developer-zone/documentation/hailort/latest-hailo8/?sp_referrer=changelog/changelog.html).
 
 ## Licenses
 

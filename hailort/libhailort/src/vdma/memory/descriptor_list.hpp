@@ -13,9 +13,6 @@
 #include "hailo/expected.hpp"
 #include "hailo/hailort_common.hpp"
 
-#include "common/utils.hpp"
-
-#include "vdma/channel/channel_id.hpp"
 #include "vdma/memory/mapped_buffer.hpp"
 #include "vdma/driver/hailort_driver.hpp"
 
@@ -73,19 +70,14 @@ public:
         return m_desc_count;
     }
 
-    uint64_t dma_address() const
-    {
-        return m_desc_list_info.dma_address;
-    }
-
     uint16_t desc_page_size() const
     {
         return m_desc_page_size;
     }
 
-    uintptr_t handle() const
+    desc_list_handle_t handle() const
     {
-        return m_desc_list_info.handle;
+        return m_handle;
     }
 
     uint16_t max_transfers(uint32_t transfer_size, bool include_bounce_buffer = false) const
@@ -114,12 +106,14 @@ public:
     static size_t descriptors_buffer_allocation_size(uint32_t desc_count);
 
 private:
-    DescriptorList(uint32_t desc_count, uint16_t desc_page_size, bool is_circular, HailoRTDriver &driver,
-        hailo_status &status);
+    DescriptorList(desc_list_handle_t handle, uint32_t desc_count, uint16_t desc_page_size, HailoRTDriver &driver)
+    : m_handle(handle),
+      m_desc_count(desc_count),
+      m_driver(driver),
+      m_desc_page_size(desc_page_size) {}
 
-    DescriptorsListInfo m_desc_list_info;
+    desc_list_handle_t m_handle;
     const uint32_t m_desc_count;
-    const bool m_is_circular;
     HailoRTDriver &m_driver;
     const uint16_t m_desc_page_size;
 };

@@ -102,7 +102,7 @@ hailo_status Waitable::eventfd_poll(underlying_waitable_handle_t fd, std::chrono
     pfd.events = POLLIN;
     do {
         poll_ret = poll(&pfd, 1, static_cast<int>(timeout.count()));
-    } while ((0 > poll_ret) && (EINTR == poll_ret));
+    } while ((0 > poll_ret) && (EINTR == errno));
 
     if (0 == poll_ret) {
         LOGGER__TRACE("Timeout");

@@ -13,8 +13,6 @@
 #include "hailo/hailort.h"
 #include "hailo/device.hpp"
 
-#include "device_common/control_protocol.hpp"
-
 #include "control_protocol.h"
 #include <stdbool.h>
 
@@ -22,7 +20,6 @@
 namespace hailort
 {
 
-#define CONTROL__MAX_SEQUENCE (0xFFFFFFFF)
 #define CONTROL__MAX_WRITE_MEMORY_CHUNK_SIZE (1024)
 
 #define FW_MAGIC (0x1DD89DE0)
@@ -39,10 +36,6 @@ class Control final
 {
 public:
     Control() = delete;
-
-    static hailo_status parse_and_validate_response(uint8_t *message, uint32_t message_size, 
-        CONTROL_PROTOCOL__response_header_t **header, CONTROL_PROTOCOL__payload_t **payload, 
-        CONTROL_PROTOCOL__request_t *request, Device &device);
 
     /**
      * Receive information about the device.
@@ -71,26 +64,6 @@ public:
     static hailo_status core_identify(Device &device, hailo_core_information_t *core_info);
 
     /**
-     * Configure a UDP input dataflow stream at a Hailo device.
-     * 
-     * @param[in]     device - The Hailo device.
-     * @param[in]     params - The stream params that would be configured.
-     * @param[out]    dataflow_manager_id - Unique id of the dataflow manager.
-     * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a static hailo_status error.
-     */
-    static hailo_status config_stream_udp_input(Device &device, CONTROL_PROTOCOL__config_stream_params_t *params, uint8_t &dataflow_manager_id);
-
-    /**
-     * Configure a UDP output dataflow stream at a Hailo device.
-     * 
-     * @param[in]     device - The Hailo device.
-     * @param[in]     params - The stream params that would be configured.
-     * @param[out]    dataflow_manager_id - Unique id of the dataflow manager.
-     * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a static hailo_status error.
-     */
-    static hailo_status config_stream_udp_output(Device &device, CONTROL_PROTOCOL__config_stream_params_t *params, uint8_t &dataflow_manager_id);
-
-    /**
      * Configure a MIPI input dataflow stream at a Hailo device.
      * 
      * @param[in]     device - The Hailo device.
@@ -98,7 +71,7 @@ public:
      * @param[out]    dataflow_manager_id - Unique id of the dataflow manager.
      * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a static hailo_status error.
      */
-    static hailo_status config_stream_mipi_input(Device &device, CONTROL_PROTOCOL__config_stream_params_t *params, uint8_t &dataflow_manager_id);
+    static hailo_status config_stream_mipi_input(Device &device, CONTROL_PROTOCOL__config_stream_request_t *params, uint8_t &dataflow_manager_id);
 
     /**
      * Configure a MIPI output dataflow stream at a Hailo device.
@@ -108,7 +81,7 @@ public:
      * @param[out]    dataflow_manager_id - Unique id of the dataflow manager.
      * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a static hailo_status error.
      */
-    static hailo_status config_stream_mipi_output(Device &device, CONTROL_PROTOCOL__config_stream_params_t *params, uint8_t &dataflow_manager_id);
+    static hailo_status config_stream_mipi_output(Device &device, CONTROL_PROTOCOL__config_stream_request_t *params, uint8_t &dataflow_manager_id);
 
     /**
      * Configure a PCIe input dataflow stream at a Hailo device.
@@ -118,7 +91,7 @@ public:
      * @param[out]    dataflow_manager_id - Unique id of the dataflow manager.
      * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a static hailo_status error.
      */
-    static hailo_status config_stream_pcie_input(Device &device, CONTROL_PROTOCOL__config_stream_params_t *params, uint8_t &dataflow_manager_id);
+    static hailo_status config_stream_pcie_input(Device &device, CONTROL_PROTOCOL__config_stream_request_t *params, uint8_t &dataflow_manager_id);
 
     /**
      * Configure a PCIe output dataflow stream at a Hailo device.
@@ -128,7 +101,7 @@ public:
      * @param[out]    dataflow_manager_id - Unique id of the dataflow manager.
      * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a static hailo_status error.
      */
-    static hailo_status config_stream_pcie_output(Device &device, CONTROL_PROTOCOL__config_stream_params_t *params, uint8_t &dataflow_manager_id);
+    static hailo_status config_stream_pcie_output(Device &device, CONTROL_PROTOCOL__config_stream_request_t *params, uint8_t &dataflow_manager_id);
 
     /**
      * Open a stream at a Hailo device.
@@ -411,6 +384,7 @@ private:
             CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_t state_machine_status,
             uint8_t network_group_index, uint16_t dynamic_batch_size, uint16_t batch_count);
     static Expected<CONTROL_PROTOCOL__get_extended_device_information_response_t> get_extended_device_info_response(Device &device);
+    static hailo_status fw_interact(Device &device, CONTROL_PROTOCOL__request_t *request, size_t request_size, CONTROL_PROTOCOL__response_t *response);
 };
 
 } /* namespace hailort */

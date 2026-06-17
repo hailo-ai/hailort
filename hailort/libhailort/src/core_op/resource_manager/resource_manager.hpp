@@ -33,7 +33,6 @@
 #include "core_op/resource_manager/config_buffer.hpp"
 #include "core_op/resource_manager/channel_allocator.hpp"
 #include "core_op/resource_manager/action_list_buffer_builder/action_list_buffer_builder.hpp"
-#include "device_common/control_protocol.hpp"
 #include "vdma/channel/boundary_channel.hpp"
 #include "vdma/pcie/pcie_device.hpp"
 #include "internal_buffer_manager.hpp"
@@ -116,6 +115,8 @@ public:
         return m_context_type;
     }
 
+    std::vector<CONTROL_PROTOCOL__host_buffer_info_t> get_host_buffer_infos() const;
+
 private:
     ContextResources(HailoRTDriver &driver, CONTROL_PROTOCOL__context_switch_context_type_t context_type,
         std::vector<ConfigBuffer> &&config_buffers, std::shared_ptr<InternalBufferManager> internal_buffer_manager) :
@@ -191,9 +192,9 @@ public:
         return m_latency_meters;
     }
 
-    std::shared_ptr<ActionListBufferBuilder>& get_action_list_buffer_builder()
+    ActionListBufferBuilder &get_action_list_buffer_builder()
     {
-        return m_action_list_buffer_builder;
+        return *m_action_list_buffer_builder;
     }
 
     Expected<hailo_stream_interface_t> get_default_streams_interface();

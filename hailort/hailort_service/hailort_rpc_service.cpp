@@ -148,9 +148,10 @@ void HailoRtRpcService::remove_disconnected_clients()
     {
         std::unique_lock<std::mutex> lock(m_keep_alive_mutex);
         for (auto pid_to_last_alive : m_clients_pids) {
+            auto client_pid = pid_to_last_alive.first;
             auto duration = std::chrono::duration_cast<std::chrono::seconds>(now - pid_to_last_alive.second);
-            if (duration > hailort::HAILO_KEEPALIVE_INTERVAL) {
-                auto client_pid = pid_to_last_alive.first;
+            // Prune dead local clients immediately using is_pid_alive to avoid races.
+            if ((duration > hailort::HAILO_KEEPALIVE_INTERVAL) || (!OsUtils::is_pid_alive(client_pid))) {
                 pids_to_remove.insert(client_pid);
             }
         }

@@ -131,7 +131,7 @@ if __name__ == "__main__":
             "future",
             "netaddr",
             "netifaces",
-            "numpy<2",
+            "numpy",
         ],
         name="hailort",
         package_data={
@@ -146,6 +146,6 @@ if __name__ == "__main__":
             "linux_aarch64",
         ],
         url="https://hailo.ai/",
-        version="4.23.0",
+        version="4.24.0",
         zip_safe=False,
     )

@@ -106,7 +106,7 @@ CONTROL_PROTOCOL__mipi_input_config_params_t MipiInputStream::hailo_mipi_params_
 hailo_status MipiInputStream::activate_stream()
 {
     hailo_status status = HAILO_UNINITIALIZED;
-    CONTROL_PROTOCOL__config_stream_params_t params = {};
+    CONTROL_PROTOCOL__config_stream_request_t params = {};
 
     // Core HW padding is not supported on MIPI
     m_layer_info.nn_stream_config.feature_padding_payload = 0;

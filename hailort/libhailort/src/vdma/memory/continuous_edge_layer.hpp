@@ -5,6 +5,7 @@
 /**
  * @file continuous_edge_layer.hpp
  * @brief Continuous physical vdma edge layer.
+ * WARNING! NOT SUPPRTED IN HAILO-8! This file will be removed in the future.
  **/
 
 #ifndef _HAILO_VDMA_CONTINUOUS_EDGE_LAYER_HPP_
@@ -21,7 +22,17 @@ namespace vdma {
 class ContinuousEdgeLayer final : public VdmaEdgeLayer {
 public:
     static Expected<ContinuousEdgeLayer> create(std::shared_ptr<ContinuousBuffer> &&buffer, size_t size, size_t offset,
-        uint16_t page_size, uint32_t num_pages);
+        uint16_t page_size, uint32_t num_pages)
+    {
+        (void)buffer;
+        (void)size;
+        (void)offset;
+        (void)page_size;
+        (void)num_pages;
+        LOGGER__CRITICAL("Continuous edge-layers are not supported in Hailo8");
+
+        return make_unexpected(HAILO_NOT_SUPPORTED);
+    }
 
     virtual ~ContinuousEdgeLayer() = default;
 
@@ -35,7 +46,7 @@ public:
         return Type::CONTINUOUS;
     }
 
-    virtual uint64_t dma_address() const override;
+    virtual desc_list_handle_t handle() const override;
     virtual uint16_t desc_page_size() const override;
     virtual uint32_t descs_count() const override;
 

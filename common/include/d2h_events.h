@@ -1,6 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0
 /**
  * Copyright (c) 2019-2025 Hailo Technologies Ltd. All rights reserved.
- * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
  * @file d2h_events.h
@@ -30,7 +30,7 @@ typedef enum {
 } D2H_EVENT_PRIORITY_t;
 
 typedef enum {
-    D2H_EVENT_COMMUNICATION_TYPE_UDP = 0,
+    D2H_EVENT_COMMUNICATION_TYPE_UDP = 0, /* DEPRECATED */
     D2H_EVENT_COMMUNICATION_TYPE_VDMA,
     D2H_EVENT_COMMUNICATION_TYPE__COUNT
 } D2H_EVENT_COMMUNICATION_TYPE_t;
@@ -72,7 +72,6 @@ typedef struct {
     uint32_t queue_number;
     uint32_t rx_errors_count;
 } D2H_EVENT_rx_error_event_message_t;
-#define D2H_EVENT_RX_ERROR_EVENT_PARAMETER_COUNT  (3)
 
 /* D2H_EVENT_host_info_event_message_t should be the same as hailo_debug_notification_message_t */
 typedef struct {
@@ -132,8 +131,6 @@ typedef struct {
     uint16_t context_index;
     uint16_t action_index;
 } D2H_EVENT_context_switch_breakpoint_reached_event_message_t;
-
-#define D2H_EVENT_CONTEXT_SWITCH_BREAKPOINT_REACHED_EVENT_PARAMETER_COUNT  (4)
 
 typedef struct {
     uint32_t previous_clock;

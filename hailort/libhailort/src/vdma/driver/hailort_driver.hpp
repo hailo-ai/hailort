@@ -53,8 +53,6 @@ static_assert((0 == ((ONGOING_TRANSFERS_SIZE - 1) & ONGOING_TRANSFERS_SIZE)), "O
 // When measuring latency, each channel is capable of ONGOING_TRANSFERS_SIZE active transfers, each transfer raises max of 2 timestamps
 #define MAX_IRQ_TIMESTAMPS_SIZE (ONGOING_TRANSFERS_SIZE * 2)
 
-#define PCIE_EXPECTED_MD5_LENGTH (16)
-
 constexpr size_t VDMA_CHANNELS_PER_ENGINE           = 32;
 constexpr size_t MAX_VDMA_ENGINES_COUNT             = 3;
 constexpr size_t MAX_VDMA_CHANNELS_COUNT            = MAX_VDMA_ENGINES_COUNT * VDMA_CHANNELS_PER_ENGINE;
@@ -102,10 +100,8 @@ using vdma_mapped_buffer_driver_identifier = int;
 #error "unsupported platform!"
 #endif
 
-struct DescriptorsListInfo {
-    uintptr_t handle; // Unique identifier for the driver.
-    uint64_t dma_address;
-};
+typedef uint64_t desc_list_handle_t;
+static constexpr desc_list_handle_t INVALID_DESC_LIST_HANDLE = 0; // Desc-list handles start at 1.
 
 struct ContinousBufferInfo {
     uintptr_t handle;  // Unique identifer for the driver.
@@ -238,9 +234,7 @@ public:
     Expected<std::vector<uint8_t>> read_notification();
     hailo_status disable_notifications();
 
-    hailo_status fw_control(const void *request, size_t request_len, const uint8_t request_md5[PCIE_EXPECTED_MD5_LENGTH],
-        void *response, size_t *response_len, uint8_t response_md5[PCIE_EXPECTED_MD5_LENGTH],
-        std::chrono::milliseconds timeout, hailo_cpu_id_t cpu_id);
+    hailo_status fw_control(const void *request, size_t request_len, void *response);
 
     /**
      * Read data from the debug log buffer.
@@ -296,13 +290,12 @@ public:
      * @param[in] is_circular - if true, the descriptors list can be used in a circular (and desc_count must be power
      *                          of 2)
      */
-    Expected<DescriptorsListInfo> descriptors_list_create(size_t desc_count, uint16_t desc_page_size,
-        bool is_circular);
+    Expected<desc_list_handle_t> descriptors_list_create(size_t count, uint16_t page_size, bool is_circular);
 
     /**
      * Frees a vdma descriptors buffer allocated by 'descriptors_list_create'.
      */
-    hailo_status descriptors_list_release(const DescriptorsListInfo &descriptors_list_info);
+    hailo_status descriptors_list_release(desc_list_handle_t handle);
 
     /**
      * Program the given descriptors list to point to the given buffer.

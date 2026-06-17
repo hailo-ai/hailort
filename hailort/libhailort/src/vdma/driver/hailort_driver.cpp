@@ -72,25 +72,6 @@ static hailo_dma_buffer_type driver_dma_buffer_type_to_dma_buffer_type(HailoRTDr
     return HAILO_DMA_BUFFER_MAX_ENUM;
 }
 
-static enum hailo_cpu_id translate_cpu_id(hailo_cpu_id_t cpu_id)
-{
-    switch (cpu_id) {
-    case HAILO_CPU_ID_0:
-        return HAILO_CPU_ID_CPU0;
-    case HAILO_CPU_ID_1:
-        return HAILO_CPU_ID_CPU1;
-    case HAILO_CPU_ID_MAX_ENUM:
-        // Add label for HAILO_CPU_ID_MAX_ENUM to cover all enum cases (avoid warnings). Continue to the assert.
-        break;
-    }
-
-    assert(false);
-    // On release build Return value that will make ioctls to fail.
-    return HAILO_CPU_ID_NONE;
-}
-
-
-
 static hailo_dma_data_direction direction_to_dma_data_direction(HailoRTDriver::DmaDirection direction) {
     switch (direction) {
     case HailoRTDriver::DmaDirection::H2D:
@@ -447,35 +428,21 @@ hailo_status HailoRTDriver::disable_notifications()
     return HAILO_SUCCESS;
 }
 
-hailo_status HailoRTDriver::fw_control(const void *request, size_t request_len, const uint8_t request_md5[PCIE_EXPECTED_MD5_LENGTH],
-    void *response, size_t *response_len, uint8_t response_md5[PCIE_EXPECTED_MD5_LENGTH],
-    std::chrono::milliseconds timeout, hailo_cpu_id_t cpu_id)
+hailo_status HailoRTDriver::fw_control(const void *request, size_t request_len, void *response)
 {
     CHECK_ARG_NOT_NULL(request);
     CHECK_ARG_NOT_NULL(response);
-    CHECK_ARG_NOT_NULL(response_len);
-    CHECK(timeout.count() >= 0, HAILO_INVALID_ARGUMENT);
 
-    hailo_fw_control command{};
-    static_assert(PCIE_EXPECTED_MD5_LENGTH == sizeof(command.expected_md5), "mismatch md5 size");
-    memcpy(&command.expected_md5, request_md5, sizeof(command.expected_md5));
-    command.buffer_len = static_cast<uint32_t>(request_len);
-    CHECK(request_len <= sizeof(command.buffer), HAILO_INVALID_ARGUMENT,
-        "FW control request len can't be larger than {} (size given {})", sizeof(command.buffer), request_len);
-    memcpy(&command.buffer, request, request_len);
-    command.timeout_ms = static_cast<uint32_t>(timeout.count());
-    command.cpu_id = translate_cpu_id(cpu_id);
+    hailo_fw_control command = {};
+    command.request_len = static_cast<uint32_t>(request_len);
+    CHECK(request_len <= sizeof(command.request), HAILO_INVALID_ARGUMENT,
+          "FW-Control request size too large: {}", request_len);
+
+    memcpy(&command.request, request, request_len);
 
     RUN_AND_CHECK_IOCTL_RESULT(HAILO_FW_CONTROL, &command, "Failed in fw_control");
 
-    if (*response_len < command.buffer_len) {
-        LOGGER__ERROR("FW control response len needs to be at least {} (size given {})", command.buffer_len, *response_len);
-        *response_len = command.buffer_len;
-        return HAILO_INSUFFICIENT_BUFFER;
-    }
-    memcpy(response, command.buffer, command.buffer_len);
-    *response_len = command.buffer_len;
-    memcpy(response_md5, command.expected_md5, PCIE_EXPECTED_MD5_LENGTH);
+    memcpy(response, &command.response, command.response_len);
 
     return HAILO_SUCCESS;
 }
@@ -486,7 +453,7 @@ hailo_status HailoRTDriver::read_log(uint8_t *buffer, size_t buffer_size, size_t
     CHECK_ARG_NOT_NULL(read_bytes);
 
     hailo_read_log_params params{};
-    params.cpu_id = translate_cpu_id(cpu_id);
+    params.is_app_cpu = (cpu_id == HAILO_CPU_ID_0);
     params.buffer_size = buffer_size;
     params.read_bytes = 0;
 
@@ -925,7 +892,7 @@ hailo_status HailoRTDriver::vdma_buffer_unmap_ioctl(VdmaBufferHandle handle)
     return HAILO_SUCCESS;
 }
 
-Expected<DescriptorsListInfo> HailoRTDriver::descriptors_list_create(size_t desc_count,
+Expected<desc_list_handle_t> HailoRTDriver::descriptors_list_create(size_t desc_count,
     uint16_t desc_page_size, bool is_circular)
 {
     CHECK(is_powerof2(desc_page_size), HAILO_INVALID_ARGUMENT, "Invalid desc page size {}", desc_page_size);
@@ -937,13 +904,13 @@ Expected<DescriptorsListInfo> HailoRTDriver::descriptors_list_create(size_t desc
 
     RUN_AND_CHECK_IOCTL_RESULT(HAILO_DESC_LIST_CREATE, &create_desc_info, "Failed to create desc list");
 
-    return DescriptorsListInfo{create_desc_info.desc_handle, create_desc_info.dma_address};
+    return Expected<desc_list_handle_t>(create_desc_info.desc_handle);
 }
 
-hailo_status HailoRTDriver::descriptors_list_release(const DescriptorsListInfo &desc_info)
+hailo_status HailoRTDriver::descriptors_list_release(desc_list_handle_t handle)
 {
     struct hailo_desc_list_release_params params{};
-    params.desc_handle = desc_info.handle;
+    params.desc_handle = handle;
     RUN_AND_CHECK_IOCTL_RESULT(HAILO_DESC_LIST_RELEASE, &params, "Failed release desc list");
     return HAILO_SUCCESS;
 }

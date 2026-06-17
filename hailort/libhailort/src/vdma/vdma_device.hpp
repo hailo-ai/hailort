@@ -29,7 +29,6 @@ public:
     virtual ~VdmaDevice();
 
     virtual hailo_status wait_for_wakeup() override;
-    virtual void increment_control_sequence() override;
     virtual void shutdown_core_ops() override;
     virtual hailo_reset_device_mode_t get_default_reset_mode() override;
     hailo_status mark_as_used();
@@ -69,7 +68,7 @@ protected:
     virtual Expected<D2H_EVENT_MESSAGE_t> read_notification() override;
     virtual hailo_status disable_notifications() override;
     virtual hailo_status fw_interact_impl(uint8_t *request_buffer, size_t request_size,
-        uint8_t *response_buffer, size_t *response_size, hailo_cpu_id_t cpu_id) override;
+        uint8_t *response_buffer) override;
     virtual Expected<ConfiguredNetworkGroupVector> add_hef(Hef &hef, const NetworkGroupsParamsMap &configure_params) override;
 
     std::unique_ptr<HailoRTDriver> m_driver;
