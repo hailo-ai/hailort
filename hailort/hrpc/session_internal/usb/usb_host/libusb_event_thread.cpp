@@ -11,13 +11,13 @@
 #include "common/logger_macros.hpp"
 #include "common/utils.hpp"
 
-#include <libusb-1.0/libusb.h>
+#include <libusb.h>
 #include <chrono>
 
 namespace hailort
 {
 
-static constexpr suseconds_t USB_EVENT_LOOP_TIMEOUT_US = 100 * 1000; // 100ms
+static constexpr long USB_EVENT_LOOP_TIMEOUT_US = 100 * 1000; // 100ms
 
 std::mutex LibusbEventThread::m_mutex;
 std::weak_ptr<LibusbEventThread> LibusbEventThread::m_ptr;

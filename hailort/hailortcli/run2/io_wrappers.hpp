@@ -17,22 +17,18 @@
 
 #include "common/file_utils.hpp"
 #include "common/latency_meter.hpp"
+#include "common/timeouts.hpp"
 
 #include "hailo/dma_mapped_buffer.hpp"
 
 #include <chrono>
+#include <cstring>
 #include <string>
 
 using namespace hailort;
 
 constexpr uint32_t UNLIMITED_FRAMERATE = 0;
 constexpr size_t   AMOUNT_OF_OUTPUT_BUFFERS_SYNC_API = 1;
-
-#ifndef HAILO_EMULATOR
-constexpr std::chrono::milliseconds HAILORTCLI_DEFAULT_TIMEOUT(HAILO_DEFAULT_VSTREAM_TIMEOUT_MS);
-#else /* ifndef HAILO_EMULATOR */
-constexpr std::chrono::milliseconds HAILORTCLI_DEFAULT_TIMEOUT(HAILO_DEFAULT_VSTREAM_TIMEOUT_MS * 100);
-#endif /* ifndef HAILO_EMULATOR */
 
 
 class FramerateThrottle final
@@ -56,21 +52,64 @@ template<typename Writer>
 class WriterWrapper final : public std::enable_shared_from_this<WriterWrapper<Writer>>
 {
 public:
+    // InputStream has get_async_max_queue_size
+    static Expected<size_t> get_dma_pool_size(InputStream &input_stream, bool async_api)
+    {
+        if (async_api) {
+            TRY(size_t queue_size, input_stream.get_async_max_queue_size());
+            CHECK(queue_size > 0, HAILO_INTERNAL_FAILURE, "get_async_max_queue_size returned 0");
+            return queue_size;
+        } else {
+            return static_cast<size_t>(1);
+        }
+    }
+
+    // InputVStream is always sync, 1 buffer is enough
+    static Expected<size_t> get_dma_pool_size(InputVStream &/*input_vstream*/, bool /*async_api*/)
+    {
+        return static_cast<size_t>(1);
+    }
+
     template<typename WriterParams>
     static Expected<std::shared_ptr<WriterWrapper>> create(Writer &writer, const WriterParams &params,
         VDevice &vdevice, const LatencyMeterPtr &overall_latency_meter, uint32_t framerate, bool async_api)
     {
-        TRY(auto dataset, create_dataset(writer, params));
+        const auto frame_size = writer.get_frame_size();
+        TRY(const auto pool_size, get_dma_pool_size(writer, async_api));
 
-        std::vector<DmaMappedBuffer> dataset_mapped_buffers;
+        Buffer dataset_source;
+        size_t dataset_frame_count = 0;
+        std::vector<BufferPtr> dma_pool;
+
+        if (params.input_file_path.empty()) {
+            // Random data: create pool buffers pre-filled with random data
+            dma_pool.reserve(pool_size);
+            for (size_t i = 0; i < pool_size; i++) {
+                TRY(auto buffer, create_uniformed_buffer_shared(frame_size, BufferStorageParams::create_dma()));
+                dma_pool.emplace_back(std::move(buffer));
+            }
+        } else {
+            // Dataset: read source and create empty pool buffers (will be filled via memcpy in next_buffer)
+            TRY(dataset_source, read_dataset_source(params.input_file_path, frame_size));
+            dataset_frame_count = dataset_source.size() / frame_size;
+            TRY(dma_pool, create_dma_pool(frame_size, pool_size));
+        }
+
+        std::vector<DmaMappedBuffer> dma_pool_mapped;
         if (async_api) {
-            TRY(dataset_mapped_buffers, dma_map_dataset(dataset, vdevice));
+            dma_pool_mapped.reserve(dma_pool.size());
+            for (const auto &buffer : dma_pool) {
+                TRY(auto mapped, DmaMappedBuffer::create(vdevice, buffer->data(), buffer->size(),
+                    HAILO_DMA_BUFFER_DIRECTION_H2D));
+                dma_pool_mapped.emplace_back(std::move(mapped));
+            }
         }
 
         std::shared_ptr<WriterWrapper> wrapper(
-            new (std::nothrow) WriterWrapper(writer, std::move(dataset), std::move(dataset_mapped_buffers),
+            new (std::nothrow) WriterWrapper(writer, std::move(dataset_source), dataset_frame_count,
+                                             frame_size, std::move(dma_pool), std::move(dma_pool_mapped),
                                              overall_latency_meter, framerate));
-        CHECK_NOT_NULL_AS_EXPECTED(wrapper, HAILO_OUT_OF_HOST_MEMORY);
+        CHECK_NOT_NULL(wrapper, HAILO_OUT_OF_HOST_MEMORY);
 
         return wrapper;
     }
@@ -92,7 +131,7 @@ public:
 
     hailo_status wait_for_async_ready()
     {
-        return get().wait_for_async_ready(m_dataset[0]->size(), HAILORTCLI_DEFAULT_TIMEOUT);
+        return get().wait_for_async_ready(m_dma_pool[0]->size(), HAILORTCLI_DEFAULT_TIMEOUT);
     }
 
     template<typename CB>
@@ -114,11 +153,16 @@ public:
     }
 
 private:
-    WriterWrapper(Writer &writer, std::vector<BufferPtr> &&dataset, std::vector<DmaMappedBuffer> &&dataset_mapped_buffers,
+    WriterWrapper(Writer &writer, Buffer &&dataset_source, size_t dataset_frame_count,
+                  size_t frame_size, std::vector<BufferPtr> &&dma_pool,
+                  std::vector<DmaMappedBuffer> &&dma_pool_mapped,
                   const LatencyMeterPtr &overall_latency_meter, uint32_t framerate) :
         m_writer(std::ref(writer)),
-        m_dataset(std::move(dataset)),
-        m_dataset_mapped_buffers(std::move(dataset_mapped_buffers)),
+        m_dataset_source(std::move(dataset_source)),
+        m_dataset_frame_count(dataset_frame_count),
+        m_frame_size(frame_size),
+        m_dma_pool(std::move(dma_pool)),
+        m_dma_pool_mapped(std::move(dma_pool_mapped)),
         m_overall_latency_meter(overall_latency_meter),
         m_framerate_throttle(framerate)
     {}
@@ -130,71 +174,55 @@ private:
         }
     }
 
-    size_t next_buffer_index()
-    {
-        const auto index = m_current_buffer_index;
-        m_current_buffer_index = (m_current_buffer_index + 1) % m_dataset.size();
-        return index;
-    }
-
     BufferPtr next_buffer()
     {
-        return m_dataset[next_buffer_index()];
-    }
+        auto &pool_buffer = m_dma_pool[m_pool_index];
+        m_pool_index = (m_pool_index + 1) % m_dma_pool.size();
 
-    template<typename WriterParams>
-    static Expected<std::vector<BufferPtr>> create_dataset(Writer &writer, const WriterParams &params)
-    {
-        if (params.input_file_path.empty()) {
-            return create_random_dataset(writer.get_frame_size());
-        } else {
-            return create_dataset_from_input_file(params.input_file_path, writer.get_frame_size());
+        if (m_dataset_frame_count > 0) {
+            // Copy next frame from dataset source into the DMA pool buffer
+            const auto offset = m_dataset_frame_index * m_frame_size;
+            std::memcpy(pool_buffer->data(), m_dataset_source.data() + offset, m_frame_size);
+            m_dataset_frame_index = (m_dataset_frame_index + 1) % m_dataset_frame_count;
         }
+        // For random data (dataset_frame_count == 0), pool buffer already has data — just return it.
+
+        return pool_buffer;
     }
 
-    static Expected<std::vector<BufferPtr>> create_random_dataset(size_t frame_size)
-    {
-        TRY(auto buffer,
-            create_uniformed_buffer_shared(frame_size, BufferStorageParams::create_dma()));
-
-        return std::vector<BufferPtr>{ buffer };
-    }
-
-    static Expected<std::vector<BufferPtr>> create_dataset_from_input_file(const std::string &file_path, size_t frame_size)
+    static Expected<Buffer> read_dataset_source(const std::string &file_path, size_t frame_size)
     {
         TRY(auto buffer, read_binary_file(file_path));
-        CHECK_AS_EXPECTED(0 == (buffer.size() % frame_size), HAILO_INVALID_ARGUMENT,
+        CHECK(0 == (buffer.size() % frame_size), HAILO_INVALID_ARGUMENT,
             "Input file ({}) size {} must be a multiple of the frame size {}",
             file_path, buffer.size(), frame_size);
-
-        std::vector<BufferPtr> dataset;
-        const size_t frames_count = buffer.size() / frame_size;
-        dataset.reserve(frames_count);
-        for (size_t i = 0; i < frames_count; i++) {
-            const auto offset = frame_size * i;
-            TRY(auto frame_buffer,
-                Buffer::create_shared(buffer.data() + offset, frame_size, BufferStorageParams::create_dma()));
-            dataset.emplace_back(frame_buffer);
-        }
-
-        return dataset;
+        return buffer;
     }
 
-    static Expected<std::vector<DmaMappedBuffer>> dma_map_dataset(const std::vector<BufferPtr> &dataset, VDevice &vdevice) {
-        std::vector<DmaMappedBuffer> dataset_mapped_buffers;
-        for (const auto &buffer : dataset) {
-            TRY(auto mapped_buffer,
-                DmaMappedBuffer::create(vdevice, buffer->data(), buffer->size(), HAILO_DMA_BUFFER_DIRECTION_H2D));
-            dataset_mapped_buffers.emplace_back(std::move(mapped_buffer));
+    static Expected<std::vector<BufferPtr>> create_dma_pool(size_t frame_size, size_t pool_size)
+    {
+        std::vector<BufferPtr> pool;
+        pool.reserve(pool_size);
+        for (size_t i = 0; i < pool_size; i++) {
+            TRY(auto buffer, Buffer::create_shared(frame_size, BufferStorageParams::create_dma()));
+            pool.emplace_back(std::move(buffer));
         }
-        return dataset_mapped_buffers;
+        return pool;
     }
 
     std::reference_wrapper<Writer> m_writer;
 
-    std::vector<BufferPtr> m_dataset;
-    std::vector<DmaMappedBuffer> m_dataset_mapped_buffers;
-    size_t m_current_buffer_index = 0;
+    // Raw file data (non-DMA). Empty when using random data.
+    Buffer m_dataset_source;
+    // Number of frames in m_dataset_source
+    size_t m_dataset_frame_count = 0; 
+    size_t m_frame_size = 0;
+    size_t m_dataset_frame_index = 0;
+
+    // Small pool of DMA buffers.
+    std::vector<BufferPtr> m_dma_pool;       
+    std::vector<DmaMappedBuffer> m_dma_pool_mapped; 
+    size_t m_pool_index = 0;
 
     LatencyMeterPtr m_overall_latency_meter;
     FramerateThrottle m_framerate_throttle;
@@ -337,7 +365,7 @@ private:
     {
         std::vector<DmaMappedBuffer> mapped_output_buffers;
         mapped_output_buffers.reserve(amount_of_output_buffers);
-        
+
         for (const auto& output_buffer : output_buffers) {
             TRY(auto mapped_buffer,
                 DmaMappedBuffer::create(vdevice, output_buffer->data(), output_buffer->size(), HAILO_DMA_BUFFER_DIRECTION_D2H));

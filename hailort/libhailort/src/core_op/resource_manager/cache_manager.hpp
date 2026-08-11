@@ -63,6 +63,13 @@ class CacheManager final
 public:
     static constexpr uint32_t CACHE_LENGTH_NOT_SET = 0;
 
+    // Static helpers for computing cache info from HEF metadata.
+    // Used by both CacheManager (runtime allocation) and MemoryRequirementsCalculator (offline estimation).
+    static Expected<std::pair<CoreOpCacheIoInfos, CoreOpCacheIoInfos>> get_cache_ios_infos(
+        const CoreOpMetadata &core_op_metadata, const DescSizesParams &desc_sizes_params);
+    static Expected<CoreOpCacheInfos> get_cache_infos(const CoreOpMetadata &core_op_metadata,
+        const DescSizesParams &desc_sizes_params);
+
     static Expected<CacheManagerPtr> create_shared(HailoRTDriver &driver);
 
     CacheManager(HailoRTDriver &driver);
@@ -138,8 +145,6 @@ private:
             bool check_snapshots, bool require_changes);
 
     private:
-        static Expected<CoreOpCacheIoInfos> get_cache_ios_infos(std::shared_ptr<CoreOpMetadata> core_op_metadata,
-            bool input, const DescSizesParams &desc_sizes_params);
         static Expected<CoreOpCacheInfos> get_cache_infos(std::shared_ptr<CoreOpMetadata> core_op_metadata,
             uint32_t expected_cache_length, const DescSizesParams &desc_sizes_params);
         static Expected<std::unordered_map<uint32_t, CacheBuffer>> allocate_cache_buffers(

@@ -33,7 +33,7 @@ public:
 
     virtual ~IntegratedDevice() = default;
 
-    Expected<size_t> read_log(MemoryView &buffer, hailo_cpu_id_t cpu_id) override;
+    Expected<size_t> read_log(MemoryView &buffer, hailo_cpu_id_t cpu_id, bool should_clear = false) override;
     virtual bool is_stream_interface_supported(const hailo_stream_interface_t &stream_interface) const override;
     virtual Expected<hailo_chip_temperature_info_t> get_chip_temperature() override;
     virtual Expected<float32_t> power_measurement(

@@ -8,6 +8,7 @@
  **/
 
 #include "common/utils.hpp"
+#include "common/timeouts.hpp"
 #include "hailo/hailort_common.hpp"
 #include "hailo/vdevice.hpp"
 #include "hailo/infer_model.hpp"
@@ -16,8 +17,6 @@
 #include "net_flow/pipeline/async_infer_runner.hpp"
 #include "utils/profiler/tracer_macros.hpp"
 
-
-#define WAIT_FOR_ASYNC_IN_DTOR_TIMEOUT (std::chrono::milliseconds(10000))
 
 namespace hailort
 {
@@ -340,6 +339,7 @@ Expected<ConfiguredInferModel> InferModelBase::configure()
         network_group_name_params_pair.second.enable_kv_cache = m_config_params.enable_kv_cache;
     }
 
+    m_hef.pimpl->set_ccws_ready_event(m_ccws_ready_event);
     auto network_groups = m_vdevice.get().configure(m_hef, configure_params);
     CHECK_EXPECTED(network_groups);
 

@@ -38,6 +38,7 @@
 #include "vdma/legacy_pcie/legacy_pcie_device.hpp"
 #include "internal_buffer_manager.hpp"
 #include "vdma/memory/cma_buffer.hpp"
+#include "common/status_event.hpp"
 
 namespace hailort
 {
@@ -150,7 +151,8 @@ class ResourcesManager final
 public:
     static Expected<ResourcesManager> create(VdmaDevice &vdma_device, HailoRTDriver &driver,
         const ConfigureNetworkParams &config_params, CacheManagerPtr cache_manager,
-        std::shared_ptr<CoreOpMetadata> core_op_metadata, uint8_t core_op_index);
+        std::shared_ptr<CoreOpMetadata> core_op_metadata, uint8_t core_op_index,
+        StatusEventPtr ccws_ready_event);
 
     // TODO: HRT-9432 needs to call stop_vdma_interrupts_dispatcher and any other resource on dtor.
     ~ResourcesManager() = default;
@@ -249,6 +251,7 @@ public:
     static bool should_use_ddr_action_list(size_t num_contexts, HailoRTDriver::DmaType dma_type);
     Expected<uint16_t> get_batch_size() const;
     hailo_status map_and_set_ccws_section_buffer(BufferPtr hef_as_buffer, size_t offset_to_ccws_section, uint64_t ccws_section_size, HailoRTDriver &driver);
+    hailo_status sync_ccws_section_buffers();
 
     bool get_can_fast_batch_switch()
     {
@@ -305,6 +308,8 @@ private:
     bool m_is_configured;
     bool m_is_activated;
     std::vector<vdma::MappedBufferPtr> m_ccws_section_mapped_buffers;
+    bool m_was_ccws_section_synced;
+    StatusEventPtr m_ccws_ready_event;
     vdma::MappedBufferPtr m_nops_mapped_buffer;
     std::shared_ptr<Buffer> m_hef_as_buffer;
     // Config channels ids are shared between all context. The following vector contains the channel id for each
@@ -325,7 +330,8 @@ private:
         const std::vector<std::string> &&network_index_map, LatencyMetersMap &&latency_meters,
         std::vector<vdma::ChannelId> &&config_channels_ids,
         std::shared_ptr<InternalBufferManager> internal_buffer_manager,
-        std::shared_ptr<ActionListBufferBuilder> &&action_list_buffer_builder);
+        std::shared_ptr<ActionListBufferBuilder> &&action_list_buffer_builder,
+        StatusEventPtr ccws_ready_event);
 };
 
 } /* namespace hailort */

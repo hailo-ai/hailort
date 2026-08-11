@@ -264,7 +264,8 @@ Expected<uint32_t> ZeroCopyConfigBuffer::program_descriptors(const std::vector<u
     // Transfer nops such that the number of total transferred bytes is a multiple of page_size
     const auto total_dma_transfers_size = std::accumulate(ccw_bursts_sizes.begin(), ccw_bursts_sizes.end(), uint64_t{0});
 
-    const size_t padding_count = page_size - (total_dma_transfers_size % page_size);
+    const size_t remainder = total_dma_transfers_size % page_size;
+    const size_t padding_count = (remainder == 0) ? 0 : (page_size - remainder);
     if (padding_count > 0) {
         auto status = m_desc_list->program(m_nops_buffer, padding_count, 0, m_channel_id, current_desc_index, 1);
         CHECK_SUCCESS(status, "Failed to program nops buffer");

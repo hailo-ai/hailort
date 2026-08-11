@@ -4249,6 +4249,16 @@ void Hef::Impl::set_memory_footprint_optimization(bool should_optimize)
     m_zero_copy_config_over_descs = should_optimize;
 }
 
+void Hef::Impl::set_ccws_ready_event(StatusEventPtr ccws_ready_event)
+{
+    m_ccws_ready_event = ccws_ready_event;
+}
+
+StatusEventPtr Hef::Impl::ccws_ready_event() const
+{
+    return m_ccws_ready_event;
+}
+
 Expected<std::string> Hef::hash(const std::string &hef_path)
 {
     TRY(auto hef_reader, SeekableBytesReader::create_reader(hef_path));
@@ -4304,8 +4314,6 @@ Expected<Hef::HefParseForTransferResult> Hef::Impl::parse_hef_for_transfer(const
     auto parse_result = hef_message->ParseFromArray(proto_buffer->data(), static_cast<int>(proto_size));
     CHECK(parse_result, HAILO_HEF_FILE_CORRUPTED, "Failed to parse HEF proto message");
 
-    size_t sum_of_local_resources_size = 0;
-
     // Build chunk list - name, offset, size
     std::vector<HefChunksInfo> chunks_to_send;
 
@@ -4333,7 +4341,6 @@ Expected<Hef::HefParseForTransferResult> Hef::Impl::parse_hef_for_transfer(const
                     "Resource '{}' checksum does not match", resource_name);
             }
             local_resources_buffers[resource_name] = resource_buffer;
-            sum_of_local_resources_size += resource_size;
         } else {
             chunks_to_send.emplace_back(resource_name, resource_size, absolute_offset);
         }
@@ -4350,8 +4357,12 @@ Expected<Hef::HefParseForTransferResult> Hef::Impl::parse_hef_for_transfer(const
     result.chunks = std::move(chunks_to_send);
     result.local_resources_buffers = std::move(local_resources_buffers);
     result.offset_zero_point = offset_zero_point;
-    TRY(result.total_hef_size, hef_reader->get_size());
-    result.total_hef_size -= sum_of_local_resources_size; // Reduce required file size (assuming 'local_resources' sits at the end of the HEF buffer - tokenizer.json, embeddings.bin)
+
+    // Compute the minimum buffer size needed to hold all chunks at their original file offsets.
+    result.total_hef_size = 0;
+    for (const auto &chunk : result.chunks) {
+        result.total_hef_size = std::max(result.total_hef_size, chunk.offset + chunk.size);
+    }
 
     CHECK_SUCCESS(hef_reader->close());
 

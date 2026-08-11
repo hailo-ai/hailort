@@ -197,51 +197,50 @@ Expected<std::shared_ptr<vdma::VdmaBuffer>> CacheManager::StorageManager::get_ba
     return std::shared_ptr<vdma::VdmaBuffer>(buffer_ptr);
 }
 
-Expected<CacheManager::CoreOpManager> CacheManager::CoreOpManager::create(HailoRTDriver &driver,
-    StorageManager &storage_manager, std::shared_ptr<CoreOpMetadata> core_op_metadata, uint32_t expected_cache_length)
+static CacheIoInfo build_cache_io_info(const LayerInfo &layer_info, const DescSizesParams &desc_sizes_params)
 {
-    const auto desc_sizes_params = driver.get_sg_desc_params();
-    TRY(auto cache_buffers, allocate_cache_buffers(storage_manager, core_op_metadata, expected_cache_length,
-        desc_sizes_params));
-    const auto &cache_buffer = cache_buffers.begin()->second;
-    const auto cache_length = cache_buffer.cache_length();
-    return CoreOpManager(driver, cache_length, std::move(cache_buffers));
+    CacheIoInfo io_info{};
+    io_info.entry_size = layer_info.hw_shape.features;
+
+    // The page size is either default_page_size or the nearest power of 2 to the entry size (if it's smaller
+    // than default_page_size)
+    const auto page_size = std::min(
+        get_nearest_powerof_2(io_info.entry_size, 64),
+        static_cast<uint32_t>(desc_sizes_params.default_page_size));
+    io_info.padded_entry_size = HailoRTCommon::align_to(io_info.entry_size, page_size);
+    io_info.io_size = io_info.padded_entry_size * layer_info.hw_shape.height * layer_info.hw_shape.width;
+    return io_info;
 }
 
-Expected<CoreOpCacheIoInfos> CacheManager::CoreOpManager::get_cache_ios_infos(
-    std::shared_ptr<CoreOpMetadata> core_op_metadata, bool input, const DescSizesParams &desc_sizes_params)
+Expected<std::pair<CoreOpCacheIoInfos, CoreOpCacheIoInfos>> CacheManager::get_cache_ios_infos(
+    const CoreOpMetadata &core_op_metadata, const DescSizesParams &desc_sizes_params)
 {
     CoreOpCacheIoInfos cache_inputs_info;
-    for (const auto &context_metadata : core_op_metadata->dynamic_contexts()) {
-        for (const auto &layer_info : (input ? context_metadata.get_cache_input_layers() : context_metadata.get_cache_output_layers())) {
+    CoreOpCacheIoInfos cache_outputs_info;
+    for (const auto &context_metadata : core_op_metadata.dynamic_contexts()) {
+        for (const auto &layer_info : context_metadata.get_cache_input_layers()) {
             const auto cache_id = layer_info.cache_info.cache_id;
             CHECK(!contains(cache_inputs_info, cache_id), HAILO_INTERNAL_FAILURE,
                 "Duplicate cache_id found in cache input layers (cache_id {})", cache_id);
-            CacheIoInfo io_info{};
-            io_info.entry_size = layer_info.hw_shape.features;
-
-            // The page size is either default_page_size or the nearest power of 2 to the entry size (if it's smaller
-            // than default_page_size)
-            const auto page_size = std::min(
-                get_nearest_powerof_2(io_info.entry_size, 64),
-                static_cast<uint32_t>(desc_sizes_params.default_page_size));
-            io_info.padded_entry_size = HailoRTCommon::align_to(io_info.entry_size, page_size);
-            io_info.io_size = io_info.padded_entry_size * layer_info.hw_shape.height * layer_info.hw_shape.width;
-            cache_inputs_info[cache_id] = io_info;
+            cache_inputs_info[cache_id] = build_cache_io_info(layer_info, desc_sizes_params);
+        }
+        for (const auto &layer_info : context_metadata.get_cache_output_layers()) {
+            const auto cache_id = layer_info.cache_info.cache_id;
+            CHECK(!contains(cache_outputs_info, cache_id), HAILO_INTERNAL_FAILURE,
+                "Duplicate cache_id found in cache output layers (cache_id {})", cache_id);
+            cache_outputs_info[cache_id] = build_cache_io_info(layer_info, desc_sizes_params);
         }
     }
 
-    return cache_inputs_info;
+    return std::make_pair(std::move(cache_inputs_info), std::move(cache_outputs_info));
 }
 
-Expected<CoreOpCacheInfos> CacheManager::CoreOpManager::get_cache_infos(std::shared_ptr<CoreOpMetadata> core_op_metadata,
-    uint32_t expected_cache_length, const DescSizesParams &desc_sizes_params)
+Expected<CoreOpCacheInfos> CacheManager::get_cache_infos(const CoreOpMetadata &core_op_metadata,
+    const DescSizesParams &desc_sizes_params)
 {
-    static const auto INPUT = true;
-    TRY(auto cache_inputs, get_cache_ios_infos(core_op_metadata, INPUT, desc_sizes_params));
-
-    static const auto OUTPUT = false;
-    TRY(auto cache_outputs, get_cache_ios_infos(core_op_metadata, OUTPUT, desc_sizes_params));
+    TRY(auto cache_ios, get_cache_ios_infos(core_op_metadata, desc_sizes_params));
+    auto &cache_inputs = cache_ios.first;
+    auto &cache_outputs = cache_ios.second;
 
     CHECK(get_key_set(cache_inputs) == get_key_set(cache_outputs), HAILO_INTERNAL_FAILURE,
         "Mismatch between cache input and output cache_ids");
@@ -251,6 +250,32 @@ Expected<CoreOpCacheInfos> CacheManager::CoreOpManager::get_cache_infos(std::sha
         const auto cache_id = cache_input_info.first;
         TRY(const auto cache_info, CacheInfo::create(cache_input_info.second, cache_outputs[cache_id]));
         final_cache_infos[cache_id] = cache_info;
+    }
+
+    return final_cache_infos;
+}
+
+Expected<CacheManager::CoreOpManager> CacheManager::CoreOpManager::create(HailoRTDriver &driver,
+    StorageManager &storage_manager, std::shared_ptr<CoreOpMetadata> core_op_metadata, uint32_t expected_cache_length)
+{
+    const auto desc_sizes_params = driver.get_sg_desc_params();
+    TRY(auto cache_buffers, allocate_cache_buffers(storage_manager, core_op_metadata, expected_cache_length,
+        desc_sizes_params));
+    CHECK(!cache_buffers.empty(), HAILO_INTERNAL_FAILURE, "Expected cache buffers to be allocated");
+    const auto &cache_buffer = cache_buffers.begin()->second;
+    const auto cache_length = cache_buffer.cache_length();
+    return CoreOpManager(driver, cache_length, std::move(cache_buffers));
+}
+
+Expected<CoreOpCacheInfos> CacheManager::CoreOpManager::get_cache_infos(std::shared_ptr<CoreOpMetadata> core_op_metadata,
+    uint32_t expected_cache_length, const DescSizesParams &desc_sizes_params)
+{
+    TRY(auto final_cache_infos, CacheManager::get_cache_infos(*core_op_metadata, desc_sizes_params));
+
+    // Additional validation specific to CacheManager: all caches must have the same length
+    for (const auto &cache_info_pair : final_cache_infos) {
+        const auto cache_id = cache_info_pair.first;
+        const auto &cache_info = cache_info_pair.second;
         if (expected_cache_length == CACHE_LENGTH_NOT_SET) {
             // If expected_cache_length is not set, set it to the first cache length
             // This happens the first time get_cache_infos is called.

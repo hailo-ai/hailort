@@ -429,11 +429,12 @@ std::vector<hailo_device_architecture_t> DeviceBase::hef_arch_to_device_compatib
     }
 }
 
-Expected<size_t> DeviceBase::fetch_logs(MemoryView buffer, hailo_log_type_t log_type)
+Expected<size_t> DeviceBase::fetch_logs(MemoryView buffer, hailo_log_type_t log_type, bool should_clear)
 {
 #ifndef __linux__
     (void)(buffer);
     (void)(log_type);
+    (void)(should_clear);
     LOGGER__ERROR("fetch_logs is supported only on Linux systems");
     return make_unexpected(HAILO_NOT_SUPPORTED);
 #else
@@ -451,7 +452,7 @@ Expected<size_t> DeviceBase::fetch_logs(MemoryView buffer, hailo_log_type_t log_
 
     TRY(auto logger_fetcher, LoggerFetcherFactory::create(log_type));
 
-    return logger_fetcher->fetch_log(buffer, *this);
+    return logger_fetcher->fetch_log(buffer, *this, should_clear);
 #endif
 }
 

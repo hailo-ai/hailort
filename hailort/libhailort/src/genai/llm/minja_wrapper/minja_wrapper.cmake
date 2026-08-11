@@ -10,7 +10,6 @@ add_library(minja_wrapper
 
 if(WIN32)
     target_compile_options(minja_wrapper PRIVATE
-        /DNOMINMAX # NOMINMAX is required in order to play nice with std::min/std::max (otherwise Windows.h defines it's own)
         /wd4251    # C++ ABI with STL
     )
 endif()

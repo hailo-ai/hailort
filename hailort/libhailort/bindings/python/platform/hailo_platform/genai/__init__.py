@@ -1,6 +1,5 @@
-from hailo_platform import _verify_pyhailort_lib_exists, _verify_version
+from hailo_platform import _verify_version
 
-_verify_pyhailort_lib_exists()
 _verify_version()
 
 from hailo_platform import VDevice

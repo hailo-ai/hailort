@@ -79,6 +79,8 @@ public:
         const InputLayersNamesSuffixes &input_layers_names_suffixes, const PreProcessParams &pre_process_params, bool has_deepstack_layers,
         const std::unordered_map<std::string, size_t> &deepstack_suffix_to_tokens_per_frame = {});
 
+    void reset_local_cache() override;
+
     hailo_status prepare_inputs_prefill(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer,
         std::vector<EmbeddingViewWrapper> input_embeddings, EmbeddingsVectorState &standalone_frame_embeddings_state,
         EmbeddingsVectorState &video_embeddings_state);

@@ -12,13 +12,11 @@
 #include "common/logger_macros.hpp"
 
 #include <sys/eventfd.h>
-#include <sys/select.h>
 #include <unistd.h>
 
 namespace hailort
 {
 
-static constexpr int AIO_SELECT_TIMEOUT_SECONDS {10};
 static constexpr int AIO_ENABLE_NOTIFICATIONS {1 << 0};
 
 Expected<std::unique_ptr<AioContext>> AioContext::create(size_t max_ongoing_transfers)
@@ -28,7 +26,7 @@ Expected<std::unique_ptr<AioContext>> AioContext::create(size_t max_ongoing_tran
     CHECK(0 == ret, HAILO_INTERNAL_FAILURE, "Failed to setup AIO context: {}", strerror(errno));
     auto aio_cleanup_guard = defer([&ctx]() { (void)io_destroy(ctx); });
 
-    const int eventfd = ::eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    const int eventfd = ::eventfd(0, EFD_CLOEXEC);
     CHECK(-1 != eventfd, HAILO_INTERNAL_FAILURE, "Failed to create eventfd: {}", strerror(errno));
     auto eventfd_cleanup_guard = defer([eventfd]() { (void)::close(eventfd); });
 
@@ -67,7 +65,7 @@ AioContext::~AioContext()
 hailo_status AioContext::submit_read(int fd, uint8_t *data, size_t size, size_t offset)
 {
     io_prep_pread(&m_iocb, fd, data + offset, size - offset, 0);
-    
+
     m_iocb.u.c.flags |= AIO_ENABLE_NOTIFICATIONS;
     m_iocb.u.c.resfd = m_eventfd;
 
@@ -82,7 +80,7 @@ hailo_status AioContext::submit_read(int fd, uint8_t *data, size_t size, size_t 
 hailo_status AioContext::submit_write(int fd, const uint8_t *data, size_t size, size_t offset)
 {
     io_prep_pwrite(&m_iocb, fd, const_cast<uint8_t*>(data) + offset, size - offset, 0);
-    
+
     m_iocb.u.c.flags |= AIO_ENABLE_NOTIFICATIONS;
     m_iocb.u.c.resfd = m_eventfd;
 
@@ -93,57 +91,52 @@ hailo_status AioContext::submit_write(int fd, const uint8_t *data, size_t size, 
     return HAILO_SUCCESS;
 }
 
-Expected<size_t> AioContext::wait_for_completion(int fd, const std::atomic_bool &is_closed)
+Expected<size_t> AioContext::wait_for_completion()
 {
-    fd_set read_fds;
-    struct timeval timeout;
-    
     while (true) {
-        if (is_closed.load()) {
-            return make_unexpected(HAILO_COMMUNICATION_CLOSED);
-        }
-
-        FD_ZERO(&read_fds);
-        FD_SET(m_eventfd, &read_fds);
-        FD_SET(fd, &read_fds);
-        
-        const int max_fd = std::max(m_eventfd, fd);
-        timeout.tv_sec = AIO_SELECT_TIMEOUT_SECONDS;
-        timeout.tv_usec = 0;
-
-        int ret = select(max_fd + 1, &read_fds, nullptr, nullptr, &timeout);
-        CHECK(0 != ret, make_unexpected(HAILO_TIMEOUT), "Timeout");
-
-        if (!FD_ISSET(m_eventfd, &read_fds)) {
-            continue;
-        }
-
         uint64_t finished_count = 0;
         ssize_t ev_read = ::read(m_eventfd, &finished_count, sizeof(finished_count));
-        CHECK(ev_read >= 0, HAILO_INTERNAL_FAILURE, "Failed to read from eventfd: {}", strerror(errno));
-
-        if (is_closed.load()) {
-            return make_unexpected(HAILO_COMMUNICATION_CLOSED);
+        if (ev_read < 0) {
+            if (EINTR == errno) {
+                continue;
+            }
+            if (EBADF == errno) {
+                return make_unexpected(HAILO_COMMUNICATION_CLOSED);
+            }
+            LOGGER__ERROR("Failed to read from eventfd: {}", strerror(errno));
+            return make_unexpected(HAILO_INTERNAL_FAILURE);
         }
 
         struct io_event event = {};
-        ret = io_getevents(m_ctx, 1, 1, &event, nullptr);
-        CHECK(ret > 0, HAILO_INTERNAL_FAILURE, "io_getevents failed: {}", strerror(-ret));
-        
-        const ssize_t bytes_read = event.res;
-        if (bytes_read <= 0) {
+        // Zero timeout = peek, don't block: take a ready completion if there is one,
+        // otherwise we were woken by complete()'s shutdown write -> ret==0 -> CLOSED.
+        struct timespec zero_timeout = {0, 0};
+        int ret = io_getevents(m_ctx, 1, 1, &event, &zero_timeout);
+        if (ret == 0) {
             return make_unexpected(HAILO_COMMUNICATION_CLOSED);
         }
+        CHECK(ret > 0, HAILO_INTERNAL_FAILURE, "io_getevents failed: {}", strerror(-ret));
+
+        const ssize_t bytes_read = event.res;
+        if (bytes_read == 0) {
+            return make_unexpected(HAILO_COMMUNICATION_CLOSED);
+        }
+        CHECK(bytes_read > 0, HAILO_INTERNAL_FAILURE, "io_getevents received an error event");
         return static_cast<size_t>(bytes_read);
     }
 }
 
-void AioContext::wake()
+void AioContext::complete()
 {
     uint64_t value = 1;
     const auto written = ::write(m_eventfd, &value, sizeof(value));
     if ((written < 0) && (EAGAIN != errno)) {
         LOGGER__ERROR("Failed to wake AIO context: {}", strerror(errno));
+    }
+
+    if (m_eventfd >= 0) {
+        ::close(m_eventfd);
+        m_eventfd = -1;
     }
 }
 

@@ -1303,6 +1303,7 @@ hailo_status ResourcesManagerBuilder::prepare_aligned_ccws_resources(const Hef &
     std::vector<uint64_t> nops_data(page_size / sizeof(uint64_t), CCW_NOP);
     status = nops_buffer->write(nops_data.data(), page_size, 0);
     CHECK_SUCCESS(status);
+
     resources_manager.set_nops_mapped_buffer(nops_buffer);
     return HAILO_SUCCESS;
 }
@@ -1326,8 +1327,9 @@ Expected<std::shared_ptr<ResourcesManager>> ResourcesManagerBuilder::build(uint8
             core_op_metadata->core_op_name(), network_params.first, HAILO_MAX_BATCH_SIZE);
     }
 
+    auto ccws_ready_event = hef.pimpl->ccws_ready_event();
     TRY(auto resources_manager, ResourcesManager::create(device, driver, config_params, cache_manager,
-        core_op_metadata, current_core_op_index));
+        core_op_metadata, current_core_op_index, ccws_ready_event));
 
     // TODO: Use a new flag in config_params.stream_params_by_name to mark channels as async channels.
     //       will also used to mark streams as async in ConfiguredNetworkGroupBase::create_in/output_stream_from_config_params

@@ -567,11 +567,14 @@ public:
     static Expected<hailo_pix_buffer_t> as_hailo_pix_buffer(MemoryView memory_view, hailo_format_order_t order);
 };
 
-#ifndef HAILO_EMULATOR
-constexpr std::chrono::milliseconds DEFAULT_TRANSFER_TIMEOUT(std::chrono::seconds(10));
-#else /* ifndef HAILO_EMULATOR */
-constexpr std::chrono::milliseconds DEFAULT_TRANSFER_TIMEOUT(std::chrono::seconds(5000));
-#endif /* ifndef HAILO_EMULATOR */
+#ifdef HAILO_EMULATOR
+#define HAILO_EMU_SELECT(normal_val, emulator_val) (emulator_val)
+#else
+#define HAILO_EMU_SELECT(normal_val, emulator_val) (normal_val)
+#endif
+
+constexpr std::chrono::milliseconds DEFAULT_TRANSFER_TIMEOUT(
+    HAILO_EMU_SELECT(std::chrono::seconds(10), std::chrono::seconds(5000)));
 
 constexpr std::chrono::milliseconds HAILO_INFINITE_TIMEOUT(UINT32_MAX);
 

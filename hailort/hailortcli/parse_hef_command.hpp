@@ -26,12 +26,15 @@ public:
     virtual hailo_status execute() override;
 
 private:
-    static hailo_status parse_hefs_infos_dir(const std::string &hef_path, bool stream_infos, bool vstream_infos);
-    static hailo_status parse_hefs_info(const std::string &hef_path, bool stream_infos, bool vstream_infos);
+    static hailo_status parse_hefs_infos_dir(const std::string &hef_path, bool stream_infos, bool vstream_infos,
+        bool genai_info);
+    static hailo_status parse_hefs_info(const std::string &hef_path, bool stream_infos, bool vstream_infos,
+        bool genai_info);
 
     std::string m_hef_path;
     bool m_parse_streams;
     bool m_parse_vstreams;
+    bool m_parse_genai_info;
 };
 
 #endif /* _HAILO_PARSE_COMMAND_COMMAND_HPP_ */

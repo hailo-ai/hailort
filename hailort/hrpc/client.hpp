@@ -16,15 +16,10 @@
 #include "rpc_callbacks/rpc_callbacks_dispatcher.hpp"
 #include "common/object_pool.hpp"
 #include "utils/thread_safe_map.hpp"
+#include "common/timeouts.hpp"
 
 namespace hailort
 {
-
-#ifndef HAILO_EMULATOR
-constexpr std::chrono::milliseconds REQUEST_TIMEOUT(std::chrono::seconds(10));
-#else /* ifndef HAILO_EMULATOR */
-constexpr std::chrono::milliseconds REQUEST_TIMEOUT(std::chrono::seconds(5000));
-#endif /* ifndef HAILO_EMULATOR */
 
 using HrpcCallback = std::function<void(rpc_message_t)>;
 using message_id_t = uint32_t;
@@ -45,7 +40,7 @@ public:
 
     Expected<rpc_message_t> execute_request(uint32_t action_id, const MemoryView &request,
         std::vector<TransferBuffer> &&write_buffers = {}, std::vector<TransferBuffer> &&read_buffers = {},
-        std::chrono::milliseconds timeout = REQUEST_TIMEOUT);
+        std::chrono::milliseconds timeout = HRPC_REQUEST_TIMEOUT);
     hailo_status wait_for_execute_request_ready(const MemoryView &request, std::chrono::milliseconds timeout);
     hailo_status execute_request_async(uint32_t action_id, const MemoryView &request,
         HrpcCallback reply_received_callback, std::vector<TransferBuffer> &&write_buffers = {},

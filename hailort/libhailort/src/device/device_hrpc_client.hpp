@@ -30,7 +30,7 @@ public:
 
     virtual Expected<ConfiguredNetworkGroupVector> configure(Hef &/*hef*/,
         const NetworkGroupsParamsMap &configure_params={}) override { (void)configure_params; return make_unexpected(HAILO_NOT_IMPLEMENTED); }
-    virtual Expected<size_t> read_log(MemoryView &/*buffer*/, hailo_cpu_id_t /*cpu_id*/) override { return make_unexpected(HAILO_NOT_IMPLEMENTED); }
+    virtual Expected<size_t> read_log(MemoryView &/*buffer*/, hailo_cpu_id_t /*cpu_id*/, bool /*should_clear*/ = false) override { return make_unexpected(HAILO_NOT_IMPLEMENTED); }
     virtual hailo_status reset(hailo_reset_device_mode_t mode) override;
     virtual Expected<Buffer> read_board_config() override { return make_unexpected(HAILO_NOT_IMPLEMENTED); }
     virtual hailo_status write_board_config(const MemoryView &/*buffer*/) override { return HAILO_NOT_IMPLEMENTED; }
@@ -38,8 +38,7 @@ public:
     virtual bool is_stream_interface_supported(const hailo_stream_interface_t &/*stream_interface*/) const override { return false; }
 
     virtual hailo_status wait_for_wakeup() override { return make_unexpected(HAILO_NOT_IMPLEMENTED); }
-    virtual void increment_control_sequence() override {}
-    virtual hailo_status fw_interact_impl(uint8_t */*request_buffer*/, size_t /*request_size*/, uint8_t */*response_buffer*/, 
+    virtual hailo_status fw_interact_impl(uint8_t */*request_buffer*/, size_t /*request_size*/, uint8_t */*response_buffer*/,
                                           size_t */*response_size*/, hailo_cpu_id_t /*cpu_id*/) override { return HAILO_NOT_IMPLEMENTED; }
 
     virtual Expected<hailo_device_identity_t> identify() override;
@@ -69,7 +68,7 @@ public:
 
     virtual Expected<bool> has_power_sensor() override;
     virtual Expected<uint32_t> get_current_limit() override;
-    virtual Expected<size_t> fetch_logs(MemoryView buffer, hailo_log_type_t log_type) override;
+    virtual Expected<size_t> fetch_logs(MemoryView buffer, hailo_log_type_t log_type, bool should_clear = false) override;
 
 private:
     static Expected<std::shared_ptr<Client>> create_connected_client(const std::string &device_id);

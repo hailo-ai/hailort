@@ -101,7 +101,7 @@ public:
         const std::vector<EmbeddingViewWrapper> &input_tokens_embeddings);
 
     hailo_status prepare_inputs_tbt(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer, const std::vector<EmbeddingViewWrapper> &input_token_embedding);
-    void reset_local_cache();
+    virtual void reset_local_cache();
     static bool is_positional_embed_layer(const std::string &name, const InputLayersNamesSuffixes &input_layers_names_suffixes);
     static bool is_deepstack_layer(const std::string &name, const InputLayersNamesSuffixes &input_layers_names_suffixes);
 

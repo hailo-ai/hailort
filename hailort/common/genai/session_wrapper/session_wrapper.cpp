@@ -122,14 +122,14 @@ hailo_status SessionWrapper::close()
     return HAILO_SUCCESS;
 }
 
-hailo_status SessionWrapper::send_file_chunked(const std::string &file_path, size_t file_size_to_send, uint32_t offset, std::chrono::milliseconds timeout)
+hailo_status SessionWrapper::send_file_chunked(const std::string &file_path, size_t file_size_to_send, uint64_t offset, std::chrono::milliseconds timeout)
 {
     std::unique_lock<std::mutex> lock(m_mutex);
     TimeoutGuard timeout_guard(timeout);
 
     std::ifstream file(file_path, std::ios::binary);
     CHECK(file.is_open(), HAILO_OPEN_FILE_FAILURE, "Failed to open file: {}", file_path);
-    file.seekg(offset, std::ios::beg);
+    file.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
     CHECK(file.good(), HAILO_FILE_OPERATION_FAILURE, "Failed to seek to offset {} in file: {}", offset, file_path);
 
     // Calculate number of chunks
@@ -150,12 +150,12 @@ hailo_status SessionWrapper::send_file_chunked(const std::string &file_path, siz
     for (uint64_t chunk_index = 0; chunk_index < total_chunks; ++chunk_index) {
         uint64_t chunk_offset = chunk_index * chunk_size;
         uint64_t remaining_bytes = file_size_to_send - chunk_offset;
-        uint32_t current_chunk_size = static_cast<uint32_t>(std::min(static_cast<uint64_t>(chunk_size), remaining_bytes));
+        const size_t current_chunk_size = std::min(chunk_size, remaining_bytes);
 
         TRY(auto current_buffer, buffer_queue.dequeue(timeout_guard.get_remaining_timeout()));
 
         file.read(reinterpret_cast<char*>(current_buffer->data()), current_chunk_size);
-        CHECK(file.gcount() == current_chunk_size, HAILO_FILE_OPERATION_FAILURE,
+        CHECK(static_cast<size_t>(file.gcount()) == current_chunk_size, HAILO_FILE_OPERATION_FAILURE,
             "Failed to read chunk {} from file {}", chunk_index, file_path);
 
         CHECK_SUCCESS(m_session->wait_for_write_async_ready(current_chunk_size, timeout_guard.get_remaining_timeout()));

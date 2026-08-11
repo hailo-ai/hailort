@@ -21,7 +21,7 @@ HailoRT supports Linux and Windows, and it can be compiled from sources to be in
 
 ## Usage
 
-See [**hailo.ai developer zone documentation**](https://hailo.ai/developer-zone/documentation/hailort/latest/) (registration is required for  full documentation access).
+See HailoRT full documentation in [**hailo.ai developer zone documentation**](https://hailo.ai/developer-zone/documentation/hailort/latest/).
 
 For compilation instructions, see  [**Compiling HailoRT from Sources**](https://hailo.ai/developer-zone/documentation/hailort/latest/?sp_referrer=install/install.html#compiling-from-sources).
 
@@ -29,13 +29,13 @@ For HailoRT API examples - see [**HailoRT examples**](https://github.com/hailo-a
 
 ## Changelog
 
-See [**hailo.ai developer zone - HailoRT changelog**](https://hailo.ai/developer-zone/documentation/hailort/latest/?sp_referrer=changelog/changelog.html) (registration required).
+See [**hailo.ai developer zone - HailoRT changelog**](https://hailo.ai/developer-zone/documentation/hailort/latest/?sp_referrer=changelog/changelog.html).
 
 ## Licenses
 
 HailoRT uses 2 licenses:
 - libhailort, pyhailort & hailortcli - distributed under the [**MIT license**](https://opensource.org/licenses/MIT)
-- hailonet (GStreamer plugin) - distributed under the [**LGPL 2.1 license**](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt)
+- hailonet (GStreamer plugin) - distributed under the [**LGPL-2.1-or-later license**](https://spdx.org/licenses/LGPL-2.1-or-later.html)
 
 ## Support
 

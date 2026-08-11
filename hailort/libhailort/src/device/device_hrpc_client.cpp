@@ -16,6 +16,24 @@
 namespace hailort
 {
 
+static hailo_status check_current_limit(DeviceHrpcClient *device, bool print_to_screen)
+{
+    if (Device::Type::USB == device->get_type()) {
+        TRY(auto current_limit, device->get_current_limit(), "Failed to get current limit");
+        if ((HAILO_CURRENT_LIMIT_900_MA == current_limit) || (HAILO_CURRENT_LIMIT_1500_MA == current_limit)) {
+            if (print_to_screen) {
+                LOGGER__WARNING("USB-C source electrical current advertised: {:.1f}A. The module may run in reduced-performance mode. For full performance, use a USB-C port that advertises 3.0A.",
+                    static_cast<float32_t>(current_limit) / 1000.0f);
+            } else {
+                LOGGER__INFO("USB-C source electrical current advertised: {:.1f}A. The module may run in reduced-performance mode. For full performance, use a USB-C port that advertises 3.0A.",
+                    static_cast<float32_t>(current_limit) / 1000.0f);
+            }
+        }
+    }
+
+    return HAILO_SUCCESS;
+}
+
 Expected<std::shared_ptr<Client>> DeviceHrpcClient::create_connected_client(const std::string &device_id)
 {
     TRY_WITH_ACCEPTABLE_STATUS(HAILO_INVALID_FIRMWARE, auto client, Client::created_connected(device_id));
@@ -58,13 +76,8 @@ Expected<std::unique_ptr<Device>> DeviceHrpcClient::create(std::shared_ptr<Clien
     auto status = device->set_default_notification_callbacks();
     CHECK_SUCCESS(status, "Failed to set default notification callbacks for Device HRPC-client");
 
-    if (Type::USB == device->get_type()) {
-        TRY(auto current_limit, device->get_current_limit(), "Failed to get current limit");
-        if ((HAILO_CURRENT_LIMIT_900_MA == current_limit) || (HAILO_CURRENT_LIMIT_1500_MA == current_limit)) {
-            LOGGER__INFO("USB-C source electrical current advertised: {:.1f}A. The module may run in reduced-performance mode. For full performance, use a USB-C port that advertises 3.0A.",
-                static_cast<float32_t>(current_limit) / 1000.0f);
-        }
-    }
+    status = check_current_limit(device.get(), false);
+    CHECK_SUCCESS(status, "Failed to check current limit for Device HRPC-client");
 
     return std::unique_ptr<Device>(std::move(device));
 }
@@ -105,6 +118,9 @@ Expected<hailo_device_identity_t> DeviceHrpcClient::identify()
     TRY(auto result, m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__IDENTIFY),
         MemoryView(request_buffer->data(), request_size)));
 
+    auto status = check_current_limit(this, true);
+    CHECK_SUCCESS(status, "Failed to check current limit for Device HRPC-client");
+
     return IdentifyDeviceSerializer::deserialize_reply(MemoryView(result.body.data(), result.header.size));
 }
 
@@ -115,6 +131,9 @@ Expected<hailo_extended_device_information_t> DeviceHrpcClient::get_extended_dev
     TRY(auto request_size, ExtendedDeviceInfoSerializer::serialize_request(m_handle, MemoryView(*request_buffer)));
     TRY(auto result, m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__EXTENDED_INFO),
         MemoryView(request_buffer->data(), request_size)));
+
+    auto status = check_current_limit(this, true);
+    CHECK_SUCCESS(status, "Failed to check current limit for Device HRPC-client");
 
     return ExtendedDeviceInfoSerializer::deserialize_reply(MemoryView(result.body.data(), result.header.size));
 }
@@ -411,7 +430,7 @@ Expected<bool> DeviceHrpcClient::has_power_sensor()
     return power.has_value();
 }
 
-Expected<size_t> DeviceHrpcClient::fetch_logs(MemoryView buffer, hailo_log_type_t log_type)
+Expected<size_t> DeviceHrpcClient::fetch_logs(MemoryView buffer, hailo_log_type_t log_type, bool should_clear)
 {
     using Serializer = FetchLogsSerializer;
     CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
@@ -427,7 +446,7 @@ Expected<size_t> DeviceHrpcClient::fetch_logs(MemoryView buffer, hailo_log_type_
     std::vector<TransferBuffer> write_buffers = {};
     std::vector<TransferBuffer> log_transfer_buffers = {TransferBuffer(buffer)};
 
-    TRY(auto request_size, Serializer::serialize_request(m_handle, MemoryView(*request_buffer), buffer.size(), log_type));
+    TRY(auto request_size, Serializer::serialize_request(m_handle, MemoryView(*request_buffer), buffer.size(), log_type, should_clear));
 
     TRY(auto result, m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__FETCH_LOGS),
         MemoryView(request_buffer->data(), request_size), std::move(write_buffers), std::move(log_transfer_buffers)));

@@ -1,54 +1,115 @@
-cmake_minimum_required(VERSION 3.5.0)
+# =============================================================================
+# pyhailort — pybind11 extension module for HailoRT Python bindings
+# =============================================================================
+#
+# ---- Build Flows ------------------------------------------------------------
+#
+# 1. Native install (zero args — CMake auto-detects pybind11):
+#       pip install .
+#
+# 2. Native wheel with pre-built libhailort:
+#       CMAKE_ARGS="-DLIBHAILORT_PATH=/path/to/libhailort.so \
+#                    -DHAILORT_INCLUDE_DIR=/path/to/include" \
+#           pip wheel . -w dist/
+#
+# 3. Cross-compile (e.g. x86_64 host -> aarch64 target):
+#       CMAKE_ARGS="-DCMAKE_TOOLCHAIN_FILE=/path/to/toolchain.cmake \
+#                    -DLIBHAILORT_PATH=/path/to/libhailort.so \
+#                    -DHAILORT_INCLUDE_DIR=/path/to/include" \
+#           pip wheel . -w dist/ --no-build-isolation \
+#               -C wheel.tags=cp310-cp310-linux_aarch64
+#
+# 4. Debug build:
+#       SKBUILD_CMAKE_BUILD_TYPE=Debug pip install .
+#
+# =============================================================================
+
+cmake_minimum_required(VERSION 3.15)
+
 project(pyhailort)
-
-find_program(CCACHE_PROGRAM ccache)
-find_program(CLACHE_PROGRAM clcache)
-
-if(CCACHE_PROGRAM)
-    set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${CCACHE_PROGRAM}")
-elseif(CLCACHE_PROGRAM)
-    set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${CLCACHE_PROGRAM}")
-endif()
-
-if(WIN32)
-    find_program(SCCACHE sccache)
-    if(SCCACHE)
-        set(CMAKE_C_COMPILER_LAUNCHER ${SCCACHE})
-        set(CMAKE_CXX_COMPILER_LAUNCHER ${SCCACHE})
-        set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT Embedded)
-        cmake_policy(SET CMP0141 NEW)
-    endif()
-endif()
 
 if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.9")
     set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
 endif()
 
-set(HAILORT_COMMON_DIR "${CMAKE_CURRENT_LIST_DIR}/../../../../../hailort/")
-set(HAILO_EXTERNALS_CMAKE_SCRIPTS ${HAILORT_COMMON_DIR}/cmake/external/)
-set(HAILO_EXTERNAL_DIR ${HAILORT_COMMON_DIR}/external) # used in pybind11.cmake
-set(HAILORT_VERSION_MAJOR 5)
-set(HAILORT_VERSION_MINOR 3)
-set(HAILORT_VERSION_REVISION 0)
-
-if(UNIX)
-    # PYTHON_MODULE_EXTENSION does not take the CMAKE_SYSTEM_PROCESSOR into account so it needs to be added manually
-    string(REGEX REPLACE "\\." "" PYBIND11_PYTHON_VERSION_NO_DOT ${PYBIND11_PYTHON_VERSION})
-    set(PYTHON_MODULE_EXTENSION ".cpython-${PYBIND11_PYTHON_VERSION_NO_DOT}-${CMAKE_SYSTEM_PROCESSOR}-linux-gnu.so")
+# TODO HRT-19340: Remove setup.py fallback once meta-hailo kirkstone migrates to pyproject.toml
+if(NOT SKBUILD)
+    message(WARNING
+        "Building without scikit-build-core. This is supported for legacy setup.py builds.\n"
+        "Preferred method: pip install .  (from the platform/ directory)")
 endif()
 
-get_filename_component(
-    HAILO_PYHAILORT_DIR
-    "${CMAKE_CURRENT_LIST_DIR}/../platform/hailo_platform/pyhailort/"
-    ABSOLUTE
-)
+set(HAILORT_COMMON_DIR "${CMAKE_CURRENT_LIST_DIR}/../../../../../hailort/")
 
-option(LIBHAILORT_PATH "Path to libhailort to link against" "")
-option(HAILORT_INCLUDE_DIR "Path to include dir of libhailort" "")
+# Version: scikit-build-core sets SKBUILD_PROJECT_VERSION; setup.py passes -DHAILORT_VERSION=x.y.z
+# TODO HRT-19340: Remove HAILORT_VERSION fallback once setup.py is removed
+if(SKBUILD)
+    string(REPLACE "." ";" _VER "${SKBUILD_PROJECT_VERSION}")
+elseif(HAILORT_VERSION)
+    message(STATUS "Using HAILORT_VERSION from command line: ${HAILORT_VERSION}")
+    string(REPLACE "." ";" _VER "${HAILORT_VERSION}")
+else()
+    message(FATAL_ERROR "HAILORT_VERSION is not set. Pass -DHAILORT_VERSION=x.y.z or build via pip install .")
+endif()
+list(GET _VER 0 HAILORT_MAJOR_VERSION)
+list(GET _VER 1 HAILORT_MINOR_VERSION)
+list(GET _VER 2 HAILORT_REVISION_VERSION)
 
-include(GNUInstallDirs)
-include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/pybind11.cmake)
+option(LIBHAILORT_PATH "Path to pre-built libhailort" "")
+option(HAILORT_INCLUDE_DIR "Path to libhailort headers" "")
+
+if(SKBUILD)
+    # Auto-detect pybind11 (see top-of-file docs).
+    # Only needed for cross-compilation with --no-build-isolation, where the
+    # toolchain's CMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY prevents find_package
+    # from searching host paths. Native builds (including Windows) use build
+    # isolation, so find_package finds pybind11 from the isolated env directly.
+    if(NOT pybind11_DIR AND CMAKE_CROSSCOMPILING)
+        execute_process(
+            COMMAND python3 -m pybind11 --cmakedir
+            OUTPUT_VARIABLE pybind11_DIR
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            RESULT_VARIABLE _pybind11_detect_result
+        )
+        if(NOT _pybind11_detect_result EQUAL 0)
+            message(FATAL_ERROR
+                "Could not auto-detect pybind11. Make sure pybind11 is installed:\n"
+                "  pip install \"pybind11>=2.13.6,<3\"")
+        endif()
+    endif()
+
+    # Guard: cross-compile + build isolation is unsupported (host pyconfig.h mismatch).
+    if(CMAKE_CROSSCOMPILING AND pybind11_DIR MATCHES "/pip-build-env-")
+        message(FATAL_ERROR
+            "Cross-compilation with pip build isolation is not supported.\n"
+            "Use --no-build-isolation and ensure pybind11 and scikit-build-core\n"
+            "are installed in your environment:\n"
+            "  pip wheel . --no-build-isolation -C wheel.tags=<cpXY-cpXY-linux_ARCH>\n"
+            "See install.rst for details.\n"
+            "(pybind11 was found in pip's isolated env: ${pybind11_DIR})")
+    endif()
+
+    find_package(pybind11 CONFIG REQUIRED)
+else()
+    # Legacy setup.py builds: pybind11 is fetched via FetchContent (downloaded
+    # and built from source). This path is not used by scikit-build-core builds.
+    # TODO HRT-20362: Remove this path once setup.py is fully retired.
+    set(HAILO_EXTERNALS_CMAKE_SCRIPTS "${HAILORT_COMMON_DIR}/cmake/external/")
+    set(HAILO_EXTERNAL_DIR "${HAILORT_COMMON_DIR}/external")
+    include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/pybind11.cmake)
+endif()
 include_directories(${HAILORT_COMMON_DIR})
+
+# Override .so suffix for cross-compilation — pybind11 uses host arch otherwise.
+# See top-of-file docs for full explanation and upstream issue links.
+if(UNIX AND CMAKE_CROSSCOMPILING)
+    if(NOT PYBIND11_PYTHON_VERSION MATCHES "^([0-9]+)\\.([0-9]+)$")
+        message(FATAL_ERROR "Cross-compile requires -DPYBIND11_PYTHON_VERSION=X.Y (got '${PYBIND11_PYTHON_VERSION}')")
+    endif()
+    set(_python_version_tag "${CMAKE_MATCH_1}${CMAKE_MATCH_2}")
+    set(PYTHON_MODULE_EXTENSION ".cpython-${_python_version_tag}-${CMAKE_SYSTEM_PROCESSOR}-linux-gnu.so")
+    message(STATUS "Cross-compiling: run pip with -C wheel.tags=cp${_python_version_tag}-cp${_python_version_tag}-linux_${CMAKE_SYSTEM_PROCESSOR}")
+endif()
 
 pybind11_add_module(_pyhailort
     pyhailort.cpp
@@ -73,15 +134,6 @@ set_target_properties(_pyhailort PROPERTIES
     C_VISIBILITY_PRESET       hidden
     CXX_VISIBILITY_PRESET     hidden
 )
-
-if (WIN32)
-    if (CMAKE_SIZEOF_VOID_P EQUAL 8)
-        target_compile_definitions(_pyhailort PRIVATE _AMD64_=1)
-    else()
-        target_compile_definitions(_pyhailort PRIVATE _X86_=1)
-    endif()
-endif()
-
 if(LIBHAILORT_PATH AND HAILORT_INCLUDE_DIR)
     message(STATUS "Will link against given libhailort: ${LIBHAILORT_PATH}")
     message(STATUS "Will include given include dir:     ${HAILORT_INCLUDE_DIR}")
@@ -91,9 +143,9 @@ if(LIBHAILORT_PATH AND HAILORT_INCLUDE_DIR)
     target_compile_definitions(
         _pyhailort
         PUBLIC
-        HAILORT_MAJOR_VERSION=${HAILORT_VERSION_MAJOR}
-        HAILORT_MINOR_VERSION=${HAILORT_VERSION_MINOR}
-        HAILORT_REVISION_VERSION=${HAILORT_VERSION_REVISION}
+        HAILORT_MAJOR_VERSION=${HAILORT_MAJOR_VERSION}
+        HAILORT_MINOR_VERSION=${HAILORT_MINOR_VERSION}
+        HAILORT_REVISION_VERSION=${HAILORT_REVISION_VERSION}
     )
     set_target_properties(
         _pyhailort
@@ -104,7 +156,7 @@ if(LIBHAILORT_PATH AND HAILORT_INCLUDE_DIR)
 elseif(LIBHAILORT_PATH OR HAILORT_INCLUDE_DIR)
     message(FATAL_ERROR "Both LIBHAILORT_PATH and HAILORT_INCLUDE_DIR must be defined or none of them. LIBHAILORT_PATH: '${LIBHAILORT_PATH}', HAILORT_INCLUDE_DIR: '${HAILORT_INCLUDE_DIR}'")
 else()
-    find_package(HailoRT ${HAILORT_VERSION_MAJOR}.${HAILORT_VERSION_MINOR}.${HAILORT_VERSION_REVISION} EXACT REQUIRED)
+    find_package(HailoRT ${HAILORT_MAJOR_VERSION}.${HAILORT_MINOR_VERSION}.${HAILORT_REVISION_VERSION} EXACT REQUIRED)
     target_link_libraries(_pyhailort PRIVATE HailoRT::libhailort)
 endif()
 
@@ -112,7 +164,6 @@ if(WIN32)
     target_link_libraries(_pyhailort PRIVATE Ws2_32)
     target_compile_options(_pyhailort PRIVATE
         /DWIN32_LEAN_AND_MEAN
-        /DNOMINMAX                  # NOMINMAX is required in order to avoid conflicts with std::min/std::max (otherwise Windows.h defines it's own)
         /wd4201                     # Anonymous union/struct
         /wd4251                     # C++ ABI with STL
     )
@@ -121,7 +172,7 @@ elseif(NOT CMAKE_SYSTEM_NAME STREQUAL Android)
     target_link_libraries(_pyhailort PRIVATE rt)
 endif()
 
-install(
-    TARGETS _pyhailort
-    LIBRARY DESTINATION ${HAILO_PYHAILORT_DIR}
+# pybind11 MODULE targets install via LIBRARY on all platforms (.so and .pyd)
+install(TARGETS _pyhailort
+    LIBRARY DESTINATION hailo_platform/pyhailort
 )

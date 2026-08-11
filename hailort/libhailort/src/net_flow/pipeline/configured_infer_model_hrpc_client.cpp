@@ -170,7 +170,7 @@ Expected<AsyncInferJob> ConfiguredInferModelHrpcClient::run_async_impl(const Con
     TRY(const auto request_size, RunAsyncSerializer::serialize_request(infer_request, request_buffer->as_view()));
     const auto request_view = MemoryView(request_buffer->data(), request_size);
 
-    auto status = client->wait_for_execute_request_ready(request_view, REQUEST_TIMEOUT);
+    auto status = client->wait_for_execute_request_ready(request_view, HRPC_REQUEST_TIMEOUT);
     CHECK_SUCCESS(status);
 
     TRY(auto job, AsyncInferJobHrpcClient::create_shared());
@@ -635,7 +635,7 @@ Expected<AsyncInferJob> ConfiguredInferModelHrpcClient::run_async_for_duration(c
     TRY(const auto request_size, RunAsyncForDurationSerializer::serialize_request(infer_request, request_buffer->as_view()));
     const auto request_view = MemoryView(request_buffer->data(), request_size);
 
-    status = client->wait_for_execute_request_ready(request_view, REQUEST_TIMEOUT);
+    status = client->wait_for_execute_request_ready(request_view, HRPC_REQUEST_TIMEOUT);
     CHECK_SUCCESS(status);
 
     TRY(auto job, AsyncInferJobHrpcClient::create_shared());

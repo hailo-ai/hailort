@@ -28,11 +28,10 @@ public:
     virtual ~VdmaDevice();
 
     virtual hailo_status wait_for_wakeup() override;
-    virtual void increment_control_sequence() override;
     virtual void shutdown_core_ops() override;
     virtual hailo_reset_device_mode_t get_default_reset_mode() override;
     hailo_status mark_as_used();
-    virtual Expected<size_t> read_log(MemoryView &buffer, hailo_cpu_id_t cpu_id) override;
+    virtual Expected<size_t> read_log(MemoryView &buffer, hailo_cpu_id_t cpu_id, bool should_clear = false) override;
 
     HailoRTDriver &get_driver()
     {

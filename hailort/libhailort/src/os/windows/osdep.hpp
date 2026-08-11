@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "hailo/platform.h"
+
 #include <initguid.h>
 #include <Windows.h>
 #include <io.h>

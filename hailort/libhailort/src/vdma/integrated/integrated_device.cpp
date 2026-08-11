@@ -88,14 +88,14 @@ hailo_status IntegratedDevice::reset_impl(CONTROL_PROTOCOL__reset_type_t reset_t
     return HAILO_NOT_IMPLEMENTED;
 }
 
-Expected<size_t> IntegratedDevice::read_log(MemoryView &buffer, hailo_cpu_id_t cpu_id)
+Expected<size_t> IntegratedDevice::read_log(MemoryView &buffer, hailo_cpu_id_t cpu_id, bool should_clear)
 {
     if (hailo_cpu_id_t::HAILO_CPU_ID_0 == cpu_id) {
         LOGGER__ERROR("Read FW log is supported only on core CPU");
         return make_unexpected(HAILO_INVALID_ARGUMENT);
     }
 
-    return VdmaDevice::read_log(buffer, cpu_id);
+    return VdmaDevice::read_log(buffer, cpu_id, should_clear);
 }
 
 

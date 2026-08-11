@@ -7,7 +7,7 @@
 #define _HAILO_IOCTL_COMMON_H_
 
 #define HAILO_DRV_VER_MAJOR 5
-#define HAILO_DRV_VER_MINOR 3
+#define HAILO_DRV_VER_MINOR 4
 #define HAILO_DRV_VER_REVISION 0
 
 #define _STRINGIFY_EXPANDED( x ) #x
@@ -71,7 +71,7 @@ typedef ULONGLONG uint64_t;
 #endif /*  !defined(__cplusplus) && defined(NTDDI_VERSION) */
 
 
-#ifdef _MSC_VER
+#ifdef _WIN32
 
 #include <initguid.h>
 
@@ -130,7 +130,7 @@ static ULONG FORCEINLINE _IOC_(ULONG nr, ULONG type, ULONG size, bool read, bool
 #define _IOWR_(type,nr,size) _IOC_(nr, type, sizeof(size), true, true)
 #define _IO_(type,nr) _IOC_(nr, type, 0, false, false)
 
-#elif defined(__linux__) // #ifdef _MSC_VER
+#elif defined(__linux__) // #ifdef _WIN32
 #ifndef __KERNEL__
 // include the userspace headers only if this file is included by user space program
 // It is discourged to include them when compiling the driver (https://lwn.net/Articles/113349/)
@@ -155,7 +155,7 @@ static ULONG FORCEINLINE _IOC_(ULONG nr, ULONG type, ULONG size, bool read, bool
 #define HAILO_NNC_IOCTL_MAGIC       'n'
 #define HAILO_PCI_EP_IOCTL_MAGIC    'p'
 
-#elif defined(__QNX__) // #ifdef _MSC_VER
+#elif defined(__QNX__) // #ifdef _WIN32
 #include <devctl.h>
 #include <stdint.h>
 #include <sys/types.h>
@@ -170,7 +170,7 @@ static ULONG FORCEINLINE _IOC_(ULONG nr, ULONG type, ULONG size, bool read, bool
 #define HAILO_GENERAL_IOCTL_MAGIC   _DCMD_ALL
 #define HAILO_VDMA_IOCTL_MAGIC      _DCMD_MISC
 
-#else // #ifdef _MSC_VER
+#else // #ifdef _WIN32
 #error "unsupported platform!"
 #endif
 
@@ -301,10 +301,14 @@ struct hailo_vdma_interrupts_wait_params {
 
 /* structure used in ioctl HAILO_FW_CONTROL */
 #define MAX_CONTROL_LENGTH  (1500)
-#define PCIE_EXPECTED_MD5_LENGTH (16)
 
+#if !defined(HAILO_EMULATOR)
+#define FW_CONTROL_DEFAULT_TIMEOUT_MS (1000)
+#else /* !defined(HAILO_EMULATOR) */
+#define FW_CONTROL_DEFAULT_TIMEOUT_MS (50000)
+#endif /* !defined(HAILO_EMULATOR) */
 
-/* structure used in ioctl	HAILO_FW_CONTROL and HAILO_READ_LOG */
+/* structure used in ioctl HAILO_FW_CONTROL and HAILO_READ_LOG */
 enum hailo_cpu_id {
     HAILO_CPU_ID_CPU0 = 0,
     HAILO_CPU_ID_CPU1,
@@ -315,14 +319,11 @@ enum hailo_cpu_id {
 };
 
 struct hailo_fw_control {
-    // expected_md5+buffer_len+buffer must be in this order at the start of the struct
-    uint8_t   expected_md5[PCIE_EXPECTED_MD5_LENGTH];
+    // buffer_len+buffer must be in this order at the start of the struct
     uint32_t  buffer_len;
     uint8_t   buffer[MAX_CONTROL_LENGTH];
-    uint32_t timeout_ms;
     enum hailo_cpu_id cpu_id;
 };
-
 
 
 /* structure used in ioctl HAILO_VDMA_BUFFER_SYNC */
@@ -403,6 +404,7 @@ struct hailo_read_log_params {
     uint8_t buffer[MAX_FW_LOG_BUFFER_LENGTH];   // out
     size_t buffer_size;                         // in
     size_t read_bytes;                          // out
+    uint8_t should_clear;                       // in
 };
 
 struct hailo_mark_as_in_use_params {
@@ -482,7 +484,7 @@ struct hailo_pci_ep_close_params {
     uint8_t output_channel_index;   // in
 };
 
-#ifdef _MSC_VER
+#ifdef _WIN32
 struct tCompatibleHailoIoctlData
 {
     tCompatibleHailoIoctlParam Parameters;
@@ -512,7 +514,7 @@ struct tCompatibleHailoIoctlData
         struct hailo_vdma_cancel_prepared_transfer_params DescListResetParams;
     } Buffer;
 };
-#endif // _MSC_VER
+#endif // _WIN32
 
 #pragma pack(pop)
 

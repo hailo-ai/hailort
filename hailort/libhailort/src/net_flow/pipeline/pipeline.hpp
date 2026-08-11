@@ -18,6 +18,7 @@
 #include "net_flow/ops/nms_post_process.hpp"
 #include "hailo/network_group.hpp"
 #include "common/thread_safe_queue.hpp"
+#include "common/timeouts.hpp"
 
 #include <memory>
 #include <thread>
@@ -46,7 +47,6 @@ enum class BufferProtection
 using TransferDoneCallbackAsyncInfer = std::function<void(hailo_status)>;
 
 using PipelineTimePoint = std::chrono::steady_clock::time_point;
-#define BUFFER_POOL_DEFAULT_QUEUE_TIMEOUT (std::chrono::milliseconds(10000))
 #define DEFAULT_NUM_FRAMES_BEFORE_COLLECTION_START (100)
 
 class VDevice;

@@ -14,7 +14,7 @@
 
 #if defined(__unix__)
 #include <sys/mman.h>
-#elif defined(_MSC_VER)
+#elif defined(_WIN32)
 #include <memoryapi.h>
 #include <winnt.h>
 #endif
@@ -30,7 +30,7 @@ static std::shared_ptr<uint8_t> page_aligned_alloc(size_t size)
     if (MAP_FAILED == addr)
         throw std::bad_alloc();
     return std::shared_ptr<uint8_t>(reinterpret_cast<uint8_t *>(addr), [size](void *addr) { munmap(addr, size); });
-#elif defined(_MSC_VER)
+#elif defined(_WIN32)
     auto addr = VirtualAlloc(NULL, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     if (!addr)
         throw std::bad_alloc();

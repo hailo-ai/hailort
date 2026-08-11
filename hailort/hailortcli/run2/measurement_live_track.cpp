@@ -16,7 +16,24 @@
 
 #include <spdlog/fmt/fmt.h>
 
+#include <string>
+#include <string_view>
+
 using namespace hailort;
+
+static constexpr size_t METRIC_LABEL_WIDTH = 16;
+static constexpr size_t METRIC_VALUE_WIDTH = 10;
+
+namespace {
+
+const std::string NA_PADDED = fmt::format("{:<{}}", "N/A", METRIC_VALUE_WIDTH);
+
+std::string format_padded_value(double value, std::string_view unit)
+{
+    return fmt::format("{:<{}}", fmt::format("{:.2f} {}", value, unit), METRIC_VALUE_WIDTH);
+}
+
+} // namespace
 
 Expected<std::shared_ptr<MeasurementLiveTrack>> MeasurementLiveTrack::create_shared(const std::string &device_id,
     bool measure_power, bool measure_current, bool measure_temp)
@@ -61,7 +78,10 @@ MeasurementLiveTrack::MeasurementLiveTrack(std::shared_ptr<PowerMeasurement> pow
       m_power_measurement(std::move(power_measurement)),
       m_current_measurement(std::move(current_measurement)),
       m_temp_measurement(std::move(temp_measurement)),
-      m_device_id(device_id)
+      m_device_id(device_id),
+      m_last_interval_power_mean(0.0),
+      m_last_interval_current_mean(0.0),
+      m_last_interval_temp_mean(0.0)
 {}
 
 hailo_status MeasurementLiveTrack::start_impl()
@@ -79,63 +99,110 @@ hailo_status MeasurementLiveTrack::start_impl()
     return HAILO_SUCCESS;
 }
 
-std::string MeasurementLiveTrack::get_text_impl() const
+void MeasurementLiveTrack::measure()
 {
-    std::string s;
-    if (m_power_measurement || m_current_measurement || m_temp_measurement) {
-        s += fmt::format("\nMeasurements for device {}\n", m_device_id);
-    }
+    auto get_interval_mean = [] (BaseMeasurement &measurement) -> double {
+        auto interval_info = measurement.get_interval_data_and_reset();
+        if (auto mean = interval_info.mean()) {
+            return *mean;
+        }
+        return 0.0;
+    };
 
     if (m_power_measurement) {
-        auto measurement_info = m_power_measurement->get_data();
-        if (auto min = measurement_info.min()) {
-            s += fmt::format("\tMinimum power consumption: {:.2f} {}\n", *min, m_power_measurement->measurement_unit());
-        }
-        if (auto mean = measurement_info.mean()) {
-            s += fmt::format("\tAverage power consumption: {:.2f} {}\n", *mean, m_power_measurement->measurement_unit());
-        }
-        if (auto max = measurement_info.max()) {
-            s += fmt::format("\tMaximum power consumption: {:.2f} {}\n", *max, m_power_measurement->measurement_unit());
-        }
+        m_last_interval_power_mean = get_interval_mean(*m_power_measurement);
     }
-
     if (m_current_measurement) {
-        auto measurement_info = m_current_measurement->get_data();
-        if (auto min = measurement_info.min()) {
-            s += fmt::format("\tMinimum current consumption: {:.2f} {}\n", *min, m_current_measurement->measurement_unit());
-        }
-        if (auto mean = measurement_info.mean()) {
-            s += fmt::format("\tAverage current consumption: {:.2f} {}\n", *mean, m_current_measurement->measurement_unit());
-        }
-        if (auto max = measurement_info.max()) {
-            s += fmt::format("\tMaximum current consumption: {:.2f} {}\n", *max, m_current_measurement->measurement_unit());
-        }
+        m_last_interval_current_mean = get_interval_mean(*m_current_measurement);
+    }
+    if (m_temp_measurement) {
+        m_last_interval_temp_mean = get_interval_mean(*m_temp_measurement);
+    }
+}
+
+std::string MeasurementLiveTrack::get_text_impl() const
+{
+    if (!m_power_measurement && !m_current_measurement && !m_temp_measurement) {
+        return "";
     }
 
+    std::string s = "\n";
+    s += fmt::format("{:<{}} | {:<{}} | {:<{}} | {:<{}} | {:<{}}\n",
+        "", METRIC_LABEL_WIDTH,
+        "cur", METRIC_VALUE_WIDTH,
+        "min", METRIC_VALUE_WIDTH,
+        "avg", METRIC_VALUE_WIDTH,
+        "max", METRIC_VALUE_WIDTH);
+
+    auto append_row = [&s] (const std::string &label, BaseMeasurement &measurement, double interval_mean) {
+        const auto unit = measurement.measurement_unit();
+        const auto info = measurement.get_data();
+        const auto cur_str = format_padded_value(interval_mean, unit);
+        const auto min_str = info.min() ? format_padded_value(*info.min(), unit) : NA_PADDED;
+        const auto avg_str = info.mean() ? format_padded_value(*info.mean(), unit) : NA_PADDED;
+        const auto max_str = info.max() ? format_padded_value(*info.max(), unit) : NA_PADDED;
+        s += fmt::format("{:<{}} | {} | {} | {} | {}\n",
+            label, METRIC_LABEL_WIDTH, cur_str, min_str, avg_str, max_str);
+    };
+
+    if (m_power_measurement) {
+        append_row("Power", *m_power_measurement, m_last_interval_power_mean);
+    }
+    if (m_current_measurement) {
+        append_row("Current", *m_current_measurement, m_last_interval_current_mean);
+    }
     if (m_temp_measurement) {
-        auto measurement_info = m_temp_measurement->get_data();
-        if (auto min = measurement_info.min()) {
-            s += fmt::format("\tMinimum chip temperature: {:.2f} {}\n", *min, m_temp_measurement->measurement_unit());
-        }
-        if (auto mean = measurement_info.mean()) {
-            s += fmt::format("\tAverage chip temperature: {:.2f} {}\n", *mean, m_temp_measurement->measurement_unit());
-        }
-        if (auto max = measurement_info.max()) {
-            s += fmt::format("\tMaximum chip temperature: {:.2f} {}\n", *max, m_temp_measurement->measurement_unit());
-        }
+        append_row("Chip temperature", *m_temp_measurement, m_last_interval_temp_mean);
     }
 
     return s;
 }
 
-void MeasurementLiveTrack::push_json_measurment_val(nlohmann::ordered_json &device_json, std::shared_ptr<BaseMeasurement> measurment, const std::string &measurment_name)
+std::string MeasurementLiveTrack::get_summary_text_impl() const
 {
-    auto measurment_info = measurment->get_data();
-    auto measurement_unit = measurment->measurement_unit();
-    auto min = measurment_info.min();
-    auto max = measurment_info.max();
-    auto mean = measurment_info.mean();
-    if (min && max && mean){
+    if (!m_power_measurement && !m_current_measurement && !m_temp_measurement) {
+        return "";
+    }
+
+    std::string s = "\n";
+    s += fmt::format("{:<{}} | {:<{}} | {:<{}} | {:<{}}\n",
+        "", METRIC_LABEL_WIDTH,
+        "min", METRIC_VALUE_WIDTH,
+        "avg", METRIC_VALUE_WIDTH,
+        "max", METRIC_VALUE_WIDTH);
+
+    auto append_row = [&s] (const std::string &label, BaseMeasurement &measurement) {
+        const auto unit = measurement.measurement_unit();
+        const auto info = measurement.get_data();
+        const auto min_str = info.min() ? format_padded_value(*info.min(), unit) : NA_PADDED;
+        const auto avg_str = info.mean() ? format_padded_value(*info.mean(), unit) : NA_PADDED;
+        const auto max_str = info.max() ? format_padded_value(*info.max(), unit) : NA_PADDED;
+        s += fmt::format("{:<{}} | {} | {} | {}\n",
+            label, METRIC_LABEL_WIDTH, min_str, avg_str, max_str);
+    };
+
+    if (m_power_measurement) {
+        append_row("Power", *m_power_measurement);
+    }
+    if (m_current_measurement) {
+        append_row("Current", *m_current_measurement);
+    }
+    if (m_temp_measurement) {
+        append_row("Chip temperature", *m_temp_measurement);
+    }
+
+    return s;
+}
+
+void MeasurementLiveTrack::push_json_measurment_val(nlohmann::ordered_json &device_json,
+    std::shared_ptr<BaseMeasurement> measurment, const std::string &measurment_name)
+{
+    const auto info = measurment->get_data();
+    const auto measurement_unit = measurment->measurement_unit();
+    const auto min = info.min();
+    const auto max = info.max();
+    const auto mean = info.mean();
+    if (min && max && mean) {
         device_json[measurment_name] = {
             {"min", std::to_string(min.value()) + " " + measurement_unit},
             {"max", std::to_string(max.value()) + " " + measurement_unit},

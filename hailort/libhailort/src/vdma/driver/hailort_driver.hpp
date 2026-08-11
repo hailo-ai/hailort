@@ -40,15 +40,9 @@ static_assert((0 == ((ONGOING_TRANSFERS_SIZE - 1) & ONGOING_TRANSFERS_SIZE)), "O
 
 #define MIN_ACTIVE_TRANSFERS_SCALE (2)
 
-#if defined(_WIN32)
-#define MAX_ACTIVE_TRANSFERS_SCALE (8)
-#else
 #define MAX_ACTIVE_TRANSFERS_SCALE (32)
-#endif
 
 #define HAILO_MAX_BATCH_SIZE ((ONGOING_TRANSFERS_SIZE / MIN_ACTIVE_TRANSFERS_SCALE) - 1)
-
-#define PCIE_EXPECTED_MD5_LENGTH (16)
 
 constexpr size_t MAX_VDMA_ENGINES_COUNT             = 3;
 // For all archs except for Hailo12L
@@ -208,9 +202,8 @@ public:
     Expected<std::vector<uint8_t>> read_notification();
     hailo_status disable_notifications();
 
-    hailo_status fw_control(const void *request, size_t request_len, const uint8_t request_md5[PCIE_EXPECTED_MD5_LENGTH],
-        void *response, size_t *response_len, uint8_t response_md5[PCIE_EXPECTED_MD5_LENGTH],
-        std::chrono::milliseconds timeout, hailo_cpu_id_t cpu_id);
+    hailo_status fw_control(const void *request, size_t request_len, void *response, size_t *response_len,
+        hailo_cpu_id_t cpu_id);
 
     /**
      * Read data from the debug log buffer.
@@ -219,9 +212,10 @@ public:
      * @param[in]     buffer_size       - The size in bytes of the buffer.
      * @param[out]    read_bytes        - Upon success, receives the number of bytes that were read; otherwise, untouched.
      * @param[in]     cpu_id            - The cpu source of the debug log.
+     * @param[in]     should_clear      - If true, log data is consumed and subsequent reads return only new data.
      * @return hailo_status
      */
-    hailo_status read_log(uint8_t *buffer, size_t buffer_size, size_t *read_bytes, hailo_cpu_id_t cpu_id);
+    hailo_status read_log(uint8_t *buffer, size_t buffer_size, size_t *read_bytes, hailo_cpu_id_t cpu_id, bool should_clear = false);
 
     hailo_status reset_nn_core();
 

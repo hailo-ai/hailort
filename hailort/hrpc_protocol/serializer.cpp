@@ -1011,7 +1011,7 @@ Expected<Buffer> IdentifyDeviceSerializer::serialize_reply(const hailo_device_id
     auto proto_identity = reply.mutable_identity();
     proto_identity->set_protocol_version(identity.protocol_version);
     proto_identity->set_logger_version(identity.logger_version);
-    proto_identity->set_board_name(identity.board_name);
+    proto_identity->set_board_name("");
     proto_identity->set_is_release(identity.is_release);
     proto_identity->set_extended_context_switch_buffer(identity.extended_context_switch_buffer);
     proto_identity->set_extended_fw_check(identity.extended_fw_check);
@@ -1055,9 +1055,6 @@ Expected<hailo_device_identity_t> IdentifyDeviceSerializer::deserialize_reply(co
     identity.extended_context_switch_buffer = reply.identity().extended_context_switch_buffer();
     identity.extended_fw_check = reply.identity().extended_fw_check();
     identity.device_architecture = static_cast<hailo_device_architecture_t>(reply.identity().device_architecture());
-
-    std::memcpy(identity.board_name, reply.identity().board_name().c_str(), reply.identity().board_name().size());
-    identity.board_name_length = static_cast<uint8_t>(reply.identity().board_name().size());
 
     std::transform(reply.identity().serial_number().begin(), reply.identity().serial_number().end(), identity.serial_number, [](uint32_t val) {
         return static_cast<uint8_t>(val);
@@ -1603,18 +1600,19 @@ Expected<Buffer> RemoveNotificationCallbackSerializer::serialize_reply()
 }
 
 Expected<size_t> FetchLogsSerializer::serialize_request(rpc_object_handle_t device_handle, MemoryView buffer, size_t buffer_size,
-    hailo_log_type_t log_type)
+    hailo_log_type_t log_type, bool should_clear)
 {
     Device_FetchLogs_Request request;
     auto proto_device_handle = request.mutable_device_handle();
     proto_device_handle->set_id(device_handle);
     request.set_buffer_size(static_cast<uint32_t>(buffer_size));
     request.set_log_type(static_cast<uint32_t>(log_type));
+    request.set_should_clear(should_clear);
 
     return get_serialized_request<Device_FetchLogs_Request>(request, "FetchLogs", buffer);
 }
 
-Expected<std::tuple<rpc_object_handle_t, uint32_t, hailo_log_type_t>> FetchLogsSerializer::deserialize_request(const MemoryView &serialized_request)
+Expected<std::tuple<rpc_object_handle_t, uint32_t, hailo_log_type_t, bool>> FetchLogsSerializer::deserialize_request(const MemoryView &serialized_request)
 {
     Device_FetchLogs_Request proto_request;
 
@@ -1622,7 +1620,7 @@ Expected<std::tuple<rpc_object_handle_t, uint32_t, hailo_log_type_t>> FetchLogsS
         HAILO_RPC_FAILED, "Failed to de-serialize 'FetchLogs'");
 
     return std::make_tuple(proto_request.device_handle().id(), static_cast<uint32_t>(proto_request.buffer_size()),
-        static_cast<hailo_log_type_t>(proto_request.log_type()));
+        static_cast<hailo_log_type_t>(proto_request.log_type()), proto_request.should_clear());
 }
 
 Expected<Buffer> FetchLogsSerializer::serialize_reply(uint32_t log_size)

@@ -14,6 +14,7 @@ import time
 import gc
 import os
 import json
+import warnings
 
 from hailo_platform.common.logger.logger import default_logger
 import hailo_platform.pyhailort._pyhailort as _pyhailort
@@ -1413,7 +1414,7 @@ class HailoFormatFlags(_pyhailort.FormatFlags):
 
 SUPPORTED_PROTOCOL_VERSION = 2
 SUPPORTED_FW_MAJOR = 5
-SUPPORTED_FW_MINOR = 3
+SUPPORTED_FW_MINOR = 4
 SUPPORTED_FW_REVISION = 0
 
 MEGA_MULTIPLIER = 1000.0 * 1000.0
@@ -1432,19 +1433,43 @@ class DeviceArchitectureTypes(IntEnum):
         return self.name
 
 class BoardInformation(object):
+
     def __init__(self, protocol_version, fw_version_major, fw_version_minor, fw_version_revision,
                  logger_version, board_name, is_release, extended_context_switch_buffer, device_architecture,
                  serial_number, part_number, product_name):
+        """Initialize a new BoardInformation object.
+
+        Args:
+            protocol_version (int): Control protocol version.
+            fw_version_major (int): Firmware major version.
+            fw_version_minor (int): Firmware minor version.
+            fw_version_revision (int): Firmware revision.
+            logger_version (int): Logger version.
+            board_name (str): Board name string. Deprecated, use ``product_name`` instead.
+            is_release (bool): Whether the firmware is a release build.
+            extended_context_switch_buffer (bool): Whether firmware uses extended context switch buffer.
+            device_architecture (int): Device architecture type.
+            serial_number (str): Device serial number.
+            part_number (str): Device part number.
+            product_name (str): Device product name.
+        """
         self.protocol_version = protocol_version
         self.firmware_version = HailoFirmwareVersion.construct_from_params(fw_version_major, fw_version_minor, fw_version_revision, is_release,
             extended_context_switch_buffer, HailoFirmwareType.APP)
         self.logger_version = logger_version
-        self.board_name = board_name
+        self._board_name = board_name
         self.is_release = is_release
         self.device_architecture = DeviceArchitectureTypes(device_architecture)
         self.serial_number = serial_number
         self.part_number = part_number
         self.product_name = product_name
+    
+    @property
+    def board_name(self):
+        """Board name string. Deprecated, use ``product_name`` instead."""
+        warnings.warn("'board_name' is deprecated. Use 'product_name' instead.",
+            DeprecationWarning, stacklevel=2)
+        return self._board_name
     
     def _string_field_str(self, string_field):
         # Return <N/A> if the string field is empty
@@ -1457,7 +1482,6 @@ class BoardInformation(object):
         return 'Control Protocol Version: {}\n' \
                'Firmware Version: {}\n' \
                'Logger Version: {}\n' \
-               'Board Name: {}\n' \
                'Device Architecture: {}\n' \
                'Serial Number: {}\n' \
                'Part Number: {}\n' \
@@ -1465,7 +1489,6 @@ class BoardInformation(object):
             self.protocol_version,
             self.firmware_version,
             self.logger_version,
-            self.board_name.rstrip('\x00'),
             str(self.device_architecture),
             self._string_field_str(self.serial_number),
             self._string_field_str(self.part_number),

@@ -58,12 +58,18 @@ private:
 
         auto io_app = std::make_shared<T>(description, name, hef_path_option, net_group_name_option);
         io_app->immediate_callback();
-        io_app->callback([this, description, name, io_app, hef_path_option, net_group_name_option]() {
-            if (io_app->get_type() == IoApp::Type::VSTREAM) {
-                auto vstream_params = io_app->get_vstream_params();
+        std::weak_ptr<T> weak_io_app = io_app;
+        io_app->callback([this, description, name, weak_io_app, hef_path_option, net_group_name_option]() {
+            auto locked_io_app = weak_io_app.lock();
+            if (!locked_io_app) {
+                LOGGER__ERROR("Failed to lock io_app weak_ptr in callback");
+                return;
+            }
+            if (locked_io_app->get_type() == IoApp::Type::VSTREAM) {
+                auto vstream_params = locked_io_app->get_vstream_params();
                 m_params.vstream_params.push_back(vstream_params);
             } else {
-                auto stream_params = io_app->get_stream_params();
+                auto stream_params = locked_io_app->get_stream_params();
                 m_params.stream_params.push_back(stream_params);
             }
 
@@ -73,11 +79,13 @@ private:
             // NOTE: calling "net_app->clear(); m_params = NetworkParams();" is not sufficient because default values
             //         need to be re-set. we can override clear and reset them but there might be other issues as well
             //         and this one feels less hacky ATM
-            remove_subcommand(io_app.get());
+
+            m_prev_io_app = locked_io_app;
+            remove_subcommand(locked_io_app.get());
             // Remove from parsed_subcommands_ as well (probably a bug in CLI11)
             parsed_subcommands_.erase(std::remove_if(
                 parsed_subcommands_.begin(), parsed_subcommands_.end(),
-                [io_app](auto x){return x == io_app.get();}),
+                [&locked_io_app](auto x){return x == locked_io_app.get();}),
                 parsed_subcommands_.end());
             add_io_app_subcom<T>(description, name, hef_path_option, net_group_name_option);
         });
@@ -88,6 +96,8 @@ private:
     }
 
     NetworkParams m_params;
+    // Keeping old subcommand alive, because we use weak_ptr for the current one to prevent leaks in lambda
+    std::shared_ptr<CLI::App> m_prev_io_app;
 };
 
 hailo_status run2_benchmark(const std::string &hef_path, uint32_t time_to_run);

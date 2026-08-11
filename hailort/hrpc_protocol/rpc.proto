@@ -431,6 +431,7 @@ message Device_FetchLogs_Request {
     HailoObjectHandle device_handle = 1;
     uint32 buffer_size = 2;
     uint32 log_type = 3;
+    bool should_clear = 4;
 }
 
 message Device_FetchLogs_Reply {

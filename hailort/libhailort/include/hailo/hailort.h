@@ -38,7 +38,7 @@ extern "C" {
 #define HAILO_ETH_PORT_ANY (0)
 #define HAILO_MAX_NAME_SIZE (128)
 #define HAILO_MAX_STREAM_NAME_SIZE (HAILO_MAX_NAME_SIZE)
-#define HAILO_MAX_BOARD_NAME_LENGTH (32)
+#define HAILO_MAX_BOARD_NAME_LENGTH (32) /* 'HAILO_MAX_BOARD_NAME_LENGTH' is used by the ::hailo_device_identity_t board_name field, which is deprecated  */
 #define HAILO_MAX_DEVICE_ID_LENGTH (32)
 #define HAILO_MAX_SERIAL_NUMBER_LENGTH (16)
 #define HAILO_MAX_PART_NUMBER_LENGTH (16)
@@ -138,7 +138,7 @@ typedef uint16_t nms_bbox_counter_t;
     HAILO_STATUS__X(40, HAILO_INVALID_CONTENT_CERTIFICATE_SIZE        /*!< Invalid content certificate size */)\
     HAILO_STATUS__X(41, HAILO_MISMATCHING_FIRMWARE_BUFFER_SIZES       /*!< FW buffer sizes mismatch */)\
     HAILO_STATUS__X(42, HAILO_INVALID_FIRMWARE_CPU_ID                 /*!< Invalid CPU ID in FW */)\
-    HAILO_STATUS__X(43, HAILO_CONTROL_RESPONSE_MD5_MISMATCH           /*!< MD5 of control response does not match expected MD5 */)\
+    HAILO_STATUS__X(43, HAILO_CONTROL_RESPONSE_MD5_MISMATCH           /*!< deprecated, reserved (transport-level MD5 removed) */)\
     HAILO_STATUS__X(44, HAILO_GET_CONTROL_RESPONSE_FAIL               /*!< Get control response failed */)\
     HAILO_STATUS__X(45, HAILO_GET_D2H_EVENT_MESSAGE_FAIL              /*!< Reading device-to-host message failure */)\
     HAILO_STATUS__X(46, HAILO_MUTEX_INIT_FAIL                         /*!< Mutex initialization failure */)\
@@ -395,7 +395,7 @@ typedef struct {
 /** Hailo device type */
 typedef enum {
     HAILO_DEVICE_TYPE_PCIE,
-    HAILO_DEVICE_TYPE_ETH,
+    HAILO_DEVICE_TYPE_ETH, /* Deprecated: Ethernet devices no longer supported for hailo8 */
     HAILO_DEVICE_TYPE_INTEGRATED,
     HAILO_DEVICE_TYPE_USB,
 
@@ -471,8 +471,8 @@ typedef struct {
     uint32_t protocol_version;
     hailo_firmware_version_t fw_version;
     uint32_t logger_version;
-    uint8_t board_name_length;
-    char board_name[HAILO_MAX_BOARD_NAME_LENGTH];
+    uint8_t board_name_length DEPRECATED("board_name_length is deprecated. Use product_name_length instead.");
+    char board_name[HAILO_MAX_BOARD_NAME_LENGTH] DEPRECATED("board_name is deprecated. Use product_name instead.");
     bool is_release;
     bool extended_context_switch_buffer;
     bool extended_fw_check;
@@ -1187,7 +1187,9 @@ typedef struct {
 // TODO: warning C4200
 #pragma warning(push)
 #pragma warning(disable: 4200)
-#endif
+#else
+/* GCC/Clang support zero-length arrays natively without warnings */
+#endif /* defined(_MSC_VER) */
 typedef struct {
     /** Number of detections */
     uint16_t count;
@@ -1197,7 +1199,9 @@ typedef struct {
 } hailo_detections_t;
 #if defined(_MSC_VER)
 #pragma warning(pop)
-#endif
+#else
+/* No action needed — GCC/Clang did not push warnings */
+#endif /* defined(_MSC_VER) */
 
 typedef struct {
     /** Detection's box coordinates */

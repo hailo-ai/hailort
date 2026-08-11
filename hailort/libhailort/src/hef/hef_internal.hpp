@@ -41,6 +41,7 @@
 #include "common/internal_env_vars.hpp"
 
 #include "common/file_utils.hpp"
+#include "common/status_event.hpp"
 
 #include "control_protocol.h"
 #include <functional>
@@ -448,6 +449,12 @@ public:
 
     void set_memory_footprint_optimization(bool should_optimize);
 
+    // In parallel configure flows (e.g. LLM prefill + TBT) this may be called concurrently
+    // from multiple threads with the same signal pointer. That is safe because all concurrent
+    // writers store identical values; no synchronization is required beyond that invariant.
+    void set_ccws_ready_event(StatusEventPtr ccws_ready_event);
+    StatusEventPtr ccws_ready_event() const;
+
     // Parses HEF file once and returns both chunk-to-send as offsets and local external resources as buffers
     static Expected<Hef::HefParseForTransferResult> parse_hef_for_transfer(const std::string &file_path,
         const std::unordered_set<std::string> &local_resources);
@@ -525,6 +532,7 @@ private:
 
     std::map<std::string, NetworkGroupMetadata> m_network_group_metadata; // Key is NG name
     bool m_zero_copy_config_over_descs; // If true, the config is forced to be over descs instead of CCB, as best effort (e.g. if HEF doesnt support it or disabling env var is on)
+    StatusEventPtr m_ccws_ready_event;
 };
 
 // TODO: Make this part of a namespace? (HRT-2881)

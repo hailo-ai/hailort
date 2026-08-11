@@ -10,6 +10,7 @@
 #include "inference_manager.hpp"
 #include "common/utils.hpp"
 #include "hailo/hailort_defaults.hpp"
+#include "net_flow/pipeline/infer_model_internal.hpp"
 
 namespace hailort
 {
@@ -36,6 +37,13 @@ hailo_status InferenceManager::configure()
     TRY(m_bindings, m_configured_model.create_bindings());
 
     return HAILO_SUCCESS;
+}
+
+void InferenceManager::set_ccws_ready_event(StatusEventPtr ccws_ready_event)
+{
+    // m_model is always an InferModelBase: VDevice::create_infer_model constructs one directly.
+    auto &base = *std::static_pointer_cast<InferModelBase>(m_model);
+    base.set_ccws_ready_event(std::move(ccws_ready_event));
 }
 
 Expected<std::pair<std::map<std::string, BufferPtr>, std::map<std::string, BufferPtr>>> InferenceManager::allocate_buffers(const std::unordered_set<std::string> &layers_not_to_allocate)

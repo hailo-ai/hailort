@@ -20,7 +20,8 @@ typedef uint8_t usb_interface_t;
 enum class UsbControlProtocolOpcode : uint8_t {
     INVALID = 0,
     CONNECT = 1,
-    CLOSE = 2
+    CLOSE = 2,
+    SYS_REBOOT = 3, // Must stay in sync with REQ_SYS_REBOOT (0x03) in hailo_usb_loader.c
 };
 
 #pragma pack(push, 1)
@@ -28,6 +29,7 @@ enum class UsbControlProtocolOpcode : uint8_t {
 struct UsbConnectRequest {
     usb_interface_t interface;
     uint32_t port;
+    uint32_t session_group_id; // Used by the device to group and clean up stale interfaces from a dead client
 };
 
 struct UsbConnectResponse {

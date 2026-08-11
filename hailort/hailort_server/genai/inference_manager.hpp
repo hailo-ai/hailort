@@ -13,6 +13,7 @@
 #include "hailo/hailort.h"
 #include "hailo/buffer.hpp"
 #include "hailo/infer_model.hpp"
+#include "common/status_event.hpp"
 #include <unordered_set>
 
 
@@ -49,6 +50,7 @@ public:
     Expected<std::map<std::string, BufferPtr>> allocate_output_buffers(const std::unordered_set<std::string> &layers_not_to_allocate = {});
 
     hailo_status configure();
+    void set_ccws_ready_event(StatusEventPtr ccws_ready_event);
     hailo_status update_cache_offset(int32_t offset_delta_entries);
     hailo_status init_cache(uint32_t read_offset);
 

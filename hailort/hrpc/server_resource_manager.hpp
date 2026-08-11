@@ -41,10 +41,11 @@ public:
     template<class K, class Func, typename... Args>
     K execute(uint32_t handle, Func &lambda, Args... args)
     {
-        std::unique_lock<std::mutex> lock(m_mutex);
+        std::shared_lock<std::shared_timed_mutex> lock(m_mutex);
         TRY(auto resource, resource_lookup(handle));
-        assert(contains(m_resources_mutexes, handle));
-        std::shared_lock<std::shared_timed_mutex> resource_lock(m_resources_mutexes[handle]);
+        auto mutex_it = m_resources_mutexes.find(handle);
+        assert(mutex_it != m_resources_mutexes.end());
+        std::shared_lock<std::shared_timed_mutex> resource_lock(mutex_it->second);
         lock.unlock();
         auto ret = lambda(resource->resource, args...);
         return ret;
@@ -53,10 +54,11 @@ public:
     template<class Func, typename... Args>
     hailo_status execute(uint32_t handle, Func &lambda, Args... args)
     {
-        std::unique_lock<std::mutex> lock(m_mutex);
+        std::shared_lock<std::shared_timed_mutex> lock(m_mutex);
         TRY(auto resource, resource_lookup(handle));
-        assert(contains(m_resources_mutexes, handle));
-        std::shared_lock<std::shared_timed_mutex> resource_lock(m_resources_mutexes[handle]);
+        auto mutex_it = m_resources_mutexes.find(handle);
+        assert(mutex_it != m_resources_mutexes.end());
+        std::shared_lock<std::shared_timed_mutex> resource_lock(mutex_it->second);
         lock.unlock();
         auto ret = lambda(resource->resource, args...);
         return ret;
@@ -64,7 +66,7 @@ public:
 
     uint32_t register_resource(uint32_t id, const std::shared_ptr<T> &resource)
     {
-        std::unique_lock<std::mutex> lock(m_mutex);
+        std::unique_lock<std::shared_timed_mutex> lock(m_mutex);
         auto index = m_current_handle_index.load();
         // Create a new resource and register
         m_resources.emplace(m_current_handle_index, std::make_shared<Resource<T>>(id, std::move(resource)));
@@ -73,16 +75,9 @@ public:
         return index;
     }
 
-    // For cases where other resources are already registered and we want to align the indexes
-    void advance_current_handle_index()
-    {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        m_current_handle_index++;
-    }
-
     Expected<uint32_t> dup_handle(uint32_t handle, uint32_t id)
     {
-        std::unique_lock<std::mutex> lock(m_mutex);
+        std::unique_lock<std::shared_timed_mutex> lock(m_mutex);
         TRY(auto resource, resource_lookup(handle));
         assert(contains(m_resources_mutexes, handle));
         std::unique_lock<std::shared_timed_mutex> resource_lock(m_resources_mutexes[handle]);
@@ -94,7 +89,7 @@ public:
     std::shared_ptr<T> release_resource(uint32_t handle, uint32_t id)
     {
         std::shared_ptr<T> res = nullptr;
-        std::unique_lock<std::mutex> lock(m_mutex);
+        std::unique_lock<std::shared_timed_mutex> lock(m_mutex);
         auto found = m_resources.find(handle);
         if (found == m_resources.end()) {
             LOGGER__INFO("Failed to release resource with handle {} and ID {}. The resource no longer exists or may have already been released",
@@ -124,7 +119,7 @@ public:
     std::vector<std::shared_ptr<T>> release_by_id(uint32_t id)
     {
         std::vector<std::shared_ptr<T>> res;
-        std::unique_lock<std::mutex> lock(m_mutex);
+        std::unique_lock<std::shared_timed_mutex> lock(m_mutex);
         for (auto iter = m_resources.begin(); iter != m_resources.end(); ) {
             auto handle = iter->first;
             bool release_resource = false;
@@ -152,7 +147,7 @@ public:
 
     std::vector<uint32_t> resources_handles_by_ids(const std::set<uint32_t> &ids)
     {
-        std::unique_lock<std::mutex> lock(m_mutex);
+        std::shared_lock<std::shared_timed_mutex> lock(m_mutex);
         std::vector<uint32_t> resources_handles;
         for (auto &handle_resource_pair : m_resources) {
             for (auto &id : ids) {
@@ -180,7 +175,7 @@ private:
         return resource;
     }
 
-    std::mutex m_mutex;
+    std::shared_timed_mutex m_mutex;
     std::atomic<uint32_t> m_current_handle_index;
     std::unordered_map<uint32_t, std::shared_ptr<Resource<T>>> m_resources;
     std::unordered_map<uint32_t, std::shared_timed_mutex> m_resources_mutexes;

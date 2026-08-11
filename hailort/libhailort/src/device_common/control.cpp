@@ -40,32 +40,28 @@ typedef std::array<std::array<float64_t, CONTROL_PROTOCOL__POWER_MEASUREMENT_TYP
 
 Expected<hailo_device_identity_t> control__parse_identify_results(CONTROL_PROTOCOL_identify_response_t *identify_response)
 {
-    hailo_device_identity_t board_info;
+    hailo_device_identity_t board_info = {};
 
     CHECK_AS_EXPECTED(nullptr != identify_response, HAILO_INVALID_ARGUMENT);
 
     // Store identify response inside control
-    board_info.protocol_version = BYTE_ORDER__ntohl(identify_response->protocol_version);
-    board_info.logger_version = BYTE_ORDER__ntohl(identify_response->logger_version);
+    board_info.protocol_version = identify_response->protocol_version;
+    board_info.logger_version = identify_response->logger_version;
     (void)memcpy(&(board_info.fw_version),
             &(identify_response->fw_version),
             sizeof(board_info.fw_version));
-    board_info.board_name_length = (uint8_t)BYTE_ORDER__ntohl(identify_response->board_name_length);
-    (void)memcpy(&(board_info.board_name),
-            &(identify_response->board_name),
-            BYTE_ORDER__ntohl(identify_response->board_name_length));
-    board_info.serial_number_length = (uint8_t)BYTE_ORDER__ntohl(identify_response->serial_number_length);
+    board_info.serial_number_length = (uint8_t)identify_response->serial_number_length;
     (void)memcpy(&(board_info.serial_number),
             &(identify_response->serial_number),
-            BYTE_ORDER__ntohl(identify_response->serial_number_length));
-    board_info.part_number_length = (uint8_t)BYTE_ORDER__ntohl(identify_response->part_number_length);
+            identify_response->serial_number_length);
+    board_info.part_number_length = (uint8_t)identify_response->part_number_length;
     (void)memcpy(&(board_info.part_number),
         &(identify_response->part_number),
-        BYTE_ORDER__ntohl(identify_response->part_number_length));
-    board_info.product_name_length = (uint8_t)BYTE_ORDER__ntohl(identify_response->product_name_length);
+        identify_response->part_number_length);
+    board_info.product_name_length = (uint8_t)identify_response->product_name_length;
     (void)memcpy(&(board_info.product_name),
         &(identify_response->product_name),
-        BYTE_ORDER__ntohl(identify_response->product_name_length));
+        identify_response->product_name_length);
 
     // Check if the firmware is debug or release
     board_info.is_release = (!IS_REVISION_DEV(board_info.fw_version.revision));
@@ -104,7 +100,7 @@ Expected<hailo_extended_device_information_t> control__parse_get_extended_device
     uint8_t local_supported_features;
     hailo_extended_device_information_t device_info;
 
-    local_supported_features = (uint8_t)BYTE_ORDER__ntohl(get_extended_device_information_response.supported_features);
+    local_supported_features = (uint8_t)get_extended_device_information_response.supported_features;
 
     device_info.supported_features.ethernet = (local_supported_features &
                                             (1 << CONTROL_PROTOCOL__SUPPORTED_FEATURES_ETHERNET_BIT_OFFSET)) != 0;
@@ -116,22 +112,22 @@ Expected<hailo_extended_device_information_t> control__parse_get_extended_device
                                                         (1 << CONTROL_PROTOCOL__SUPPORTED_FEATURES_CURRENT_MONITORING_BIT_OFFSET)) != 0;
     device_info.supported_features.mdio = (local_supported_features &
                                         (1 << CONTROL_PROTOCOL__SUPPORTED_FEATURES_MDIO_BIT_OFFSET)) != 0;
-    device_info.neural_network_core_clock_rate = BYTE_ORDER__ntohl(get_extended_device_information_response.neural_network_core_clock_rate);
+    device_info.neural_network_core_clock_rate = get_extended_device_information_response.neural_network_core_clock_rate;
 
     LOGGER__DEBUG("Max Neural Network Core Clock Rate: {}", device_info.neural_network_core_clock_rate);
 
     device_info.boot_source = static_cast<hailo_device_boot_source_t>(
-        BYTE_ORDER__ntohl(get_extended_device_information_response.boot_source));
+        get_extended_device_information_response.boot_source);
 
     (void)memcpy(device_info.soc_id,
                 get_extended_device_information_response.soc_id,
-                BYTE_ORDER__ntohl(get_extended_device_information_response.soc_id_length));
+                get_extended_device_information_response.soc_id_length);
 
     device_info.lcs = get_extended_device_information_response.lcs;
 
     memcpy(&device_info.unit_level_tracking_id[0], &get_extended_device_information_response.fuse_info, sizeof(device_info.unit_level_tracking_id));
     memcpy(&device_info.chip_serial_number[0], &get_extended_device_information_response.fuse_info, sizeof(device_info.chip_serial_number));
-    memcpy(&device_info.eth_mac_address[0], &get_extended_device_information_response.eth_mac_address[0], BYTE_ORDER__ntohl(get_extended_device_information_response.eth_mac_length));
+    memcpy(&device_info.eth_mac_address[0], &get_extended_device_information_response.eth_mac_address[0], get_extended_device_information_response.eth_mac_length);
     memcpy(&device_info.soc_pm_values, &get_extended_device_information_response.pd_info, sizeof(device_info.soc_pm_values));
     memset(&device_info.chip_serial_number[0], 0, sizeof(device_info.chip_serial_number));
 
@@ -148,19 +144,19 @@ Expected<hailo_health_info_t> control__parse_get_health_information_results
     health_info.overcurrent_protection_active = get_health_information_response->overcurrent_protection_active;
     health_info.current_overcurrent_zone = get_health_information_response->current_overcurrent_zone;
     // Re-convertion to floats after
-    health_info.red_overcurrent_threshold = float32_t(BYTE_ORDER__ntohl(get_health_information_response->red_overcurrent_threshold));
+    health_info.red_overcurrent_threshold = float32_t(get_health_information_response->red_overcurrent_threshold);
     health_info.overcurrent_throttling_active = get_health_information_response->overcurrent_throttling_active;
     health_info.temperature_throttling_active = get_health_information_response->temperature_throttling_active;
     health_info.current_temperature_zone = get_health_information_response->current_temperature_zone;
     health_info.current_temperature_throttling_level = get_health_information_response->current_temperature_throttling_level;
     memcpy(&health_info.temperature_throttling_levels[0], &get_health_information_response->temperature_throttling_levels[0],
-            BYTE_ORDER__ntohl(get_health_information_response->temperature_throttling_levels_length));
-    health_info.orange_temperature_threshold = BYTE_ORDER__ntohl(get_health_information_response->orange_temperature_threshold);
-    health_info.orange_hysteresis_temperature_threshold = BYTE_ORDER__ntohl(get_health_information_response->orange_hysteresis_temperature_threshold);
-    health_info.red_temperature_threshold = BYTE_ORDER__ntohl(get_health_information_response->red_temperature_threshold);
-    health_info.red_hysteresis_temperature_threshold = BYTE_ORDER__ntohl(get_health_information_response->red_hysteresis_temperature_threshold);
-    health_info.requested_overcurrent_clock_freq = BYTE_ORDER__ntohl(get_health_information_response->requested_overcurrent_clock_freq);
-    health_info.requested_temperature_clock_freq = BYTE_ORDER__ntohl(get_health_information_response->requested_temperature_clock_freq);
+            get_health_information_response->temperature_throttling_levels_length);
+    health_info.orange_temperature_threshold = get_health_information_response->orange_temperature_threshold;
+    health_info.orange_hysteresis_temperature_threshold = get_health_information_response->orange_hysteresis_temperature_threshold;
+    health_info.red_temperature_threshold = get_health_information_response->red_temperature_threshold;
+    health_info.red_hysteresis_temperature_threshold = get_health_information_response->red_hysteresis_temperature_threshold;
+    health_info.requested_overcurrent_clock_freq = get_health_information_response->requested_overcurrent_clock_freq;
+    health_info.requested_temperature_clock_freq = get_health_information_response->requested_temperature_clock_freq;
     return health_info;
 }
 
@@ -202,51 +198,26 @@ hailo_status control__parse_core_identify_results(CONTROL_PROTOCOL__core_identif
     return HAILO_SUCCESS;
 }
 
-hailo_status log_detailed_fw_error(const Device &device, const CONTROL_PROTOCOL__status_t &fw_status, const CONTROL_PROTOCOL__OPCODE_t opcode)
+hailo_status log_fw_error(uint32_t fw_status, const CONTROL_PROTOCOL__OPCODE_t opcode)
 {
-    const char *firmware_status_text = NULL;
-    // Special care for user_config_examine - warning log will be printed if not loaded, since it can happen on happy-flow (e.g. no EEPROM)
-    if ((fw_status.major_status == CONTROL_PROTOCOL_STATUS_USER_CONFIG_EXAMINE_FAILED) &&
-        (fw_status.minor_status == FIRMWARE_CONFIGS_STATUS_USER_CONFIG_NOT_LOADED)) {
-            LOGGER__WARNING("Failed to examine user config, as it is not loaded or is not supported by the device.");
-    }
+    const char *status_text = NULL;
+    const char *opcode_text = CONTROL_PROTOCOL__get_textual_opcode(opcode);
 
-    LOGGER__ERROR("Firmware control has failed. Major status: {:#x}, Minor status: {:#x}",
-            fw_status.major_status,
-            fw_status.minor_status);
-    auto common_status = FIRMWARE_STATUS__get_textual((FIRMWARE_STATUS_t)fw_status.major_status, &firmware_status_text);
+    auto common_status = FIRMWARE_STATUS__get_textual((FIRMWARE_STATUS_t)fw_status, &status_text);
     if (HAILO_COMMON_STATUS__SUCCESS == common_status) {
-        LOGGER__ERROR("Firmware major status: {}", firmware_status_text);
+        LOGGER__ERROR("Firmware control {} has failed. Status: {}", opcode_text, status_text);
     } else {
-        LOGGER__ERROR("Cannot find textual address for firmware status {:#x}, common_status = {}",
-            static_cast<int>((FIRMWARE_STATUS_t)fw_status.major_status), static_cast<int>(common_status));
-    }
-    common_status = FIRMWARE_STATUS__get_textual((FIRMWARE_STATUS_t)fw_status.minor_status, &firmware_status_text);
-    if (HAILO_COMMON_STATUS__SUCCESS == common_status) {
-        LOGGER__ERROR("Firmware minor status: {}", firmware_status_text);
-    } else {
-        LOGGER__ERROR("Cannot find textual address for firmware status {:#x}, common_status = {}",
-            static_cast<int>((FIRMWARE_STATUS_t)fw_status.minor_status), static_cast<int>(common_status));
+        LOGGER__ERROR("Failed to convert fw status {:#x} with error: {}", fw_status, static_cast<int>(common_status));
+        LOGGER__ERROR("Firmware control {} has failed", opcode_text);
     }
 
-    if ((CONTROL_PROTOCOL_STATUS_CONTROL_UNSUPPORTED == fw_status.minor_status) ||
-        (CONTROL_PROTOCOL_STATUS_CONTROL_UNSUPPORTED == fw_status.major_status)) {
-        auto device_arch = device.get_architecture();
-        auto dev_arch_str = (device_arch) ? HailoRTCommon::get_device_arch_str(*device_arch) : "Unable to parse arch";
-        LOGGER__ERROR("Opcode {} is not supported on the device." \
-            " This error usually occurs when the control is not supported for the device arch - ({}), or not compiled to the FW",
-            CONTROL_PROTOCOL__get_textual_opcode(opcode), dev_arch_str);
-    }
-
-    if ((CONTROL_PROTOCOL_STATUS_UNSUPPORTED_DEVICE == fw_status.minor_status) ||
-        (CONTROL_PROTOCOL_STATUS_UNSUPPORTED_DEVICE == fw_status.major_status)) {
-        LOGGER__ERROR("Opcode {} is not supported on the current board.", CONTROL_PROTOCOL__get_textual_opcode(opcode));
+    if (CONTROL_PROTOCOL_STATUS_UNSUPPORTED_DEVICE == fw_status) {
+        LOGGER__ERROR("Opcode {} is not supported on the current board.", opcode_text);
         return HAILO_UNSUPPORTED_OPCODE;
     }
 
-    if ((HAILO_CONTROL_STATUS_UNSUPPORTED_OPCODE == fw_status.minor_status) ||
-        (HAILO_CONTROL_STATUS_UNSUPPORTED_OPCODE == fw_status.major_status)) {
-        LOGGER__ERROR("Opcode {} is not supported", CONTROL_PROTOCOL__get_textual_opcode(opcode));
+    if (HAILO_CONTROL_STATUS_UNSUPPORTED_OPCODE == fw_status) {
+        LOGGER__ERROR("Opcode {} is not supported", opcode_text);
         return HAILO_UNSUPPORTED_OPCODE;
     }
 
@@ -255,48 +226,38 @@ hailo_status log_detailed_fw_error(const Device &device, const CONTROL_PROTOCOL_
 
 hailo_status Control::parse_and_validate_response(uint8_t *message, uint32_t message_size,
     CONTROL_PROTOCOL__response_header_t **header, CONTROL_PROTOCOL__payload_t **payload,
-    CONTROL_PROTOCOL__request_t *request, Device &device)
+    CONTROL_PROTOCOL__request_t *request)
 {
     hailo_status status = HAILO_UNINITIALIZED;
     HAILO_COMMON_STATUS_t common_status = HAILO_COMMON_STATUS__UNINITIALIZED;
-    CONTROL_PROTOCOL__status_t fw_status = {};
+    uint32_t fw_status = 0;
 
     /* Parse the response */
     common_status = CONTROL_PROTOCOL__parse_response(message, message_size, header, payload, &fw_status);
     if (HAILO_STATUS__CONTROL_PROTOCOL__INVALID_VERSION == common_status) {
         status = HAILO_UNSUPPORTED_CONTROL_PROTOCOL_VERSION;
-    }
-    else {
+    } else {
         status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     }
-    if (HAILO_SUCCESS != status) {
-        goto exit;
-    }
-    /* Validate response was successful - both major and minor should be error free */
-    if (0 != fw_status.major_status) {
-        status = log_detailed_fw_error(device, fw_status,
-            static_cast<CONTROL_PROTOCOL__OPCODE_t>(BYTE_ORDER__ntohl(request->header.common_header.opcode)));
-        goto exit;
+    CHECK_SUCCESS(status);
 
+    if (0 != fw_status) {
+        return log_fw_error(fw_status, static_cast<CONTROL_PROTOCOL__OPCODE_t>(request->header.common_header.opcode));
     }
 
     /* Validate response opcode is same as request */
     if (request->header.common_header.opcode != (*header)->common_header.opcode) {
-        status = HAILO_INVALID_CONTROL_RESPONSE;
         LOGGER__ERROR("Invalid opcode received from FW");
-        goto exit;
+        return HAILO_INVALID_CONTROL_RESPONSE;
     }
 
     /* Validate response version is same as request */
     if (request->header.common_header.version != (*header)->common_header.version) {
-        status = HAILO_INVALID_CONTROL_RESPONSE;
         LOGGER__ERROR("Invalid protocol version received from FW");
-        goto exit;
+        return HAILO_INVALID_CONTROL_RESPONSE;
     }
 
-    status = HAILO_SUCCESS;
-exit:
-    return status;
+    return HAILO_SUCCESS;
 }
 
 Expected<hailo_device_identity_t> Control::identify(Device &device)
@@ -312,7 +273,7 @@ Expected<hailo_device_identity_t> Control::identify(Device &device)
     CONTROL_PROTOCOL_identify_response_t *identify_response = NULL;
 
     /* Validate arguments */
-    common_status = CONTROL_PROTOCOL__pack_identify_request(&request, &request_size, device.get_control_sequence());
+    common_status = CONTROL_PROTOCOL__pack_identify_request(&request, &request_size);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     CHECK_SUCCESS_AS_EXPECTED(status);
 
@@ -320,8 +281,7 @@ Expected<hailo_device_identity_t> Control::identify(Device &device)
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     CHECK_SUCCESS_AS_EXPECTED(status);
     identify_response = (CONTROL_PROTOCOL_identify_response_t *)(payload->parameters);
 
@@ -343,7 +303,7 @@ hailo_status Control::core_identify(Device &device, hailo_core_information_t *co
     /* Validate arguments */
     CHECK_ARG_NOT_NULL(core_info);
 
-    common_status = CONTROL_PROTOCOL__pack_core_identify_request(&request, &request_size, device.get_control_sequence());
+    common_status = CONTROL_PROTOCOL__pack_core_identify_request(&request, &request_size);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         goto exit;
@@ -355,8 +315,7 @@ hailo_status Control::core_identify(Device &device, hailo_core_information_t *co
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         goto exit;
     }
@@ -379,7 +338,7 @@ hailo_status Control::set_fw_logger(Device &device, hailo_fw_logger_level_t leve
     CONTROL_PROTOCOL__request_t request = {};
     size_t request_size = 0;
 
-    auto common_status = CONTROL_PROTOCOL__pack_set_fw_logger_request(&request, &request_size, device.get_control_sequence(), level,
+    auto common_status = CONTROL_PROTOCOL__pack_set_fw_logger_request(&request, &request_size, level,
         static_cast<uint8_t>(interface_mask));
 
     auto status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
@@ -393,8 +352,7 @@ hailo_status Control::set_fw_logger(Device &device, hailo_fw_logger_level_t leve
     /* Parse response */
     CONTROL_PROTOCOL__response_header_t *header = NULL;
     CONTROL_PROTOCOL__payload_t *payload = NULL;
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
@@ -405,7 +363,7 @@ hailo_status Control::set_clock_freq(Device &device, uint32_t clock_freq)
     CONTROL_PROTOCOL__request_t request = {};
     size_t request_size = 0;
 
-    auto common_status = CONTROL_PROTOCOL__pack_set_clock_freq_request(&request, &request_size, device.get_control_sequence(), clock_freq);
+    auto common_status = CONTROL_PROTOCOL__pack_set_clock_freq_request(&request, &request_size, clock_freq);
 
     auto status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     CHECK_SUCCESS(status);
@@ -418,8 +376,7 @@ hailo_status Control::set_clock_freq(Device &device, uint32_t clock_freq)
     /* Parse response */
     CONTROL_PROTOCOL__response_header_t *header = NULL;
     CONTROL_PROTOCOL__payload_t *payload = NULL;
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
@@ -430,7 +387,7 @@ hailo_status Control::set_throttling_state(Device &device, bool should_activate)
     CONTROL_PROTOCOL__request_t request = {};
     size_t request_size = 0;
 
-    auto common_status = CONTROL_PROTOCOL__pack_set_throttling_state_request(&request, &request_size, device.get_control_sequence(), should_activate);
+    auto common_status = CONTROL_PROTOCOL__pack_set_throttling_state_request(&request, &request_size, should_activate);
 
     auto status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     CHECK_SUCCESS(status);
@@ -443,8 +400,7 @@ hailo_status Control::set_throttling_state(Device &device, bool should_activate)
     /* Parse response */
     CONTROL_PROTOCOL__response_header_t *header = NULL;
     CONTROL_PROTOCOL__payload_t *payload = NULL;
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
@@ -462,7 +418,7 @@ Expected<bool> Control::get_throttling_state(Device &device)
     CONTROL_PROTOCOL__payload_t *payload = NULL;
     CONTROL_PROTOCOL__get_throttling_state_response_t *get_throttling_state_response = NULL;
 
-    common_status = CONTROL_PROTOCOL__pack_get_throttling_state_request(&request, &request_size, device.get_control_sequence());
+    common_status = CONTROL_PROTOCOL__pack_get_throttling_state_request(&request, &request_size);
 
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     CHECK_SUCCESS_AS_EXPECTED(status);
@@ -470,8 +426,7 @@ Expected<bool> Control::get_throttling_state(Device &device)
     status = device.fw_interact((uint8_t*)(&request), request_size, (uint8_t*)&response_buffer, &response_size);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
-    /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     get_throttling_state_response = (CONTROL_PROTOCOL__get_throttling_state_response_t *)(payload->parameters);
@@ -483,7 +438,7 @@ hailo_status Control::set_overcurrent_state(Device &device, bool should_activate
     CONTROL_PROTOCOL__request_t request = {};
     size_t request_size = 0;
 
-    auto common_status = CONTROL_PROTOCOL__pack_set_overcurrent_state_request(&request, &request_size, device.get_control_sequence(), should_activate);
+    auto common_status = CONTROL_PROTOCOL__pack_set_overcurrent_state_request(&request, &request_size, should_activate);
 
     auto status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     CHECK_SUCCESS(status);
@@ -496,7 +451,7 @@ hailo_status Control::set_overcurrent_state(Device &device, bool should_activate
     /* Parse response */
     CONTROL_PROTOCOL__response_header_t *header = NULL;
     CONTROL_PROTOCOL__payload_t *payload = NULL;
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
@@ -514,7 +469,7 @@ Expected<bool> Control::get_overcurrent_state(Device &device)
     CONTROL_PROTOCOL__payload_t *payload = NULL;
     CONTROL_PROTOCOL__get_overcurrent_state_response_t *get_overcurrent_state_response = NULL;
 
-    common_status = CONTROL_PROTOCOL__pack_get_overcurrent_state_request(&request, &request_size, device.get_control_sequence());
+    common_status = CONTROL_PROTOCOL__pack_get_overcurrent_state_request(&request, &request_size);
 
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     CHECK_SUCCESS_AS_EXPECTED(status);
@@ -523,7 +478,7 @@ Expected<bool> Control::get_overcurrent_state(Device &device)
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     get_overcurrent_state_response = (CONTROL_PROTOCOL__get_overcurrent_state_response_t *)(payload->parameters);
@@ -535,7 +490,7 @@ Expected<CONTROL_PROTOCOL__hw_consts_t> Control::get_hw_consts(Device &device)
     size_t request_size = 0;
     CONTROL_PROTOCOL__request_t request = {};
 
-    auto common_status = CONTROL_PROTOCOL__pack_get_hw_consts_request(&request, &request_size, device.get_control_sequence());
+    auto common_status = CONTROL_PROTOCOL__pack_get_hw_consts_request(&request, &request_size);
     auto status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     CHECK_SUCCESS_AS_EXPECTED(status);
 
@@ -546,8 +501,7 @@ Expected<CONTROL_PROTOCOL__hw_consts_t> Control::get_hw_consts(Device &device)
 
     CONTROL_PROTOCOL__response_header_t *header = NULL;
     CONTROL_PROTOCOL__payload_t *payload = NULL;
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request,
-        device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     const auto &response = *reinterpret_cast<CONTROL_PROTOCOL__get_hw_consts_response_t*>(payload->parameters);
@@ -572,7 +526,7 @@ hailo_status Control::write_memory_chunk(Device &device, uint32_t address, const
     ASSERT(CONTROL__MAX_WRITE_MEMORY_CHUNK_SIZE >= chunk_size);
     ASSERT(0 != chunk_size);
 
-    common_status = CONTROL_PROTOCOL__pack_write_memory_request(&request, &request_size, device.get_control_sequence(), address, data, chunk_size);
+    common_status = CONTROL_PROTOCOL__pack_write_memory_request(&request, &request_size, address, data, chunk_size);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         goto exit;
@@ -584,8 +538,7 @@ hailo_status Control::write_memory_chunk(Device &device, uint32_t address, const
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         goto exit;
     }
@@ -648,7 +601,7 @@ hailo_status Control::read_memory_chunk(Device &device, uint32_t address, uint8_
     ASSERT(CONTROL__MAX_WRITE_MEMORY_CHUNK_SIZE >= chunk_size);
     ASSERT(0 != chunk_size);
 
-    common_status = CONTROL_PROTOCOL__pack_read_memory_request(&request, &request_size, device.get_control_sequence(), address, chunk_size);
+    common_status = CONTROL_PROTOCOL__pack_read_memory_request(&request, &request_size, address, chunk_size);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         goto exit;
@@ -660,14 +613,13 @@ hailo_status Control::read_memory_chunk(Device &device, uint32_t address, uint8_
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         goto exit;
     }
 
     read_memory_response = (CONTROL_PROTOCOL__read_memory_response_t *)(payload->parameters);
-    actual_read_data_length = BYTE_ORDER__ntohl(read_memory_response->data_length);
+    actual_read_data_length = read_memory_response->data_length;
     if (chunk_size != actual_read_data_length) {
         status = HAILO_INVALID_CONTROL_RESPONSE;
         LOGGER__ERROR("Did not read all data from control response");
@@ -724,8 +676,7 @@ hailo_status Control::open_stream(Device &device, uint8_t dataflow_manager_id, b
     CONTROL_PROTOCOL__response_header_t *header = NULL;
     CONTROL_PROTOCOL__payload_t *payload = NULL;
 
-    common_status = CONTROL_PROTOCOL__pack_open_stream_request(&request, &request_size, device.get_control_sequence(),
-        dataflow_manager_id, is_input);
+    common_status = CONTROL_PROTOCOL__pack_open_stream_request(&request, &request_size, dataflow_manager_id, is_input);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         goto exit;
@@ -737,8 +688,7 @@ hailo_status Control::open_stream(Device &device, uint8_t dataflow_manager_id, b
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         goto exit;
     }
@@ -759,8 +709,7 @@ hailo_status Control::close_stream(Device &device, uint8_t dataflow_manager_id, 
     CONTROL_PROTOCOL__response_header_t *header = NULL;
     CONTROL_PROTOCOL__payload_t *payload = NULL;
 
-    common_status = CONTROL_PROTOCOL__pack_close_stream_request(&request, &request_size, device.get_control_sequence(),
-        dataflow_manager_id, is_input);
+    common_status = CONTROL_PROTOCOL__pack_close_stream_request(&request, &request_size, dataflow_manager_id, is_input);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         goto exit;
@@ -772,8 +721,7 @@ hailo_status Control::close_stream(Device &device, uint8_t dataflow_manager_id, 
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         goto exit;
     }
@@ -804,108 +752,6 @@ exit:
     return status;
 }
 
-hailo_status Control::config_stream_udp_input(Device &device, CONTROL_PROTOCOL__config_stream_params_t *params, uint8_t &dataflow_manager_id)
-{
-    hailo_status status = HAILO_UNINITIALIZED;
-    HAILO_COMMON_STATUS_t common_status = HAILO_COMMON_STATUS__UNINITIALIZED;
-    CONTROL_PROTOCOL__request_t request = {};
-    size_t request_size = 0;
-    uint8_t response_buffer[RESPONSE_MAX_BUFFER_SIZE] = {};
-    size_t response_size = RESPONSE_MAX_BUFFER_SIZE;
-    CONTROL_PROTOCOL__response_header_t *header = NULL;
-    CONTROL_PROTOCOL__payload_t *payload = NULL;
-    CONTROL_PROTOCOL__config_stream_response_t *response = NULL;
-    uint32_t dataflow_manager_id_length = 0;
-
-    /* Validate arguments */
-    CHECK_ARG_NOT_NULL(params);
-
-    common_status = CONTROL_PROTOCOL__pack_config_stream_udp_input_request(&request, &request_size,
-        device.get_control_sequence(), params);
-    status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
-    if (HAILO_SUCCESS != status) {
-        goto exit;
-    }
-
-    status = device.fw_interact((uint8_t*)(&request), request_size, (uint8_t*)&response_buffer, &response_size);
-    if (HAILO_SUCCESS != status) {
-        goto exit;
-    }
-
-    /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
-    if (HAILO_SUCCESS != status) {
-        goto exit;
-    }
-
-    response = (CONTROL_PROTOCOL__config_stream_response_t *)(payload->parameters);
-    dataflow_manager_id_length = BYTE_ORDER__ntohl(response->dataflow_manager_id_length);
-
-    /* Validate read data is data size */
-    if (dataflow_manager_id_length != sizeof(response->dataflow_manager_id)) {
-        status = HAILO_INVALID_CONTROL_RESPONSE;
-        goto exit;
-    }
-
-    dataflow_manager_id = response->dataflow_manager_id;
-
-    status = HAILO_SUCCESS;
-exit:
-    return status;
-}
-
-hailo_status Control::config_stream_udp_output(Device &device, CONTROL_PROTOCOL__config_stream_params_t *params, uint8_t &dataflow_manager_id)
-{
-    hailo_status status = HAILO_UNINITIALIZED;
-    HAILO_COMMON_STATUS_t common_status = HAILO_COMMON_STATUS__UNINITIALIZED;
-    CONTROL_PROTOCOL__request_t request = {};
-    size_t request_size = 0;
-    uint8_t response_buffer[RESPONSE_MAX_BUFFER_SIZE] = {};
-    size_t response_size = RESPONSE_MAX_BUFFER_SIZE;
-    CONTROL_PROTOCOL__response_header_t *header = NULL;
-    CONTROL_PROTOCOL__payload_t *payload = NULL;
-    CONTROL_PROTOCOL__config_stream_response_t *response = NULL;
-    uint32_t dataflow_manager_id_length = 0;
-
-    /* Validate arguments */
-    CHECK_ARG_NOT_NULL(params);
-
-    common_status = CONTROL_PROTOCOL__pack_config_stream_udp_output_request(&request, &request_size,
-        device.get_control_sequence(), params);
-    status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
-    if (HAILO_SUCCESS != status) {
-        goto exit;
-    }
-
-    status = device.fw_interact((uint8_t*)(&request), request_size, (uint8_t*)&response_buffer, &response_size);
-    if (HAILO_SUCCESS != status) {
-        goto exit;
-    }
-
-    /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
-    if (HAILO_SUCCESS != status) {
-        goto exit;
-    }
-
-    response = (CONTROL_PROTOCOL__config_stream_response_t *)(payload->parameters);
-    dataflow_manager_id_length = BYTE_ORDER__ntohl(response->dataflow_manager_id_length);
-
-    /* Validate read data is data size */
-    if (dataflow_manager_id_length != sizeof(response->dataflow_manager_id)) {
-        status = HAILO_INVALID_CONTROL_RESPONSE;
-        goto exit;
-    }
-
-    dataflow_manager_id = response->dataflow_manager_id;
-
-    status = HAILO_SUCCESS;
-exit:
-    return status;
-}
-
 hailo_status Control::config_stream_mipi_input(Device &device, CONTROL_PROTOCOL__config_stream_params_t *params, uint8_t &dataflow_manager_id)
 {
     hailo_status status = HAILO_UNINITIALIZED;
@@ -917,13 +763,11 @@ hailo_status Control::config_stream_mipi_input(Device &device, CONTROL_PROTOCOL_
     CONTROL_PROTOCOL__response_header_t *header = NULL;
     CONTROL_PROTOCOL__payload_t *payload = NULL;
     CONTROL_PROTOCOL__config_stream_response_t *response = NULL;
-    uint32_t dataflow_manager_id_length = 0;
 
     /* Validate arguments */
     CHECK_ARG_NOT_NULL(params);
 
-    common_status = CONTROL_PROTOCOL__pack_config_stream_mipi_input_request(&request, &request_size,
-        device.get_control_sequence(), params);
+    common_status = CONTROL_PROTOCOL__pack_config_stream_mipi_input_request(&request, &request_size, params);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         goto exit;
@@ -935,20 +779,12 @@ hailo_status Control::config_stream_mipi_input(Device &device, CONTROL_PROTOCOL_
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         goto exit;
     }
 
     response = (CONTROL_PROTOCOL__config_stream_response_t *)(payload->parameters);
-    dataflow_manager_id_length = BYTE_ORDER__ntohl(response->dataflow_manager_id_length);
-
-    /* Validate read data is data size */
-    if (dataflow_manager_id_length != sizeof(response->dataflow_manager_id)) {
-        status = HAILO_INVALID_CONTROL_RESPONSE;
-        goto exit;
-    }
 
     dataflow_manager_id = response->dataflow_manager_id;
 
@@ -968,13 +804,11 @@ hailo_status Control::config_stream_mipi_output(Device &device, CONTROL_PROTOCOL
     CONTROL_PROTOCOL__response_header_t *header = NULL;
     CONTROL_PROTOCOL__payload_t *payload = NULL;
     CONTROL_PROTOCOL__config_stream_response_t *response = NULL;
-    uint32_t dataflow_manager_id_length = 0;
 
     /* Validate arguments */
     CHECK_ARG_NOT_NULL(params);
 
-    common_status = CONTROL_PROTOCOL__pack_config_stream_mipi_output_request(&request, &request_size,
-        device.get_control_sequence(), params);
+    common_status = CONTROL_PROTOCOL__pack_config_stream_mipi_output_request(&request, &request_size, params);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         goto exit;
@@ -986,20 +820,12 @@ hailo_status Control::config_stream_mipi_output(Device &device, CONTROL_PROTOCOL
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         goto exit;
     }
 
     response = (CONTROL_PROTOCOL__config_stream_response_t *)(payload->parameters);
-    dataflow_manager_id_length = BYTE_ORDER__ntohl(response->dataflow_manager_id_length);
-
-    /* Validate read data is data size */
-    if (dataflow_manager_id_length != sizeof(response->dataflow_manager_id)) {
-        status = HAILO_INVALID_CONTROL_RESPONSE;
-        goto exit;
-    }
 
     dataflow_manager_id = response->dataflow_manager_id;
 
@@ -1019,13 +845,11 @@ hailo_status Control::config_stream_pcie_input(Device &device, CONTROL_PROTOCOL_
     CONTROL_PROTOCOL__response_header_t *header = NULL;
     CONTROL_PROTOCOL__payload_t *payload = NULL;
     CONTROL_PROTOCOL__config_stream_response_t *response = NULL;
-    uint32_t dataflow_manager_id_length = 0;
 
     /* Validate arguments */
     CHECK_ARG_NOT_NULL(params);
 
-    common_status = CONTROL_PROTOCOL__pack_config_stream_pcie_input_request(&request, &request_size,
-        device.get_control_sequence(), params);
+    common_status = CONTROL_PROTOCOL__pack_config_stream_pcie_input_request(&request, &request_size, params);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         goto exit;
@@ -1037,20 +861,12 @@ hailo_status Control::config_stream_pcie_input(Device &device, CONTROL_PROTOCOL_
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         goto exit;
     }
 
     response = (CONTROL_PROTOCOL__config_stream_response_t *)(payload->parameters);
-    dataflow_manager_id_length = BYTE_ORDER__ntohl(response->dataflow_manager_id_length);
-
-    /* Validate read data is data size */
-    if (dataflow_manager_id_length != sizeof(response->dataflow_manager_id)) {
-        status = HAILO_INVALID_CONTROL_RESPONSE;
-        goto exit;
-    }
 
     dataflow_manager_id = response->dataflow_manager_id;
 
@@ -1070,13 +886,11 @@ hailo_status Control::config_stream_pcie_output(Device &device, CONTROL_PROTOCOL
     CONTROL_PROTOCOL__response_header_t *header = NULL;
     CONTROL_PROTOCOL__payload_t *payload = NULL;
     CONTROL_PROTOCOL__config_stream_response_t *response = NULL;
-    uint32_t dataflow_manager_id_length = 0;
 
     /* Validate arguments */
     CHECK_ARG_NOT_NULL(params);
 
-    common_status = CONTROL_PROTOCOL__pack_config_stream_pcie_output_request(&request, &request_size,
-        device.get_control_sequence(), params);
+    common_status = CONTROL_PROTOCOL__pack_config_stream_pcie_output_request(&request, &request_size, params);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         goto exit;
@@ -1088,20 +902,12 @@ hailo_status Control::config_stream_pcie_output(Device &device, CONTROL_PROTOCOL
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         goto exit;
     }
 
     response = (CONTROL_PROTOCOL__config_stream_response_t *)(payload->parameters);
-    dataflow_manager_id_length = BYTE_ORDER__ntohl(response->dataflow_manager_id_length);
-
-    /* Validate read data is data size */
-    if (dataflow_manager_id_length != sizeof(response->dataflow_manager_id)) {
-        status = HAILO_INVALID_CONTROL_RESPONSE;
-        goto exit;
-    }
 
     dataflow_manager_id = response->dataflow_manager_id;
 
@@ -1128,8 +934,7 @@ hailo_status Control::power_measurement(Device &device, CONTROL_PROTOCOL__dvm_op
     /* Validate arguments */
     CHECK_ARG_NOT_NULL(measurement);
 
-    common_status = CONTROL_PROTOCOL__pack_power_measurement_request(&request, &request_size, device.get_control_sequence(),
-            dvm, measurement_type);
+    common_status = CONTROL_PROTOCOL__pack_power_measurement_request(&request, &request_size, dvm, measurement_type);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         goto exit;
@@ -1141,8 +946,7 @@ hailo_status Control::power_measurement(Device &device, CONTROL_PROTOCOL__dvm_op
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         goto exit;
     }
@@ -1177,8 +981,8 @@ hailo_status Control::set_power_measurement(Device &device, hailo_measurement_bu
     CHECK(CONTROL_PROTOCOL__MAX_NUMBER_OF_POWER_MEASUREMETS > buffer_index,
         HAILO_INVALID_ARGUMENT, "Invalid power measurement index {}", static_cast<int>(buffer_index));
 
-    common_status = CONTROL_PROTOCOL__pack_set_power_measurement_request(&request, &request_size, device.get_control_sequence(),
-            buffer_index, dvm, measurement_type);
+    common_status = CONTROL_PROTOCOL__pack_set_power_measurement_request(&request, &request_size, buffer_index, dvm,
+        measurement_type);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         goto exit;
@@ -1190,8 +994,7 @@ hailo_status Control::set_power_measurement(Device &device, hailo_measurement_bu
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         goto exit;
     }
@@ -1225,8 +1028,8 @@ hailo_status Control::get_power_measurement(Device &device, hailo_measurement_bu
     CHECK(CONTROL_PROTOCOL__MAX_NUMBER_OF_POWER_MEASUREMETS > buffer_index,
         HAILO_INVALID_ARGUMENT, "Invalid power measurement index {}", static_cast<int>(buffer_index));
     CHECK_ARG_NOT_NULL(measurement_data);
-    common_status = CONTROL_PROTOCOL__pack_get_power_measurement_request(&request, &request_size, device.get_control_sequence(),
-            buffer_index, should_clear);
+    common_status = CONTROL_PROTOCOL__pack_get_power_measurement_request(&request, &request_size, buffer_index,
+        should_clear);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         goto exit;
@@ -1236,8 +1039,7 @@ hailo_status Control::get_power_measurement(Device &device, hailo_measurement_bu
         goto exit;
     }
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         goto exit;
     }
@@ -1248,7 +1050,7 @@ hailo_status Control::get_power_measurement(Device &device, hailo_measurement_bu
     measurement_data->average_value = get_power_response->average_value;
     measurement_data->min_value = get_power_response->min_value;
     measurement_data->max_value = get_power_response->max_value;
-    measurement_data->total_number_of_samples = BYTE_ORDER__ntohl(get_power_response->total_number_of_samples);
+    measurement_data->total_number_of_samples = get_power_response->total_number_of_samples;
     LOGGER__DEBUG("avg: {:f}, min: {:f}, max: {:f}",
             measurement_data->average_value,
             measurement_data->min_value,
@@ -1278,7 +1080,7 @@ hailo_status Control::start_power_measurement(Device &device,
         delay_milliseconds = 1;
     }
 
-    common_status = CONTROL_PROTOCOL__pack_start_power_measurement_request(&request, &request_size, device.get_control_sequence(),
+    common_status = CONTROL_PROTOCOL__pack_start_power_measurement_request(&request, &request_size,
             delay_milliseconds, averaging_factor, sampling_period);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
@@ -1291,8 +1093,7 @@ hailo_status Control::start_power_measurement(Device &device,
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         goto exit;
     }
@@ -1313,7 +1114,7 @@ hailo_status Control::stop_power_measurement(Device &device)
     CONTROL_PROTOCOL__response_header_t *header = NULL;
     CONTROL_PROTOCOL__payload_t *payload = NULL;
 
-    common_status = CONTROL_PROTOCOL__pack_stop_power_measurement_request(&request, &request_size, device.get_control_sequence());
+    common_status = CONTROL_PROTOCOL__pack_stop_power_measurement_request(&request, &request_size);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         goto exit;
@@ -1325,8 +1126,7 @@ hailo_status Control::stop_power_measurement(Device &device)
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         goto exit;
     }
@@ -1353,7 +1153,7 @@ hailo_status Control::i2c_write(Device &device, const hailo_i2c_slave_config_t *
     CHECK_ARG_NOT_NULL(data);
 
     /* Pack request */
-    common_status = CONTROL_PROTOCOL__pack_i2c_write_request(&request, &request_size, device.get_control_sequence(),
+    common_status = CONTROL_PROTOCOL__pack_i2c_write_request(&request, &request_size,
             register_address, static_cast<uint8_t>(slave_config->endianness),
             slave_config->slave_address, slave_config->register_address_size, slave_config->bus_index, data, length);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
@@ -1368,8 +1168,7 @@ hailo_status Control::i2c_write(Device &device, const hailo_i2c_slave_config_t *
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         goto exit;
     }
@@ -1398,7 +1197,7 @@ hailo_status Control::i2c_read(Device &device, const hailo_i2c_slave_config_t *s
     CHECK_ARG_NOT_NULL(data);
 
     /* Pack request */
-    common_status = CONTROL_PROTOCOL__pack_i2c_read_request(&request, &request_size, device.get_control_sequence(),
+    common_status = CONTROL_PROTOCOL__pack_i2c_read_request(&request, &request_size,
             register_address, static_cast<uint8_t>(slave_config->endianness),
             slave_config->slave_address, slave_config->register_address_size, slave_config->bus_index, length,
             slave_config->should_hold_bus);
@@ -1414,14 +1213,13 @@ hailo_status Control::i2c_read(Device &device, const hailo_i2c_slave_config_t *s
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         goto exit;
     }
 
     response = (CONTROL_PROTOCOL__i2c_read_response_t *)(payload->parameters);
-    local_data_length = BYTE_ORDER__ntohl(response->data_length);
+    local_data_length = response->data_length;
 
     /* Validate read data is data size */
     if (local_data_length != length) {
@@ -1454,7 +1252,7 @@ hailo_status Control::config_core_top(Device &device, CONTROL_PROTOCOL__config_c
     /* Validate arguments */
     CHECK_ARG_NOT_NULL(params);
 
-    common_status = CONTROL_PROTOCOL__pack_config_core_top_request(&request, &request_size, device.get_control_sequence(), config_type, params);
+    common_status = CONTROL_PROTOCOL__pack_config_core_top_request(&request, &request_size, config_type, params);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         goto exit;
@@ -1466,8 +1264,7 @@ hailo_status Control::config_core_top(Device &device, CONTROL_PROTOCOL__config_c
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         goto exit;
     }
@@ -1488,7 +1285,7 @@ hailo_status Control::phy_operation(Device &device, CONTROL_PROTOCOL__phy_operat
     CONTROL_PROTOCOL__response_header_t *header = NULL;
     CONTROL_PROTOCOL__payload_t *payload = NULL;
 
-    common_status = CONTROL_PROTOCOL__pack_phy_operation_request(&request, &request_size, device.get_control_sequence(), operation_type);
+    common_status = CONTROL_PROTOCOL__pack_phy_operation_request(&request, &request_size, operation_type);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         goto exit;
@@ -1500,8 +1297,7 @@ hailo_status Control::phy_operation(Device &device, CONTROL_PROTOCOL__phy_operat
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         goto exit;
     }
@@ -1533,8 +1329,7 @@ hailo_status Control::read_board_config(Device &device, uint8_t *buffer, uint32_
         BOARD_CONFIG_SIZE);
 
     LOGGER__INFO("Preparing to read board configuration");
-    common_status = CONTROL_PROTOCOL__pack_read_board_config(&request, &request_size, device.get_control_sequence(),
-        read_offset, BOARD_CONFIG_SIZE);
+    common_status = CONTROL_PROTOCOL__pack_read_board_config(&request, &request_size, read_offset, BOARD_CONFIG_SIZE);
 
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     CHECK_SUCCESS(status);
@@ -1544,11 +1339,10 @@ hailo_status Control::read_board_config(Device &device, uint8_t *buffer, uint32_
     CHECK_SUCCESS(status);
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     CHECK_SUCCESS(status);
     response = (CONTROL_PROTOCOL__read_board_config_response_t *)(payload->parameters);
-    actual_read_data_length = BYTE_ORDER__ntohl(response->data_length);
+    actual_read_data_length = response->data_length;
     (void) memcpy(buffer, response->data, actual_read_data_length);
 
     return HAILO_SUCCESS;
@@ -1575,7 +1369,7 @@ hailo_status Control::write_board_config(Device &device, const uint8_t *data, ui
         "Invalid size of board config. data_length={},  max_size={}" , data_length, BOARD_CONFIG_SIZE);
 
     common_status = CONTROL_PROTOCOL__pack_write_board_config_request(&request, &request_size,
-        device.get_control_sequence(), write_offset, data + write_offset, data_length);
+        write_offset, data + write_offset, data_length);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     CHECK_SUCCESS(status);
 
@@ -1584,8 +1378,7 @@ hailo_status Control::write_board_config(Device &device, const uint8_t *data, ui
     CHECK_SUCCESS(status);
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
@@ -1606,7 +1399,7 @@ hailo_status Control::latency_measurement_read(Device &device, uint32_t *inbound
     /* Validate arguments */
     CHECK_ARG_NOT_NULL(inbound_to_outbound_latency_nsec);
 
-    common_status = CONTROL_PROTOCOL__pack_latency_measurement_read_request(&request, &request_size, device.get_control_sequence());
+    common_status = CONTROL_PROTOCOL__pack_latency_measurement_read_request(&request, &request_size);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         goto exit;
@@ -1618,14 +1411,13 @@ hailo_status Control::latency_measurement_read(Device &device, uint32_t *inbound
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         goto exit;
     }
 
     response = (CONTROL_PROTOCOL__latency_read_response_t*)(payload->parameters);
-    *inbound_to_outbound_latency_nsec = BYTE_ORDER__ntohl(response->inbound_to_outbound_latency_nsec);
+    *inbound_to_outbound_latency_nsec = response->inbound_to_outbound_latency_nsec;
 
     status = HAILO_SUCCESS;
 exit:
@@ -1645,7 +1437,7 @@ hailo_status Control::latency_measurement_config(Device &device, uint8_t latency
     CONTROL_PROTOCOL__response_header_t *header = NULL;
     CONTROL_PROTOCOL__payload_t *payload = NULL;
 
-    common_status = CONTROL_PROTOCOL__pack_latency_measurement_config_request(&request, &request_size, device.get_control_sequence(),
+    common_status = CONTROL_PROTOCOL__pack_latency_measurement_config_request(&request, &request_size,
             latency_measurement_en, inbound_start_buffer_number, outbound_stop_buffer_number,
             inbound_stream_index, outbound_stream_index);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
@@ -1659,8 +1451,7 @@ hailo_status Control::latency_measurement_config(Device &device, uint8_t latency
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         goto exit;
     }
@@ -1683,7 +1474,7 @@ hailo_status Control::context_switch_set_network_group_header(Device &device,
     CONTROL_PROTOCOL__payload_t *payload = NULL;
 
     common_status = CONTROL_PROTOCOL__pack_context_switch_set_network_group_header_request(&request, &request_size,
-        device.get_control_sequence(), &network_group_header);
+        &network_group_header);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         goto exit;
@@ -1695,8 +1486,7 @@ hailo_status Control::context_switch_set_network_group_header(Device &device,
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         goto exit;
     }
@@ -1718,7 +1508,7 @@ hailo_status Control::context_switch_set_context_info_chunk(Device &device,
     CONTROL_PROTOCOL__response_header_t *header = NULL;
     CONTROL_PROTOCOL__payload_t *payload = NULL;
 
-    common_status = CONTROL_PROTOCOL__pack_context_switch_set_context_info_request(&request, &request_size, device.get_control_sequence(),
+    common_status = CONTROL_PROTOCOL__pack_context_switch_set_context_info_request(&request, &request_size,
         &context_info);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
@@ -1731,11 +1521,10 @@ hailo_status Control::context_switch_set_context_info_chunk(Device &device,
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         /* In case of max memory error, add LOGGER ERROR, and set indicative error to the user */
-        CHECK(CONTEXT_SWITCH_STATUS_SRAM_MEMORY_FULL != BYTE_ORDER__htonl(header->status.major_status),
+        CHECK(CONTEXT_SWITCH_STATUS_SRAM_MEMORY_FULL != header->status,
             HAILO_OUT_OF_FW_MEMORY, "Configured network groups reached maximum device internal memory (SRAM Full).");
         goto exit;
     }
@@ -1753,8 +1542,7 @@ hailo_status Control::context_switch_signal_cache_updated(Device &device)
     CONTROL_PROTOCOL__response_header_t *header = NULL;
     CONTROL_PROTOCOL__payload_t *payload = NULL;
 
-    const auto common_status = CONTROL_PROTOCOL__pack_context_switch_signal_cache_updated_request(&request, &request_size,
-        device.get_control_sequence());
+    const auto common_status = CONTROL_PROTOCOL__pack_context_switch_signal_cache_updated_request(&request, &request_size);
     auto status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     CHECK_SUCCESS(status);
 
@@ -1762,8 +1550,7 @@ hailo_status Control::context_switch_signal_cache_updated(Device &device)
     CHECK_SUCCESS(status);
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
@@ -1794,7 +1581,7 @@ hailo_status Control::idle_time_get_measurement(Device &device, uint64_t *measur
     /* Validate arguments */
     CHECK_ARG_NOT_NULL(measurement);
 
-    common_status = CONTROL_PROTOCOL__pack_idle_time_get_measuremment_request(&request, &request_size, device.get_control_sequence());
+    common_status = CONTROL_PROTOCOL__pack_idle_time_get_measuremment_request(&request, &request_size);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         LOGGER__ERROR("failed CONTROL_PROTOCOL__pack_idle_time_get_measuremment_request with status {:#X}", static_cast<int>(common_status));
@@ -1808,8 +1595,7 @@ hailo_status Control::idle_time_get_measurement(Device &device, uint64_t *measur
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         LOGGER__ERROR("failed validating idle_time_get_measurement control response with status {}", status);
         goto exit;
@@ -1818,7 +1604,7 @@ hailo_status Control::idle_time_get_measurement(Device &device, uint64_t *measur
     idle_time_get_measurement_response = (CONTROL_PROTOCOL__idle_time_get_measurement_response_t *)(payload->parameters);
 
     /*copy the measurement*/
-    *measurement = BYTE_ORDER__ntohll(idle_time_get_measurement_response->idle_time_ns);
+    *measurement = idle_time_get_measurement_response->idle_time_ns;
 
     LOGGER__DEBUG("Received idle measurement low: {:#X} ns",
         *((uint32_t *) measurement));
@@ -1841,7 +1627,7 @@ hailo_status Control::idle_time_set_measurement(Device &device, uint8_t measurem
     CONTROL_PROTOCOL__response_header_t *header = NULL;
     CONTROL_PROTOCOL__payload_t *payload = NULL;
 
-    common_status = CONTROL_PROTOCOL__pack_idle_time_set_measuremment_request(&request, &request_size, device.get_control_sequence(), measurement_enable);
+    common_status = CONTROL_PROTOCOL__pack_idle_time_set_measuremment_request(&request, &request_size, measurement_enable);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         LOGGER__ERROR("failed CONTROL_PROTOCOL__pack_idle_time_set_measuremment_request with status {:#X}", static_cast<int>(common_status));
@@ -1854,8 +1640,7 @@ hailo_status Control::idle_time_set_measurement(Device &device, uint8_t measurem
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         LOGGER__ERROR("failed idle_time_set_measurement control with status {}", status);
         goto exit;
@@ -1871,7 +1656,7 @@ hailo_status Control::set_pause_frames(Device &device, uint8_t rx_pause_frames_e
     size_t request_size = 0;
 
     HAILO_COMMON_STATUS_t common_status = CONTROL_PROTOCOL__pack_set_pause_frames_request(&request, &request_size,
-                                             device.get_control_sequence(), rx_pause_frames_enable);
+                                             rx_pause_frames_enable);
     auto status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     CHECK_SUCCESS(status);
 
@@ -1883,8 +1668,7 @@ hailo_status Control::set_pause_frames(Device &device, uint8_t rx_pause_frames_e
     /* Parse response */
     CONTROL_PROTOCOL__response_header_t *header = NULL;
     CONTROL_PROTOCOL__payload_t *payload = NULL;
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
@@ -1910,7 +1694,7 @@ hailo_status Control::download_context_action_list_chunk(Device &device, uint32_
     CHECK_ARG_NOT_NULL(action_list);
     CHECK_ARG_NOT_NULL(action_list_length);
 
-    common_status = CONTROL_PROTOCOL__pack_download_context_action_list_request(&request, &request_size, device.get_control_sequence(),
+    common_status = CONTROL_PROTOCOL__pack_download_context_action_list_request(&request, &request_size,
         network_group_id, context_type, context_index, action_list_offset);
 
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
@@ -1924,38 +1708,37 @@ hailo_status Control::download_context_action_list_chunk(Device &device, uint32_
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         goto exit;
     }
 
     context_action_list_response = (CONTROL_PROTOCOL__download_context_action_list_response_t *)(payload->parameters);
 
-    if (0 == BYTE_ORDER__ntohl(context_action_list_response->action_list_length)) {
+    if (0 == context_action_list_response->action_list_length) {
         status = HAILO_INVALID_CONTROL_RESPONSE;
         LOGGER__ERROR("Received empty action list");
         goto exit;
     }
-    if (0 == BYTE_ORDER__ntohl(context_action_list_response->base_address)) {
+    if (0 == context_action_list_response->base_address) {
         status = HAILO_INVALID_CONTROL_RESPONSE;
         LOGGER__ERROR("Received NULL pointer to base address");
         goto exit;
     }
 
-    if (action_list_max_size < BYTE_ORDER__ntohl(context_action_list_response->action_list_length)) {
+    if (action_list_max_size < context_action_list_response->action_list_length) {
         status = HAILO_INVALID_CONTROL_RESPONSE;
         LOGGER__ERROR("Received action list bigger than allocated user buffer");
     }
 
     (void)memcpy(action_list, context_action_list_response->action_list
-            ,BYTE_ORDER__ntohl(context_action_list_response->action_list_length));
+            ,context_action_list_response->action_list_length);
 
-    *action_list_length = (uint16_t)(BYTE_ORDER__ntohl(context_action_list_response->action_list_length));
-    *base_address = BYTE_ORDER__ntohl(context_action_list_response->base_address);
+    *action_list_length = (uint16_t)(context_action_list_response->action_list_length);
+    *base_address = context_action_list_response->base_address;
     *is_action_list_end = context_action_list_response->is_action_list_end;
-    *batch_counter = BYTE_ORDER__ntohl(context_action_list_response->batch_counter);
-    *idle_time = BYTE_ORDER__ntohl(context_action_list_response->idle_time);
+    *batch_counter = context_action_list_response->batch_counter;
+    *idle_time = context_action_list_response->idle_time;
 
     status = HAILO_SUCCESS;
 exit:
@@ -2019,7 +1802,7 @@ hailo_status Control::change_context_switch_status(Device &device,
     CONTROL_PROTOCOL__payload_t *payload = NULL;
 
     common_status = CONTROL_PROTOCOL__pack_change_context_switch_status_request(&request, &request_size,
-            device.get_control_sequence(), state_machine_status, network_group_index, dynamic_batch_size, batch_count);
+            state_machine_status, network_group_index, dynamic_batch_size, batch_count);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         goto exit;
@@ -2031,8 +1814,7 @@ hailo_status Control::change_context_switch_status(Device &device,
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         goto exit;
     }
@@ -2069,7 +1851,7 @@ hailo_status Control::wd_enable(Device &device, uint8_t cpu_id, bool should_enab
     CONTROL_PROTOCOL__response_header_t *header = NULL;
     CONTROL_PROTOCOL__payload_t *payload = NULL;
 
-    common_status = CONTROL_PROTOCOL__pack_wd_enable(&request, &request_size, device.get_control_sequence(), cpu_id, should_enable);
+    common_status = CONTROL_PROTOCOL__pack_wd_enable(&request, &request_size, cpu_id, should_enable);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         LOGGER__ERROR("failed CONTROL_PROTOCOL__pack_wd_enable with status {:#X}", static_cast<int>(common_status));
@@ -2082,8 +1864,7 @@ hailo_status Control::wd_enable(Device &device, uint8_t cpu_id, bool should_enab
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         LOGGER__ERROR("failed wd_enable control with status {}", status);
         goto exit;
@@ -2104,7 +1885,7 @@ hailo_status Control::wd_config(Device &device, uint8_t cpu_id, uint32_t wd_cycl
     CONTROL_PROTOCOL__response_header_t *header = NULL;
     CONTROL_PROTOCOL__payload_t *payload = NULL;
 
-    common_status = CONTROL_PROTOCOL__pack_wd_config(&request, &request_size, device.get_control_sequence(), cpu_id, wd_cycles, wd_mode);
+    common_status = CONTROL_PROTOCOL__pack_wd_config(&request, &request_size, cpu_id, wd_cycles, wd_mode);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         LOGGER__ERROR("failed CONTROL_PROTOCOL__pack_wd_config with status {:#X}", static_cast<int>(common_status));
@@ -2117,8 +1898,7 @@ hailo_status Control::wd_config(Device &device, uint8_t cpu_id, uint32_t wd_cycl
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         LOGGER__ERROR("failed wd_config control with status {}", status);
         goto exit;
@@ -2143,7 +1923,7 @@ hailo_status Control::previous_system_state(Device &device, uint8_t cpu_id, CONT
 
     CHECK_ARG_NOT_NULL(system);
 
-    common_status = CONTROL_PROTOCOL__pack_previous_system_state(&request, &request_size, device.get_control_sequence(), cpu_id);
+    common_status = CONTROL_PROTOCOL__pack_previous_system_state(&request, &request_size, cpu_id);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         LOGGER__ERROR("failed CONTROL_PROTOCOL__pack_previous_system_state with status {:#X}", static_cast<int>(common_status));
@@ -2156,8 +1936,7 @@ hailo_status Control::previous_system_state(Device &device, uint8_t cpu_id, CONT
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         LOGGER__ERROR("failed previous_system_state control with status {}", status);
         goto exit;
@@ -2166,7 +1945,7 @@ hailo_status Control::previous_system_state(Device &device, uint8_t cpu_id, CONT
     previous_system_state_response = (CONTROL_PROTOCOL__previous_system_state_response_t *)(payload->parameters);
 
     /*copy the measurement*/
-    *system = BYTE_ORDER__ntohl(previous_system_state_response->system_state);
+    *system = previous_system_state_response->system_state;
 
     status = HAILO_SUCCESS;
 exit:
@@ -2185,7 +1964,7 @@ hailo_status Control::set_dataflow_interrupt(Device &device, uint8_t interrupt_t
     CONTROL_PROTOCOL__response_header_t *header = NULL;
     CONTROL_PROTOCOL__payload_t *payload = NULL;
 
-    common_status = CONTROL_PROTOCOL__pack_set_dataflow_interrupt_request(&request, &request_size, device.get_control_sequence(),
+    common_status = CONTROL_PROTOCOL__pack_set_dataflow_interrupt_request(&request, &request_size,
             interrupt_type, interrupt_index, interrupt_sub_index);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
@@ -2198,8 +1977,7 @@ hailo_status Control::set_dataflow_interrupt(Device &device, uint8_t interrupt_t
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         goto exit;
     }
@@ -2222,7 +2000,7 @@ hailo_status Control::d2h_notification_manager_set_host_info(Device &device, uin
     auto connection_type = ((Device::Type::PCIE == device.get_type() || Device::Type::INTEGRATED == device.get_type()) ?
         D2H_EVENT_COMMUNICATION_TYPE_VDMA : D2H_EVENT_COMMUNICATION_TYPE_UDP);
 
-    common_status = CONTROL_PROTOCOL__pack_d2h_event_manager_set_host_info_request(&request, &request_size, device.get_control_sequence(),
+    common_status = CONTROL_PROTOCOL__pack_d2h_event_manager_set_host_info_request(&request, &request_size,
             static_cast<uint8_t>(connection_type), host_port, host_ip_address);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
@@ -2235,8 +2013,7 @@ hailo_status Control::d2h_notification_manager_set_host_info(Device &device, uin
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         goto exit;
     }
@@ -2257,7 +2034,7 @@ hailo_status Control::d2h_notification_manager_send_host_info_notification(Devic
     CONTROL_PROTOCOL__response_header_t *header = NULL;
     CONTROL_PROTOCOL__payload_t *payload = NULL;
 
-    common_status = CONTROL_PROTOCOL__pack_d2h_event_manager_send_host_info_event_request(&request, &request_size, device.get_control_sequence(), notification_priority);
+    common_status = CONTROL_PROTOCOL__pack_d2h_event_manager_send_host_info_event_request(&request, &request_size, notification_priority);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         goto exit;
@@ -2269,8 +2046,7 @@ hailo_status Control::d2h_notification_manager_send_host_info_notification(Devic
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         goto exit;
     }
@@ -2292,8 +2068,7 @@ hailo_status Control::clear_configured_apps(Device &device)
     CONTROL_PROTOCOL__response_header_t *header = NULL;
     CONTROL_PROTOCOL__payload_t *payload = NULL;
 
-    common_status = CONTROL_PROTOCOL__pack_context_switch_clear_configured_apps_request(&request, &request_size,
-        device.get_control_sequence());
+    common_status = CONTROL_PROTOCOL__pack_context_switch_clear_configured_apps_request(&request, &request_size);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         LOGGER__ERROR("failed CONTROL_PROTOCOL__pack_context_switch_clear_configured_apps_request with status {:#X}",
@@ -2307,7 +2082,7 @@ hailo_status Control::clear_configured_apps(Device &device)
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         LOGGER__ERROR("failed clear_configured_apps control with status {}", status);
         goto exit;
@@ -2330,7 +2105,7 @@ hailo_status Control::get_chip_temperature(Device &device, hailo_chip_temperatur
     CONTROL_PROTOCOL__payload_t *payload = NULL;
     CONTROL_PROTOCOL__get_chip_temperature_response_t* temps = NULL;
 
-    common_status = CONTROL_PROTOCOL__pack_get_chip_temperature_request(&request, &request_size, device.get_control_sequence());
+    common_status = CONTROL_PROTOCOL__pack_get_chip_temperature_request(&request, &request_size);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         goto exit;
@@ -2342,14 +2117,13 @@ hailo_status Control::get_chip_temperature(Device &device, hailo_chip_temperatur
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         goto exit;
     }
 
     temps = (CONTROL_PROTOCOL__get_chip_temperature_response_t *)(payload->parameters);
-    temp_info->sample_count = BYTE_ORDER__ntohs(temps->info.sample_count);
+    temp_info->sample_count = temps->info.sample_count;
     temp_info->ts0_temperature = temps->info.ts0_temperature;
     temp_info->ts1_temperature = temps->info.ts1_temperature;
 
@@ -2369,7 +2143,7 @@ hailo_status Control::enable_debugging(Device &device, bool is_rma)
     CONTROL_PROTOCOL__response_header_t *header = NULL;
     CONTROL_PROTOCOL__payload_t *payload = NULL;
 
-    common_status = CONTROL_PROTOCOL__pack_enable_debugging_request(&request, &request_size, device.get_control_sequence(), is_rma);
+    common_status = CONTROL_PROTOCOL__pack_enable_debugging_request(&request, &request_size, is_rma);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     if (HAILO_SUCCESS != status) {
         goto exit;
@@ -2381,8 +2155,7 @@ hailo_status Control::enable_debugging(Device &device, bool is_rma)
     }
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         goto exit;
     }
@@ -2403,7 +2176,7 @@ Expected<CONTROL_PROTOCOL__get_extended_device_information_response_t> Control::
     CONTROL_PROTOCOL__response_header_t *header = NULL;
     CONTROL_PROTOCOL__payload_t *payload = NULL;
 
-    common_status = CONTROL_PROTOCOL__pack_get_extended_device_information_request(&request, &request_size, device.get_control_sequence());
+    common_status = CONTROL_PROTOCOL__pack_get_extended_device_information_request(&request, &request_size);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     CHECK_SUCCESS_AS_EXPECTED(status);
 
@@ -2411,7 +2184,7 @@ Expected<CONTROL_PROTOCOL__get_extended_device_information_response_t> Control::
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     return std::move(*(CONTROL_PROTOCOL__get_extended_device_information_response_t *)(payload->parameters));
@@ -2438,7 +2211,7 @@ Expected<uint32_t> Control::get_partial_clusters_layout_bitmap(Device &device)
         return Expected<uint32_t>(PARTIAL_CLUSTERS_LAYOUT_IGNORE);
     } else {
         TRY(const auto extended_device_info_response, get_extended_device_info_response(device));
-        return BYTE_ORDER__ntohl(extended_device_info_response.partial_clusters_layout_bitmap);
+        return Expected<uint32_t>(extended_device_info_response.partial_clusters_layout_bitmap);
     }
 }
 
@@ -2460,7 +2233,7 @@ Expected<hailo_health_info_t> Control::get_health_information(Device &device)
     CONTROL_PROTOCOL__payload_t *payload = NULL;
     CONTROL_PROTOCOL__get_health_information_response_t *get_health_information_response = NULL;
 
-    common_status = CONTROL_PROTOCOL__pack_get_health_information_request(&request, &request_size, device.get_control_sequence());
+    common_status = CONTROL_PROTOCOL__pack_get_health_information_request(&request, &request_size);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     CHECK_SUCCESS_AS_EXPECTED(status);
 
@@ -2468,8 +2241,7 @@ Expected<hailo_health_info_t> Control::get_health_information(Device &device)
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request,
-        device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     CHECK_SUCCESS_AS_EXPECTED(status);
 
     get_health_information_response = (CONTROL_PROTOCOL__get_health_information_response_t *)(payload->parameters);
@@ -2491,7 +2263,7 @@ hailo_status Control::config_context_switch_breakpoint(Device &device, uint8_t b
     CONTROL_PROTOCOL__payload_t *payload = NULL;
 
     common_status = CONTROL_PROTOCOL__pack_config_context_switch_breakpoint_request(
-            &request, &request_size, device.get_control_sequence(), breakpoint_id, breakpoint_control, breakpoint_data);
+            &request, &request_size, breakpoint_id, breakpoint_control, breakpoint_data);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     CHECK_SUCCESS(status);
 
@@ -2499,8 +2271,7 @@ hailo_status Control::config_context_switch_breakpoint(Device &device, uint8_t b
     CHECK_SUCCESS(status);
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         goto exit;
     }
@@ -2526,7 +2297,7 @@ hailo_status Control::get_context_switch_breakpoint_status(Device &device, uint8
     RETURN_IF_ARG_NULL(breakpoint_status);
 
     common_status = CONTROL_PROTOCOL__pack_get_context_switch_breakpoint_status_request(
-            &request, &request_size, device.get_control_sequence(), breakpoint_id);
+            &request, &request_size, breakpoint_id);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     CHECK_SUCCESS(status);
 
@@ -2534,8 +2305,7 @@ hailo_status Control::get_context_switch_breakpoint_status(Device &device, uint8
     CHECK_SUCCESS(status);
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         goto exit;
     }
@@ -2565,8 +2335,7 @@ hailo_status Control::get_context_switch_main_header(Device &device, CONTROL_PRO
 
     RETURN_IF_ARG_NULL(main_header);
 
-    common_status = CONTROL_PROTOCOL__pack_get_context_switch_main_header_request(
-            &request, &request_size, device.get_control_sequence());
+    common_status = CONTROL_PROTOCOL__pack_get_context_switch_main_header_request(&request, &request_size);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     CHECK_SUCCESS(status);
 
@@ -2574,8 +2343,7 @@ hailo_status Control::get_context_switch_main_header(Device &device, CONTROL_PRO
     CHECK_SUCCESS(status);
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-            &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     if (HAILO_SUCCESS != status) {
         goto exit;
     }
@@ -2602,7 +2370,7 @@ hailo_status Control::config_context_switch_timestamp(Device &device, uint32_t b
     CONTROL_PROTOCOL__payload_t *payload = NULL;
 
     auto common_status = CONTROL_PROTOCOL__pack_config_context_switch_timestamp_request(
-        &request, &request_size, device.get_control_sequence(), batch_index, enable_user_configuration);
+        &request, &request_size, batch_index, enable_user_configuration);
     auto status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     CHECK_SUCCESS(status);
 
@@ -2610,8 +2378,7 @@ hailo_status Control::config_context_switch_timestamp(Device &device, uint32_t b
     CHECK_SUCCESS(status);
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-        &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
@@ -2671,7 +2438,7 @@ hailo_status Control::run_bist_test(Device &device, bool is_top_test, uint32_t t
     CONTROL_PROTOCOL__payload_t *payload = NULL;
 
     auto common_status = CONTROL_PROTOCOL__pack_run_bist_test_request(
-        &request, &request_size, device.get_control_sequence(),
+        &request, &request_size,
         is_top_test, top_bypass_bitmap, cluster_index, cluster_bypass_bitmap_0, cluster_bypass_bitmap_1);
     auto status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     CHECK_SUCCESS(status);
@@ -2680,8 +2447,7 @@ hailo_status Control::run_bist_test(Device &device, bool is_top_test, uint32_t t
     CHECK_SUCCESS(status);
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-        &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
@@ -2697,7 +2463,7 @@ hailo_status Control::set_sleep_state(Device &device, hailo_sleep_state_t sleep_
     CONTROL_PROTOCOL__payload_t *payload = NULL;
 
     auto common_status = CONTROL_PROTOCOL__pack_set_sleep_state_request(
-        &request, &request_size, device.get_control_sequence(), static_cast<uint8_t>(sleep_state));
+        &request, &request_size, static_cast<uint8_t>(sleep_state));
     auto status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     CHECK_SUCCESS(status);
 
@@ -2705,8 +2471,7 @@ hailo_status Control::set_sleep_state(Device &device, hailo_sleep_state_t sleep_
     CHECK_SUCCESS(status);
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-        &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
@@ -2728,7 +2493,7 @@ hailo_status Control::change_hw_infer_status(Device &device, CONTROL_PROTOCOL__h
     RETURN_IF_ARG_NULL(results);
 
     auto common_status = CONTROL_PROTOCOL__pack_change_hw_infer_status_request(
-        &request, &request_size, device.get_control_sequence(), static_cast<uint8_t>(state),
+        &request, &request_size, static_cast<uint8_t>(state),
         network_group_index, dynamic_batch_size, batch_count, channels_info, boundary_channel_mode);
     auto status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     CHECK_SUCCESS(status);
@@ -2737,8 +2502,7 @@ hailo_status Control::change_hw_infer_status(Device &device, CONTROL_PROTOCOL__h
     CHECK_SUCCESS(status);
 
     /* Parse response */
-    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload,
-        &request, device);
+    status = parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header, &payload, &request);
     CHECK_SUCCESS(status);
 
     change_hw_infer_status_response = (CONTROL_PROTOCOL__change_hw_infer_status_response_t *)(payload->parameters);

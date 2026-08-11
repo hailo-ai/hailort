@@ -177,25 +177,29 @@ public:
         const NetworkGroupsParamsMap &configure_params={}) = 0;
 
     /**
-     * Read data from the debug log buffer.
+     * Read hailo logs from the Hailo device into a user buffer.
      *
      * @param[in] buffer            A buffer that would receive the debug log data.
      * @param[in] cpu_id            The cpu source of the debug log.
+     * @param[in] should_clear      If true, the log data is consumed and subsequent reads
+     *                              return only new data. Defaults to false (logs are preserved).
      * @return Upon success, returns Expected of the number of bytes that were read.
      *         Otherwise, returns Unexpected of ::hailo_status error.
      */
-    virtual Expected<size_t> read_log(MemoryView &buffer, hailo_cpu_id_t cpu_id) = 0;
+    virtual Expected<size_t> read_log(MemoryView &buffer, hailo_cpu_id_t cpu_id, bool should_clear = false) = 0;
 
     /**
      * Fetch hailo logs from the Hailo device and returns them as buffer.
      *
      * @param[in] buffer            A buffer that would receive the log data.
      * @param[in] log_type          The log type to fetch.
+     * @param[in] should_clear      If true, clears the logs after reading. Default is false
+     *                              (non-destructive read).
      * @return Upon success, returns Expected of the size in bytes of the log data.
      *         Otherwise, returns Unexpected of ::hailo_status error.
      * @note Buffer size should be the maximum log size of the device. Use 'Device::get_max_logs_size' to get it.
      */
-    virtual Expected<size_t> fetch_logs(MemoryView buffer, hailo_log_type_t log_type) = 0;
+    virtual Expected<size_t> fetch_logs(MemoryView buffer, hailo_log_type_t log_type, bool should_clear = false) = 0;
 
     /**
      * Gets the max logs size for the Hailo device (used for 'Device::fetch_logs').
@@ -667,9 +671,8 @@ protected:
     static Expected<std::unique_ptr<Device>> create_core();
 
     virtual hailo_status wait_for_wakeup() = 0;
-    virtual void increment_control_sequence() = 0;
     hailo_status fw_interact(uint8_t *request_buffer, size_t request_size, uint8_t *response_buffer, size_t *response_size);
-    virtual hailo_status fw_interact_impl(uint8_t *request_buffer, size_t request_size, uint8_t *response_buffer, 
+    virtual hailo_status fw_interact_impl(uint8_t *request_buffer, size_t request_size, uint8_t *response_buffer,
                                           size_t *response_size, hailo_cpu_id_t cpu_id) = 0;
     // Update the state of the fw, as seen by this device
     hailo_status update_fw_state();
@@ -677,7 +680,6 @@ protected:
     virtual hailo_status set_default_notification_callbacks();
 
     Type m_type;
-    uint32_t m_control_sequence;
     bool m_is_control_version_supported;
     hailo_device_architecture_t m_device_architecture;
     bool m_is_extended_fw_checks = false;
@@ -685,7 +687,6 @@ protected:
 private:
     virtual Expected<bool> has_power_sensor();
     bool is_control_version_supported();
-    uint32_t get_control_sequence();
 
     friend class Control;
 };

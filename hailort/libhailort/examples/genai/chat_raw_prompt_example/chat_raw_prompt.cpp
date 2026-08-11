@@ -16,12 +16,13 @@ static const std::string MODEL_FIRST_PROMPT_PREFIX = "<|im_start|>system\nYou ar
 static const std::string MODEL_GENERAL_PROMPT_PREFIX = "<|im_start|>user\n";
 static const std::string MODEL_PROMPT_SUFFIX = "<|im_end|>\n<|im_start|>assistant\n";
 
-std::string get_user_prompt()
+bool get_user_prompt(std::string &prompt)
 {
     std::cout << ">>> ";
-    std::string prompt;
-    getline(std::cin, prompt);
-    return prompt;
+    if (!getline(std::cin, prompt) || ("exit" == prompt) || ("quit" == prompt)) {
+        return false;
+    }
+    return true;
 }
 
 int main()
@@ -34,11 +35,16 @@ int main()
         auto llm = hailort::genai::LLM::create(vdevice, llm_params).expect("Failed to create LLM");
         auto generator = llm.create_generator().expect("Failed to create generator");
 
-        std::cout << "Enter prompt: (use Ctrl+C to exit)\n";
+        std::cout << "Enter prompt (type 'exit', 'quit' or Ctrl+D to exit):\n";
 
         std::string prompt_prefix = MODEL_FIRST_PROMPT_PREFIX;
         while (true) {
-            auto input_prompt = prompt_prefix + get_user_prompt() + MODEL_PROMPT_SUFFIX;
+            std::string user_input;
+            if (!get_user_prompt(user_input)) {
+                std::cout << "Exiting...\n";
+                break;
+            }
+            auto input_prompt = prompt_prefix + user_input + MODEL_PROMPT_SUFFIX;
             auto status = generator.write(input_prompt);
             if (HAILO_SUCCESS != status) {
                 throw hailort::hailort_error(status, "Failed to write prompt");

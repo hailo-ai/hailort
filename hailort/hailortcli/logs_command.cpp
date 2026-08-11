@@ -11,7 +11,8 @@
 
 LogsCommand::LogsCommand(CLI::App &parent_app) :
     Command(parent_app.add_subcommand("logs", "Prints the device logs")),
-    m_should_follow(false)
+    m_should_follow(false),
+    m_should_clear(false)
 {
     add_device_options(m_app, m_device_params);
     m_app->add_option("log_type", m_log_type, "Logs type")
@@ -23,8 +24,11 @@ LogsCommand::LogsCommand(CLI::App &parent_app) :
         ->required()
         ->default_val("runtime");
 
-    m_app->add_flag("-f,--follow", m_should_follow, "Follow log output (like tail -f).")
+    auto clear_flag = m_app->add_flag("-c,--clear", m_should_clear, "Clear logs after reading.")
             ->default_val(false);
+    m_app->add_flag("-f,--follow", m_should_follow, "Follow log output (like tail -f). Requires --clear.")
+            ->default_val(false)
+            ->needs(clear_flag);
 }
 
 hailo_status LogsCommand::read_log(Device &device)
@@ -34,10 +38,15 @@ hailo_status LogsCommand::read_log(Device &device)
     TRY(auto log_buffer, Buffer::create(max_log_size));
     auto log_mem_view = MemoryView(log_buffer);
 
-    TRY(auto log_size, device.fetch_logs(log_mem_view, m_log_type));
+    TRY(auto log_size, device.fetch_logs(log_mem_view, m_log_type, m_should_clear));
+
+    if (log_size == 0) {
+        return HAILO_SUCCESS;
+    }
 
     std::cout.write(reinterpret_cast<const char*>(log_buffer.data()), log_size);
     CHECK(!std::cout.fail(), HAILO_INTERNAL_FAILURE, "Failed to write logs to stdout.");
+    std::cout.flush();
 
     return HAILO_SUCCESS;
 }

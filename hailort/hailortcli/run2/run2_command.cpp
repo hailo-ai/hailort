@@ -371,6 +371,8 @@ private:
 
     bool m_measure_fw_actions{false};
     std::string m_measure_fw_actions_output_path;
+    // Keeping old subcommand alive, because we use weak_ptr for the current one to prevent leaks in lambda
+    std::shared_ptr<CLI::App> m_prev_net_app;
 };
 
 Run2::Run2() : CLI::App("Run networks", "run2")
@@ -471,8 +473,14 @@ void Run2::add_net_app_subcom()
 {
     auto net_app = std::make_shared<NetworkApp>("Set network", "set-net");
     net_app->immediate_callback();
-    net_app->callback([this, net_app]() {
-        m_network_params.push_back(net_app->get_params());
+    std::weak_ptr<NetworkApp> weak_net_app = net_app;
+    net_app->callback([this, weak_net_app]() {
+        auto locked_net_app = weak_net_app.lock();
+        if (!locked_net_app) {
+            LOGGER__ERROR("Failed to lock net_app weak_ptr in callback");
+            return;
+        }
+        m_network_params.push_back(locked_net_app->get_params());
 
         // Throw an error if anything is left over and should not be.
         _process_extras();
@@ -480,11 +488,13 @@ void Run2::add_net_app_subcom()
         // NOTE: calling "net_app->clear(); m_params = NetworkParams();" is not sufficient because default values
         //         need to be re-set. we can override clear and reset them but there might be other issues as well
         //         and this one feels less hacky ATM
-        remove_subcommand(net_app.get());
+
+        m_prev_net_app = locked_net_app;
+        remove_subcommand(locked_net_app.get());
         // Remove from parsed_subcommands_ as well (probably a bug in CLI11)
         parsed_subcommands_.erase(std::remove_if(
             parsed_subcommands_.begin(), parsed_subcommands_.end(),
-            [net_app](auto x){return x == net_app.get();}),
+            [&locked_net_app](auto x){return x == locked_net_app.get();}),
             parsed_subcommands_.end());
         add_net_app_subcom();
     });

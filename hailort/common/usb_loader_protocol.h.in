@@ -1,0 +1,24 @@
+/**
+ * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
+ * Distributed under the MIT license (https://opensource.org/licenses/MIT)
+ **/
+/**
+ * @file usb_loader_protocol.h
+ * @brief Shared loader/GUI protocol: expected fw version, loader output strings consumed by both sides.
+ **/
+
+#ifndef _HAILO_USB_LOADER_PROTOCOL_H_
+#define _HAILO_USB_LOADER_PROTOCOL_H_
+
+#define HAILO_USB_TARGET_FW_VERSION "@HAILO_USB_TARGET_FW_VERSION@"
+
+#define HAILO_USB_FUNCTIONAL_PRODUCT_NAME "UGen300 USB AI Accelerator (Hailo-10H)"
+
+#define LOADER_OUTPUT_STARTING            "Starting FW Update process."
+#define LOADER_OUTPUT_COMPLETED           "Update has completed successfully"
+#define LOADER_OUTPUT_UNPLUG_INSTRUCTION  "To finish the update, please unplug and re-insert the Hailo USB device"
+#define LOADER_OUTPUT_RECONNECT_FAILED    "Failed to reconnect after changing into update mode"
+#define LOADER_OUTPUT_DONT_POWER_OFF      "Don't power off the device until the process is complete"
+#define LOADER_OUTPUT_PLEASE_WAIT         "Please wait"
+
+#endif /* _HAILO_USB_LOADER_PROTOCOL_H_ */

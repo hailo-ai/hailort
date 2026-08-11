@@ -84,7 +84,7 @@ public:
     virtual hailo_status write_board_config(const MemoryView &buffer) override;
     static std::vector<hailo_device_architecture_t> hef_arch_to_device_compatible_archs(HEFHwArch hef_arch);
 
-    virtual Expected<size_t> fetch_logs(MemoryView buffer, hailo_log_type_t log_type) override;
+    virtual Expected<size_t> fetch_logs(MemoryView buffer, hailo_log_type_t log_type, bool should_clear = false) override;
 
     virtual Expected<hailo_device_architecture_t> get_architecture() const override
     {

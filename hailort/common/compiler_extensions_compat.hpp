@@ -37,7 +37,7 @@
         static void f(void)
 #endif
 
-#if !defined(UNREFERENCED_PARAMETER) && !defined(_MSC_VER)
+#if !defined(UNREFERENCED_PARAMETER) && !defined(_WIN32)
     #define UNREFERENCED_PARAMETER(param)   \
         do {                                \
             (void)(param);                  \
@@ -46,7 +46,7 @@
 
 // Used to capture consts in lambda expressions. On mscv constants must be captures, while in clang it
 // causes a warning
-#if _MSC_VER
+#if defined(_MSC_VER)
 #define LAMBDA_CONSTANT(constant_name) constant_name
 #else
 #define LAMBDA_CONSTANT(constant_name) constant_name=constant_name

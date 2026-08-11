@@ -17,7 +17,6 @@ set_property(TARGET ${EXAMPLE_NAME} PROPERTY CXX_STANDARD 17)
 
 if(WIN32)
     target_compile_options(${EXAMPLE_NAME} PRIVATE
-        /DNOMINMAX
         /wd4251
     )
 endif()

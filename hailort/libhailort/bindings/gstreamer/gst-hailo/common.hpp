@@ -1,6 +1,6 @@
 /**
  * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
- * Distributed under the LGPL 2.1 license (https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt)
+ * Distributed under the LGPL-2.1-or-later license (https://spdx.org/licenses/LGPL-2.1-or-later.html)
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -25,6 +25,7 @@
 #include "hailo/vstream.hpp"
 #include "hailo/hailo_gst_tensor_metadata.hpp"
 #include "include/hailo_gst.h"
+#include "timeouts.hpp"
 
 #include <vector>
 
@@ -35,7 +36,7 @@ using namespace hailort;
 #define HAILONET_ERROR(msg, ...) g_print("HailoNet Error: " msg, ##__VA_ARGS__)
 #define PLUGIN_AUTHOR "Hailo Technologies Ltd. (\"Hailo\")"
 
-#ifdef _MSC_VER
+#ifdef _WIN32
     #define MAX_STRING_SIZE (MAX_PATH)
 #else
     #define MAX_STRING_SIZE (PATH_MAX)
@@ -57,7 +58,6 @@ using namespace hailort;
 #define HAILO_SUPPORTED_FORMATS "{ RGB, RGBA, YUY2, NV12, NV21, I420, GRAY8 }"
 #define HAILO_VIDEO_CAPS GST_VIDEO_CAPS_MAKE(HAILO_SUPPORTED_FORMATS)
 
-#define HAILO_DEFAULT_SCHEDULER_TIMEOUT_MS (0)
 #define HAILO_DEFAULT_SCHEDULER_THRESHOLD (0)
 
 #define HAILO_DEFAULT_MULTI_PROCESS_SERVICE (false)

@@ -16,7 +16,7 @@
 #include "hailo/expected.hpp"
 
 /** Socket-related includes */
-#if defined(_MSC_VER)
+#if defined(_WIN32)
 // Windows socket headers
 #include <winsock2.h>  // SOCKET, closesocket, send, recv
 #include <Ws2tcpip.h>  // socklen_t, inet_pton, inet_ntop
@@ -34,7 +34,7 @@
 
 // socket_t
 #ifndef socket_t
-#if defined(_MSC_VER)
+#if defined(_WIN32)
 typedef SOCKET socket_t;
 #else
 typedef int socket_t;
@@ -53,12 +53,12 @@ typedef struct timeval timeval_t;
 #define MSG_NOSIGNAL 0
 #endif
 
-#if !defined(_MSC_VER) && !defined(INVALID_SOCKET)
+#if !defined(_WIN32) && !defined(INVALID_SOCKET)
 // Already defined in Windows
 #define INVALID_SOCKET (socket_t)(-1)
 #endif
 
-#if !defined(_MSC_VER) && !defined(SOCKET_ERROR)
+#if !defined(_WIN32) && !defined(SOCKET_ERROR)
 // Already defined in Windows
 #define SOCKET_ERROR (int)(-1)
 #endif

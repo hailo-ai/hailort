@@ -18,6 +18,8 @@
 namespace hailort
 {
 
+static constexpr auto REBOOT_FLUSH_DELAY = std::chrono::seconds(1);
+
 hailo_status UsbEventLoop::set_event_handler(uint32_t port, std::shared_ptr<UsbEventHandler> listener)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
@@ -45,8 +47,11 @@ std::shared_ptr<UsbEventHandler> UsbEventLoop::find_handler(uint32_t port)
 
 hailo_status UsbEventLoop::read_request(uint8_t request_code_raw, size_t request_length, Buffer &event_buffer)
 {
-    ssize_t ret = ::read(*m_control_ep_fd, event_buffer.data(), request_length);
-    CHECK(ret > 0, HAILO_INTERNAL_FAILURE, "EP0 read failed: {} (errno={})", strerror(errno), errno);
+    // Zero-length SETUP OUT transfers have no data stage to drain
+    if (request_length > 0) {
+        ssize_t ret = ::read(*m_control_ep_fd, event_buffer.data(), request_length);
+        CHECK(ret > 0, HAILO_INTERNAL_FAILURE, "EP0 read failed: {} (errno={})", strerror(errno), errno);
+    }
 
     // If a client closed before requesting the response, drop the pending request
     if (m_pending_opcode != UsbControlProtocolOpcode::INVALID) {
@@ -65,7 +70,7 @@ hailo_status UsbEventLoop::read_request(uint8_t request_code_raw, size_t request
             break;
         }
 
-        auto status = open_interface(request->interface, handler);
+        auto status = open_interface(request->interface, request->session_group_id, handler);
         if (HAILO_SUCCESS != status) {
             m_response.connect_response.status = static_cast<uint32_t>(status);
             break;
@@ -94,6 +99,16 @@ hailo_status UsbEventLoop::read_request(uint8_t request_code_raw, size_t request
         m_response.close_response.status = static_cast<uint32_t>(HAILO_SUCCESS);
         break;
     }
+    case UsbControlProtocolOpcode::SYS_REBOOT:
+    {
+        LOGGER__INFO("SYS_REBOOT request received (req=0x{:02x}), rebooting after flush delay", request_code_raw);
+        std::this_thread::sleep_for(REBOOT_FLUSH_DELAY);
+        int reboot_ret = std::system("reboot");
+        if (reboot_ret != 0) {
+            LOGGER__ERROR("std::system(\"reboot\") returned non-zero status: {}", reboot_ret);
+        }
+        break;
+    }
     default:
         LOGGER__ERROR("Got unknown request: {}, length: {}", request_code_raw, request_length);
         return HAILO_INTERNAL_FAILURE;
@@ -103,46 +118,71 @@ hailo_status UsbEventLoop::read_request(uint8_t request_code_raw, size_t request
     return HAILO_SUCCESS;
 }
 
-hailo_status UsbEventLoop::open_interface(usb_interface_t interface, std::shared_ptr<UsbEventHandler> handler)
+hailo_status UsbEventLoop::open_interface(usb_interface_t interface, uint32_t session_group_id,
+    std::shared_ptr<UsbEventHandler> handler)
 {
     CHECK(interface < MAX_USB_INTERFACES, HAILO_INVALID_ARGUMENT, "Invalid interface: {}", interface);
 
-    if (!contains(m_available_interfaces, interface)) {
-        auto status = close_interface(interface, handler);
-        CHECK_SUCCESS(status);
+    auto it = m_active_interfaces.find(interface);
+    if (it != m_active_interfaces.end()) {
+        const uint32_t old_session_group_id = it->second.session_group_id;
+        LOGGER__WARNING("Stale connection on interface {} (old session_group_id={}, new={}), "
+            "closing all interfaces from old session group", interface, old_session_group_id, session_group_id);
+        auto status = close_interfaces_by_session_group_id(old_session_group_id);
+        if (HAILO_SUCCESS != status) {
+            LOGGER__ERROR("Failed to close stale session group {}: {}", old_session_group_id, status);
+        }
     }
 
-    m_available_interfaces.erase(interface);
+    m_active_interfaces[interface] = {session_group_id, handler};
 
     auto status = handler->handle_connect(interface);
-    CHECK_SUCCESS(status);
+    if (HAILO_SUCCESS != status) {
+        m_active_interfaces.erase(interface);
+        return status;
+    }
 
-    return HAILO_SUCCESS;
-}
-
-hailo_status UsbEventLoop::close_interface_impl(usb_interface_t interface)
-{
-    CHECK(!contains(m_available_interfaces, interface) && (interface < MAX_USB_INTERFACES), HAILO_NOT_FOUND);
-    m_available_interfaces.insert(interface);
     return HAILO_SUCCESS;
 }
 
 hailo_status UsbEventLoop::close_interface(usb_interface_t interface, std::shared_ptr<UsbEventHandler> handler)
 {
-    auto status = close_interface_impl(interface);
-    CHECK_SUCCESS(status);
+    CHECK(m_active_interfaces.count(interface), HAILO_NOT_FOUND, "Interface {} is not active", interface);
+    m_active_interfaces.erase(interface);
 
-    status = handler->handle_close(interface);
+    auto status = handler->handle_close(interface);
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
 }
 
+hailo_status UsbEventLoop::close_interfaces_by_session_group_id(uint32_t session_group_id)
+{
+    // Collect interfaces to close before iterating, since close_interface modifies m_active_interfaces
+    std::vector<std::pair<usb_interface_t, std::shared_ptr<UsbEventHandler>>> to_close;
+    for (auto &[iface, info] : m_active_interfaces) {
+        if (info.session_group_id == session_group_id) {
+            to_close.emplace_back(iface, info.handler);
+        }
+    }
+
+    hailo_status first_failure = HAILO_SUCCESS;
+    for (auto &[iface, handler] : to_close) {
+        auto status = close_interface(iface, handler);
+        if (HAILO_SUCCESS != status) {
+            LOGGER__WARNING("Failed to close interface {}: {}", iface, status);
+            if (HAILO_SUCCESS == first_failure) {
+                first_failure = status;
+            }
+        }
+    }
+    return first_failure;
+}
+
 hailo_status UsbEventLoop::drop_pending_request()
 {
     if (UsbControlProtocolOpcode::CONNECT == m_pending_opcode) {
-        auto status = close_interface_impl(m_request.connect_request.interface);
-        CHECK_SUCCESS(status);
+        m_active_interfaces.erase(m_request.connect_request.interface);
     }
 
     m_pending_opcode = UsbControlProtocolOpcode::INVALID;

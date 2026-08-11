@@ -19,8 +19,8 @@ NetworkLiveTrack::NetworkLiveTrack(const std::string &name, std::shared_ptr<Conf
     std::shared_ptr<ConfiguredInferModel> configured_infer_model, LatencyMeterPtr overall_latency_meter,
     bool measure_fps, const std::string &hef_path, bool should_print_ops, uint64_t computational_ops) :
     m_name(name),
-    m_count(0),
-    m_last_get_time(),
+    m_total_frames_count(0),
+    m_start_time(),
     m_cng(cng),
     m_configured_infer_model(configured_infer_model),
     m_overall_latency_meter(overall_latency_meter),
@@ -28,7 +28,11 @@ NetworkLiveTrack::NetworkLiveTrack(const std::string &name, std::shared_ptr<Conf
     m_hef_path(hef_path),
     m_should_print_ops(should_print_ops),
     m_computational_ops(computational_ops),
-    m_last_measured_fps(0)
+    m_cumulative_fps(0.0),
+    m_ops_value(0.0),
+    m_last_measured_fps(0.0),
+    m_total_frames_count_at_last_tick(0),
+    m_last_interval_frame_count(0)
 {
     std::lock_guard<std::mutex> lock(mutex);
     max_ng_name = std::max(m_name.size(), max_ng_name);
@@ -36,8 +40,12 @@ NetworkLiveTrack::NetworkLiveTrack(const std::string &name, std::shared_ptr<Conf
 
 hailo_status NetworkLiveTrack::start_impl()
 {
-    m_last_get_time = std::chrono::steady_clock::now();
-    m_count = 0;
+    m_start_time = std::chrono::steady_clock::now();
+    m_total_frames_count = 0;
+    m_total_frames_count_at_last_tick = 0;
+    m_last_interval_frame_count = 0;
+    m_cumulative_fps = 0.0;
+    m_ops_value = 0.0;
 
     return HAILO_SUCCESS;
 }
@@ -45,18 +53,22 @@ hailo_status NetworkLiveTrack::start_impl()
 void NetworkLiveTrack::measure()
 {
     if (m_measure_fps) {
-        m_fps = get_fps();
-        m_ops_value = static_cast<double>(m_computational_ops) * m_fps;
+        const auto cur_count = m_total_frames_count.load();
+        m_last_interval_frame_count = cur_count - m_total_frames_count_at_last_tick;
+        m_total_frames_count_at_last_tick = cur_count;
+
+        m_cumulative_fps = get_cumulative_fps();
+        m_ops_value = static_cast<double>(m_computational_ops) * m_cumulative_fps;
     }
 }
 
-double NetworkLiveTrack::get_fps()
+double NetworkLiveTrack::get_cumulative_fps()
 {
-    auto elapsed_time = std::chrono::steady_clock::now() - m_last_get_time;
-    auto count = m_count.load();
-    auto fps = count / std::chrono::duration<double>(elapsed_time).count();
-    m_last_measured_fps = fps;
-    return fps;
+    const auto elapsed_time = std::chrono::steady_clock::now() - m_start_time;
+    const auto count = m_total_frames_count.load();
+    const auto cumulative_fps = count / std::chrono::duration<double>(elapsed_time).count();
+    m_last_measured_fps = cumulative_fps;
+    return cumulative_fps;
 }
 
 Expected<double> NetworkLiveTrack::get_last_measured_fps()
@@ -79,7 +91,7 @@ std::string NetworkLiveTrack::prettify_ops(double ops) const
     return out;
 }
 
-std::string NetworkLiveTrack::get_text_impl() const
+std::string NetworkLiveTrack::format_text(const std::string &fps_display) const
 {
     std::string s;
     s += fmt::format("{}:", m_name);
@@ -93,7 +105,7 @@ std::string NetworkLiveTrack::get_text_impl() const
     };
 
     if (m_measure_fps) {
-        s += fmt::format("{}fps: {:.2f}", get_separator(), m_fps);
+        s += fmt::format("{}{}", get_separator(), fps_display);
 
         if (m_should_print_ops) {
             if (0.0 == m_ops_value) {
@@ -137,6 +149,16 @@ std::string NetworkLiveTrack::get_text_impl() const
     return s;
 }
 
+std::string NetworkLiveTrack::get_text_impl() const
+{
+    return format_text(fmt::format("fps: {}", m_last_interval_frame_count));
+}
+
+std::string NetworkLiveTrack::get_summary_text_impl() const
+{
+    return format_text(fmt::format("avg fps: {:.2f}", m_cumulative_fps));
+}
+
 void NetworkLiveTrack::push_json_impl(nlohmann::ordered_json &json)
 {
     nlohmann::ordered_json network_group_json;
@@ -153,8 +175,8 @@ void NetworkLiveTrack::push_json_impl(nlohmann::ordered_json &json)
     // }
 
     if (m_measure_fps) {
-        auto fps = get_fps();
-        network_group_json["FPS"] = std::to_string(fps);
+        const auto cumulative_fps = get_cumulative_fps();
+        network_group_json["FPS"] = std::to_string(cumulative_fps);
     }
 
     if (m_cng) {
@@ -186,5 +208,5 @@ void NetworkLiveTrack::progress()
         return;
     }
 
-    m_count++;
+    m_total_frames_count++;
 }

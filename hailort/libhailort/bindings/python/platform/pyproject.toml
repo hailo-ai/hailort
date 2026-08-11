@@ -1,0 +1,30 @@
+# Native:       pip install .
+# Cross-compile: CMAKE_ARGS="..." pip wheel . -w dist/ --no-build-isolation -C wheel.tags=...
+# See CMakeLists.txt (hailort/libhailort/bindings/python/src/) for build flow details.
+
+[build-system]
+# pybind11 <3: version 3.0 changed py::make_tuple to return typed tuples,
+# breaking lambdas with different-sized tuple returns in branches.
+requires = ["scikit-build-core>=0.10", "pybind11>=2.13.6,<3"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "hailort"
+version = "5.4.0"
+description = "HailoRT"
+authors = [{ name = "Hailo team", email = "contact@hailo.ai" }]
+requires-python = ">=3.10,<3.14"
+dependencies = ["numpy"]
+
+[project.urls]
+Homepage = "https://hailo.ai/"
+
+[tool.scikit-build]
+# scikit-build-core 0.12 rejects -C wheel.tags (needed for cross-compile platform
+# tagging) even though wheel.tags is a valid setting. strict-config=false works around this.
+strict-config = false
+cmake.source-dir = "../src"       # C++ sources live one dir up
+cmake.build-type = "Release"
+build-dir = "build/{wheel_tag}"   # cache builds per Python version + platform
+wheel.platlib = true              # always platform-tagged (native extension)
+wheel.packages = ["hailo_platform", "hailo_tutorials"]

@@ -15,13 +15,20 @@
 using namespace hailort;
 
 constexpr std::chrono::milliseconds DEFAULT_MEASUREMENTS_INTERVAL(100);
+static constexpr const char *BASE_MEASUREMENT_ACCUMULATOR_NAME = "BaseMeasurementAccumulator";
+static constexpr const char *BASE_MEASUREMENT_INTERVAL_ACCUMULATOR_NAME = "BaseMeasurementIntervalAccumulator";
 
 BaseMeasurement::BaseMeasurement(Device &device, hailo_status &status) :
     m_device(device),
     m_is_thread_running(false),
-    m_acc(make_shared_nothrow<FullAccumulator<double>>("BaseMeasurementAccumulator"))
+    m_acc(make_shared_nothrow<FullAccumulator<double>>(BASE_MEASUREMENT_ACCUMULATOR_NAME)),
+    m_interval_acc(make_shared_nothrow<FullAccumulator<double>>(BASE_MEASUREMENT_INTERVAL_ACCUMULATOR_NAME))
 {
     if (nullptr == m_acc) {
+        status = HAILO_OUT_OF_HOST_MEMORY;
+        return;
+    }
+    if (nullptr == m_interval_acc) {
         status = HAILO_OUT_OF_HOST_MEMORY;
         return;
     }
@@ -45,6 +52,12 @@ AccumulatorResults BaseMeasurement::get_data()
 {
     std::unique_lock<std::mutex> lock(m_mutex);
     return m_acc->get();
+}
+
+AccumulatorResults BaseMeasurement::get_interval_data_and_reset()
+{
+    std::unique_lock<std::mutex> lock(m_mutex);
+    return m_interval_acc->get_and_clear();
 }
 
 Expected<std::shared_ptr<TemperatureMeasurement>> TemperatureMeasurement::create_shared(Device &device)
@@ -87,6 +100,7 @@ hailo_status TemperatureMeasurement::start_measurement()
             {
                 std::unique_lock<std::mutex> lock(m_mutex);
                 m_acc->add_data_point(ts_max, temp_info->sample_count);
+                m_interval_acc->add_data_point(ts_max, temp_info->sample_count);
             }
             
             std::this_thread::sleep_for(DEFAULT_MEASUREMENTS_INTERVAL); 
@@ -152,6 +166,7 @@ hailo_status PowerMeasurement::start_measurement()
             {
                 std::unique_lock<std::mutex> lock(m_mutex);
                 m_acc->add_data_point(power_data->average_value);
+                m_interval_acc->add_data_point(power_data->average_value);
             }
         }
         auto status = m_device.stop_power_measurement();
