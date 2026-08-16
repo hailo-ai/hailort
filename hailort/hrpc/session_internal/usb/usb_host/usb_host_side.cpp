@@ -11,19 +11,17 @@
 #include "hrpc/session_internal/usb/usb_host/libusb_event_thread.hpp"
 #include "hrpc/session_internal/usb/usb_host/usb_transfer_queue.hpp"
 #include "common/named_mutex.hpp"
+#include "common/os_utils.hpp"
 #include "device_common/usb/usb_utils.hpp"
 #include "hailo/hailort.h"
 #include "common/utils.hpp"
+#include "hailo/hailort_common.hpp"
 
 namespace hailort
 {
 
-#ifdef HAILO_EMULATOR
-static constexpr size_t MAX_CONNECT_RETRIES = 1000;
-#else
-static constexpr size_t MAX_CONNECT_RETRIES = 10;
-#endif
-  
+static constexpr size_t MAX_CONNECT_RETRIES = HAILO_EMU_SELECT(10, 1000);
+
 Expected<std::shared_ptr<ConnectionContext>> UsbConnectionContext::create_client_shared(const std::string &device_id)
 {
     TRY(auto usb_info, UsbUtils::parse_usb_device_info(device_id));
@@ -44,7 +42,6 @@ static std::string usb_ep_mutex_name(const hailo_usb_device_info_t &usb_info, ui
 
 Expected<std::shared_ptr<UsbInterface>> UsbInterface::acquire(const hailo_usb_device_info_t &usb_info)
 {
-    TRY(const auto &device_id, UsbUtils::usb_device_info_to_string(usb_info));
     for (size_t i = 0; i < MAX_USB_INTERFACES; i++) {
         TRY(auto mutex, NamedMutex::create(usb_ep_mutex_name(usb_info, static_cast<usb_interface_t>(i + 1))));
         auto expected_guard = NamedMutex::LockGuard::create(mutex, std::chrono::milliseconds(0));
@@ -125,18 +122,17 @@ Expected<std::shared_ptr<UsbSessionHostSide>> UsbSessionHostSide::connect(std::s
 {
     std::unique_lock<std::mutex> lock(m_mutex);
 
-    TRY_WITH_ACCEPTABLE_STATUS(HAILO_INVALID_FIRMWARE, auto handle_ptr, UsbUtils::open_usb_device(context->usb_info()));
-    libusb_device_handle *handle = static_cast<libusb_device_handle*>(handle_ptr);
-    auto defer_device_close = defer([&] { libusb_close(handle); });
+    TRY_WITH_ACCEPTABLE_STATUS(HAILO_INVALID_FIRMWARE, auto shared_handle,
+        UsbUtils::open_usb_device(context->usb_info()));
+    libusb_device_handle *const handle = shared_handle->handle();
 
     TRY(auto usb_comm, UsbControlCommunication::create(handle));
     TRY(auto interface, get_available_interface_with_retries(context->usb_info(), port, usb_comm, lock));
     auto status = claim_interface(handle, interface->interface());
     CHECK_SUCCESS(status);
 
-    TRY(auto session, UsbSessionHostSide::create(port, handle, std::move(interface), usb_comm));
+    TRY(auto session, UsbSessionHostSide::create(port, std::move(shared_handle), std::move(interface), usb_comm));
 
-    defer_device_close.release();
     return session;
 }
 
@@ -163,7 +159,7 @@ Expected<std::shared_ptr<UsbInterface>> UsbSessionHostSide::get_available_interf
 {
     TRY_WITH_ACCEPTABLE_STATUS(HAILO_DEVICE_TEMPORARILY_UNAVAILABLE, auto interface, UsbInterface::acquire(usb_info));
 
-    UsbConnectRequest request = {interface->interface(), port};
+    UsbConnectRequest request = {interface->interface(), port, OsUtils::get_curr_pid()};
     UsbConnectResponse response = {0};
 
     auto status = usb_comm->transfer(reinterpret_cast<const uint8_t*>(&request), sizeof(request),
@@ -179,13 +175,15 @@ Expected<std::shared_ptr<UsbInterface>> UsbSessionHostSide::get_available_interf
 
 hailo_status UsbSessionHostSide::claim_interface(libusb_device_handle *handle, usb_interface_t interface)
 {
-    int ret = libusb_kernel_driver_active(handle, interface);
+    int ret = 0;
+#ifndef _WIN32
+    ret = libusb_kernel_driver_active(handle, interface);
     CHECK((0 == ret) || (1 == ret), HAILO_LIBUSB_FAILURE, "Failed to get kernel driver status: {}", libusb_error_name(ret));
     if (1 == ret) {
         ret = libusb_detach_kernel_driver(handle, interface);
         CHECK(0 == ret, HAILO_LIBUSB_FAILURE, "Failed to detach kernel driver for interface {}: {}", interface, libusb_error_name(ret));
     }
-
+#endif
     ret = libusb_claim_interface(handle, interface);
     CHECK(0 == ret, HAILO_LIBUSB_FAILURE, "Failed to claim interface {}: {}", interface, libusb_error_name(ret));
 
@@ -242,16 +240,19 @@ Expected<std::pair<uint8_t, uint8_t>> UsbSessionHostSide::find_interface_endpoin
     return std::make_pair(receive_endpoint, send_endpoint);
 }
 
-Expected<std::shared_ptr<UsbSessionHostSide>> UsbSessionHostSide::create(uint16_t port, libusb_device_handle *handle,
-    std::shared_ptr<UsbInterface> interface, std::shared_ptr<UsbControlCommunication> usb_comm)
+Expected<std::shared_ptr<UsbSessionHostSide>> UsbSessionHostSide::create(uint16_t port,
+    std::shared_ptr<LibusbDeviceHandle> shared_handle, std::shared_ptr<UsbInterface> interface,
+    std::shared_ptr<UsbControlCommunication> usb_comm)
 {
+    libusb_device_handle *const handle = shared_handle->handle();
     TRY(auto endpoints, find_interface_endpoints(handle, interface->interface()));
     const auto [receive_endpoint, send_endpoint] = endpoints;
 
     auto status = drain_endpoints(handle, send_endpoint, receive_endpoint);
     CHECK_SUCCESS(status, "Failed to drain endpoints");
 
-    auto session = make_shared_nothrow<UsbSessionHostSide>(port, handle, interface, usb_comm, receive_endpoint, send_endpoint);
+    auto session = make_shared_nothrow<UsbSessionHostSide>(port, std::move(shared_handle), interface, usb_comm,
+        receive_endpoint, send_endpoint);
     CHECK_NOT_NULL(session, HAILO_OUT_OF_HOST_MEMORY);
 
     TRY(auto libusb_ctx_void, UsbUtils::get_libusb_context());
@@ -264,17 +265,19 @@ Expected<std::shared_ptr<UsbSessionHostSide>> UsbSessionHostSide::create(uint16_
     return session;
 }
 
-UsbSessionHostSide::UsbSessionHostSide(uint16_t port, libusb_device_handle *handle, std::shared_ptr<UsbInterface> interface,
-    std::shared_ptr<UsbControlCommunication> usb_comm, uint8_t receive_endpoint, uint8_t send_endpoint)
-        : UsbSession(port, interface->interface()), m_handle(handle), m_usb_comm(usb_comm),
-        m_receive_endpoint(receive_endpoint), m_send_endpoint(send_endpoint), m_is_closed(false), m_interface(interface),
+UsbSessionHostSide::UsbSessionHostSide(uint16_t port, std::shared_ptr<LibusbDeviceHandle> shared_handle,
+    std::shared_ptr<UsbInterface> interface, std::shared_ptr<UsbControlCommunication> usb_comm,
+    uint8_t receive_endpoint, uint8_t send_endpoint)
+        : UsbSession(port, interface->interface()), m_shared_handle(std::move(shared_handle)),
+        m_usb_comm(usb_comm), m_receive_endpoint(receive_endpoint),
+        m_send_endpoint(send_endpoint), m_is_closed(false), m_interface(interface),
         m_write_transfer_queue(nullptr), m_read_transfer_queue(nullptr)
 {}
 
 hailo_status UsbSessionHostSide::create_transfer_queues()
 {
-    TRY(m_write_transfer_queue, UsbTransferQueue::create(m_handle, m_send_endpoint, m_is_closed));
-    TRY(m_read_transfer_queue, UsbTransferQueue::create(m_handle, m_receive_endpoint, m_is_closed));
+    TRY(m_write_transfer_queue, UsbTransferQueue::create(m_shared_handle->handle(), m_send_endpoint, m_is_closed));
+    TRY(m_read_transfer_queue, UsbTransferQueue::create(m_shared_handle->handle(), m_receive_endpoint, m_is_closed));
     return HAILO_SUCCESS;
 }
 
@@ -338,7 +341,7 @@ hailo_status UsbSessionHostSide::drain_endpoints(libusb_device_handle *handle, u
 
 hailo_status UsbSessionHostSide::release_handles()
 {
-    const int ret = libusb_release_interface(m_handle, interface());
+    const int ret = libusb_release_interface(m_shared_handle->handle(), interface());
     if (0 != ret) {
         if (LIBUSB_ERROR_NO_DEVICE == ret) {
             LOGGER__INFO("USB device already disconnected, skipping interface {} release", interface());
@@ -347,8 +350,7 @@ hailo_status UsbSessionHostSide::release_handles()
         }
     }
 
-    libusb_close(m_handle);
-    m_handle = nullptr;
+    m_shared_handle.reset();
 
     if (0 == ret) {
         return HAILO_SUCCESS;
@@ -376,7 +378,7 @@ hailo_status UsbSessionHostSide::cancel_pending_transfers()
 
 hailo_status UsbSessionHostSide::close()
 {
-    if (m_is_closed.exchange(true) || nullptr == m_handle) {
+    if (m_is_closed.exchange(true) || nullptr == m_shared_handle) {
         return HAILO_SUCCESS;
     }
 

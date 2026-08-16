@@ -14,7 +14,7 @@
 
 #if defined(__unix__)
 #include <sys/mman.h>
-#elif defined(_MSC_VER)
+#elif defined(_WIN32)
 #include <memoryapi.h>
 #endif
 
@@ -29,11 +29,11 @@
 #define INVALID_ADDR (MAP_FAILED)
 #define page_aligned_alloc(size) mmap(NULL, (size), PROT_WRITE | PROT_READ, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0)
 #define page_aligned_free(addr, size) munmap((addr), (size))
-#elif defined(_MSC_VER)
+#elif defined(_WIN32)
 #define INVALID_ADDR (NULL)
 #define page_aligned_alloc(size) VirtualAlloc(NULL, (size), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE)
 #define page_aligned_free(addr, size) VirtualFree((addr), 0, MEM_RELEASE)
-#else /* defined(_MSC_VER) */
+#else /* defined(_WIN32) */
 #pragma error("Aligned alloc not supported")
 #endif
 

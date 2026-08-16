@@ -23,6 +23,7 @@
 #include "common/latency_meter.hpp"
 #include "common/filesystem.hpp"
 #include "common/device_measurements.hpp"
+#include "common/timeouts.hpp"
 #include "hailo/hailort.h"
 #include "hailo/network_group.hpp"
 #include "hailo/hef.hpp"
@@ -44,16 +45,11 @@ std::condition_variable wait_for_exit_cv;
 #define USER_SIGNAL (SIGUSR1)
 
 constexpr uint32_t DEFAULT_TIME_TO_RUN_SECONDS = 5;
-#ifndef HAILO_EMULATOR
-#define HAILORTCLI_DEFAULT_VSTREAM_TIMEOUT_MS (HAILO_DEFAULT_VSTREAM_TIMEOUT_MS)
-#else /* ifndef HAILO_EMULATOR */
-#define HAILORTCLI_DEFAULT_VSTREAM_TIMEOUT_MS (HAILO_DEFAULT_VSTREAM_TIMEOUT_MS * 100)
-#endif /* ifndef HAILO_EMULATOR */
 static const char *RUNTIME_DATA_OUTPUT_PATH_HEF_PLACE_HOLDER = "<hef>";
 static const char *RUNTIME_DATA_BATCH_TO_MEASURE_OPT_LAST = "last";
 static const char *RUNTIME_DATA_BATCH_TO_MEASURE_OPT_DEFAULT = "2";
 
-#ifndef _MSC_VER
+#ifndef _WIN32
 void user_signal_handler_func(int signum)
 {
     if (USER_SIGNAL == signum)

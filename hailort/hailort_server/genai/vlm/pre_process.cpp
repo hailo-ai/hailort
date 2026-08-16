@@ -37,6 +37,13 @@ Expected<std::unique_ptr<LLMPreProcess>> VLMPreProcess::create(const std::map<st
     return std::unique_ptr<LLMPreProcess>(std::move(ptr));
 }
 
+void VLMPreProcess::reset_local_cache()
+{
+    LLMPreProcess::reset_local_cache();
+    m_temporal_pos_h = 0;
+    m_temporal_pos_w = 0;
+}
+
 VLMPreProcess::VLMPreProcess(Eigen::VectorXf &&theta,
     Eigen::Matrix<uint16_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> &&local_cached_embeddings,
     const std::map<std::string, size_t> &prefill_inputs_frame_size, const std::map<std::string, size_t> &tbt_inputs_frame_size,

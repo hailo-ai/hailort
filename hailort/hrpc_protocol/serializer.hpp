@@ -594,8 +594,8 @@ struct FetchLogsSerializer
     FetchLogsSerializer() = delete;
 
     static Expected<size_t> serialize_request(rpc_object_handle_t device_handle, MemoryView buffer, size_t buffer_size,
-        hailo_log_type_t log_type);
-    static Expected<std::tuple<rpc_object_handle_t, uint32_t, hailo_log_type_t>> deserialize_request(const MemoryView &serialized_request);
+        hailo_log_type_t log_type, bool should_clear = false);
+    static Expected<std::tuple<rpc_object_handle_t, uint32_t, hailo_log_type_t, bool>> deserialize_request(const MemoryView &serialized_request);
 
     static Expected<Buffer> serialize_reply(uint32_t log_size = 0);
     static Expected<size_t> deserialize_reply(const MemoryView &serialized_reply);

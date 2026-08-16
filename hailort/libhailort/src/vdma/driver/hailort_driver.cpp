@@ -13,7 +13,7 @@
 
 #include "common/logger_macros.hpp"
 #include "common/utils.hpp"
-#include "common/utils.hpp"
+#include "hailo/hailort_common.hpp"
 #include "hailo_ioctl_common.h"
 
 #if defined(__linux__)
@@ -161,12 +161,12 @@ Expected<std::unique_ptr<HailoRTDriver>> HailoRTDriver::create_integrated_nnc()
 
 bool HailoRTDriver::is_integrated_nnc_loaded()
 {
-#if defined(_MSC_VER)
+#if defined(_WIN32)
     // windows is not supported for integrated_nnc driver
     return false;
 #else
     return (access(INTEGRATED_NNC_DRIVER_PATH.c_str(), F_OK) == 0);
-#endif // defined(_MSC_VER)
+#endif // defined(_WIN32)
 }
 
 Expected<std::unique_ptr<HailoRTDriver>> HailoRTDriver::create_pcie_ep()
@@ -176,12 +176,12 @@ Expected<std::unique_ptr<HailoRTDriver>> HailoRTDriver::create_pcie_ep()
 
 bool HailoRTDriver::is_pcie_ep_loaded()
 {
-#if defined(_MSC_VER)
+#if defined(_WIN32)
     // windows is not supported for pcie_ep driver
     return false;
 #else
     return (access(PCIE_EP_DRIVER_PATH.c_str(), F_OK) == 0);
-#endif // defined(_MSC_VER)
+#endif // defined(_WIN32)
 }
 
 static hailo_status validate_driver_version(const hailo_driver_info &driver_info)
@@ -368,23 +368,18 @@ hailo_status HailoRTDriver::disable_notifications()
     return HAILO_SUCCESS;
 }
 
-hailo_status HailoRTDriver::fw_control(const void *request, size_t request_len, const uint8_t request_md5[PCIE_EXPECTED_MD5_LENGTH],
-    void *response, size_t *response_len, uint8_t response_md5[PCIE_EXPECTED_MD5_LENGTH],
-    std::chrono::milliseconds timeout, hailo_cpu_id_t cpu_id)
+hailo_status HailoRTDriver::fw_control(const void *request, size_t request_len, void *response, size_t *response_len,
+    hailo_cpu_id_t cpu_id)
 {
     CHECK_ARG_NOT_NULL(request);
     CHECK_ARG_NOT_NULL(response);
     CHECK_ARG_NOT_NULL(response_len);
-    CHECK(timeout.count() >= 0, HAILO_INVALID_ARGUMENT);
 
     hailo_fw_control command{};
-    static_assert(PCIE_EXPECTED_MD5_LENGTH == sizeof(command.expected_md5), "mismatch md5 size");
-    memcpy(&command.expected_md5, request_md5, sizeof(command.expected_md5));
     command.buffer_len = static_cast<uint32_t>(request_len);
     CHECK(request_len <= sizeof(command.buffer), HAILO_INVALID_ARGUMENT,
         "FW control request len can't be larger than {} (size given {})", sizeof(command.buffer), request_len);
     memcpy(&command.buffer, request, request_len);
-    command.timeout_ms = static_cast<uint32_t>(timeout.count());
     command.cpu_id = translate_cpu_id(cpu_id);
 
     RUN_AND_CHECK_IOCTL_RESULT(HAILO_FW_CONTROL, &command, "Failed in fw_control");
@@ -396,12 +391,11 @@ hailo_status HailoRTDriver::fw_control(const void *request, size_t request_len, 
     }
     memcpy(response, command.buffer, command.buffer_len);
     *response_len = command.buffer_len;
-    memcpy(response_md5, command.expected_md5, PCIE_EXPECTED_MD5_LENGTH);
 
     return HAILO_SUCCESS;
 }
 
-hailo_status HailoRTDriver::read_log(uint8_t *buffer, size_t buffer_size, size_t *read_bytes, hailo_cpu_id_t cpu_id)
+hailo_status HailoRTDriver::read_log(uint8_t *buffer, size_t buffer_size, size_t *read_bytes, hailo_cpu_id_t cpu_id, bool should_clear)
 {
     CHECK_ARG_NOT_NULL(buffer);
     CHECK_ARG_NOT_NULL(read_bytes);
@@ -410,6 +404,7 @@ hailo_status HailoRTDriver::read_log(uint8_t *buffer, size_t buffer_size, size_t
     params.cpu_id = translate_cpu_id(cpu_id);
     params.buffer_size = buffer_size;
     params.read_bytes = 0;
+    params.should_clear = should_clear;
 
     CHECK(buffer_size <= sizeof(params.buffer), HAILO_DRIVER_INVALID_RESPONSE,
         "Given buffer size {} is bigger than buffer size used to read logs {}", buffer_size, sizeof(params.buffer));
@@ -653,11 +648,7 @@ hailo_status HailoRTDriver::mark_as_used()
 Expected<std::pair<vdma::ChannelId, vdma::ChannelId>> HailoRTDriver::soc_connect(uint16_t port_number,
     uintptr_t input_buffer_desc_handle, uintptr_t output_buffer_desc_handle)
 {
-#ifdef HAILO_EMULATOR
-    constexpr size_t MAX_CONNECT_RETRIES = 1000;
-#else
-    constexpr size_t MAX_CONNECT_RETRIES = 10;
-#endif
+    constexpr size_t MAX_CONNECT_RETRIES = HAILO_EMU_SELECT(100, 1000);
     constexpr auto RETRY_INTERVAL = std::chrono::milliseconds(100);
 
     hailo_soc_connect_params params{};
@@ -684,7 +675,7 @@ Expected<std::pair<vdma::ChannelId, vdma::ChannelId>> HailoRTDriver::soc_connect
 Expected<std::pair<vdma::ChannelId, vdma::ChannelId>> HailoRTDriver::pci_ep_accept(uint16_t port_number,
     uintptr_t input_buffer_desc_handle, uintptr_t output_buffer_desc_handle)
 {
-    constexpr size_t MAX_CONNECT_RETRIES = 10;
+    constexpr size_t MAX_CONNECT_RETRIES = 100;
     constexpr auto RETRY_INTERVAL = std::chrono::milliseconds(100);
 
     hailo_pci_ep_accept_params params{};

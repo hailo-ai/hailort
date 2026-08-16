@@ -26,13 +26,14 @@ public:
     virtual ~MeasurementLiveTrack() = default;
     virtual hailo_status start_impl() override;
     virtual std::string get_text_impl() const override;
+    virtual std::string get_summary_text_impl() const override;
     virtual void push_json_impl(nlohmann::ordered_json &json) override;
 
     MeasurementLiveTrack(std::shared_ptr<PowerMeasurement> power_measurement,
         std::shared_ptr<PowerMeasurement> current_measurement, std::shared_ptr<TemperatureMeasurement> temp_measurement,
         const std::string &device_id, std::vector<std::unique_ptr<hailort::Device>> &&device_guard);
 
-    void measure() override {}
+    void measure() override;
     std::shared_ptr<PowerMeasurement> get_power_measurement() { return m_power_measurement; }
     std::shared_ptr<PowerMeasurement> get_current_measurement() { return m_current_measurement; }
     std::shared_ptr<TemperatureMeasurement> get_temp_measurement() { return m_temp_measurement; }
@@ -48,6 +49,10 @@ private:
     std::shared_ptr<TemperatureMeasurement> m_temp_measurement;
 
     std::string m_device_id;
+
+    double m_last_interval_power_mean;
+    double m_last_interval_current_mean;
+    double m_last_interval_temp_mean;
 };
 
 #endif /* _HAILO_HAILORTCLI_RUN2_MEASUREMENT_LIVE_TRACK_HPP_ */

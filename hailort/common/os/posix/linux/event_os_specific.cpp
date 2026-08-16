@@ -18,7 +18,7 @@ Expected<size_t> WaitableGroup::wait_any(std::chrono::milliseconds timeout)
     int poll_ret = -1;
     do {
         poll_ret = poll(m_waitable_handles.data(), m_waitable_handles.size(), static_cast<int>(timeout.count()));
-    } while ((0 > poll_ret) && (EINTR == poll_ret));
+    } while ((0 > poll_ret) && (EINTR == errno));
 
     if (0 == poll_ret) {
         LOGGER__TRACE("Timeout");

@@ -126,11 +126,13 @@ protected:
 
     Expected<std::future<hailo_status>> create_resources_async(std::shared_ptr<VDevice>, std::shared_ptr<Buffer> hef_buffer, const std::string lora_name,
         bool tokenizer_on_host, std::shared_ptr<Event> theta_arrived_event, std::shared_ptr<Event> hailo_config_json_arrived_event,
-        std::shared_ptr<Event> tokenizer_arrived_event, std::shared_ptr<Event> embeddings_arrived_event, std::shared_ptr<Event> shutdown_event);
+        std::shared_ptr<Event> tokenizer_arrived_event, std::shared_ptr<Event> embeddings_arrived_event,
+        StatusEventPtr ccws_ready_event, std::shared_ptr<Event> shutdown_event);
 
     virtual std::future<hailo_status> create_inference_managers_future(std::shared_ptr<VDevice> vdevice, const Hef &hef,
         const std::string &lora_name, std::shared_ptr<Event> external_resources_created_event,
-        std::shared_ptr<Event> inference_models_created_event, std::shared_ptr<Event> shutdown_event);
+        std::shared_ptr<Event> inference_models_created_event, StatusEventPtr ccws_ready_event,
+        std::shared_ptr<Event> shutdown_event);
 
     virtual std::future<Expected<Eigen::VectorXf>> parse_external_resources_future(const Hef &hef,
         std::shared_ptr<Event> hailo_config_json_arrived_event, std::shared_ptr<Event> theta_arrived_event,

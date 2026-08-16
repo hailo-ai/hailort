@@ -19,6 +19,8 @@ option(HAILO_BUILD_FUNCTIONFS_LISTENER "Build FunctionFS listener" OFF)
 option(HAILO_BUILD_OLLAMA "Build Hailo-Ollama GenAI Model Server" OFF)
 
 # Ensure Windows SDK knows the target architecture to avoid "No Target Architecture" errors.
+# The canonical definition lives in hailo/platform.h, but this CMake-level define acts as a
+# safety net for internal code that may include Windows SDK headers without platform.h.
 if (WIN32)
     if (CMAKE_SIZEOF_VOID_P EQUAL 8)
         add_compile_definitions(_AMD64_=1)
@@ -76,7 +78,7 @@ endif()
 
 # Set firmware version
 add_definitions( -DFIRMWARE_VERSION_MAJOR=5 )
-add_definitions( -DFIRMWARE_VERSION_MINOR=3 )
+add_definitions( -DFIRMWARE_VERSION_MINOR=4 )
 add_definitions( -DFIRMWARE_VERSION_REVISION=0 )
 
 # TODO: temporary hack to support offline builds. Remove HAILO_OFFLINE_COMPILATION and use FETCHCONTENT_FULLY_DISCONNECTED

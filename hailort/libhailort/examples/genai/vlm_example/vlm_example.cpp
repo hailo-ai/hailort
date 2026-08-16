@@ -10,12 +10,13 @@
 #include <iostream>
 #include <fstream>
 
-std::string get_user_prompt()
+bool get_user_prompt(std::string &prompt)
 {
     std::cout << ">>> ";
-    std::string prompt;
-    getline(std::cin, prompt);
-    return prompt;
+    if (!getline(std::cin, prompt) || ("exit" == prompt) || ("quit" == prompt)) {
+        return false;
+    }
+    return true;
 }
 
 void get_input_frame(std::string &frame_path, hailort::Buffer &input_frame_buffer, uint32_t input_frame_size)
@@ -48,8 +49,12 @@ int main(int argc, char **argv)
 
         while (true) {
             std::vector<hailort::MemoryView> input_frames;
-            std::cout << "Enter frame path. for not using a frame, pass 'NONE' (use Ctrl+C to exit)\n";
-            std::string frame_path = get_user_prompt();
+            std::cout << "Enter frame path. For not using a frame, pass 'NONE' (type 'exit', 'quit' or Ctrl+D to exit): \n";
+            std::string frame_path;
+            if (!get_user_prompt(frame_path)) {
+                std::cout << "Exiting...\n";
+                break;
+            }
 
             hailort::BufferPtr input_frame_buffer;
             if (frame_path != "NONE") {
@@ -63,8 +68,12 @@ int main(int argc, char **argv)
                 input_frames.push_back(hailort::MemoryView(*input_frame_buffer));
             }
 
-            std::cout << "Enter input prompt\n";
-            auto input_prompt = get_user_prompt();
+            std::cout << "Prompt: \n";
+            std::string input_prompt;
+            if (!get_user_prompt(input_prompt)) {
+                std::cout << "Exiting...\n";
+                break;
+            }
 
             // Create structured messages using JSON format
             std::vector<std::string> messages;

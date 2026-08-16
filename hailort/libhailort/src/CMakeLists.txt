@@ -11,6 +11,7 @@ include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/eigen.cmake)
 include(genai/llm/minja_wrapper/minja_wrapper.cmake)
 if(HAILO_BUILD_USB)
     include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/libusb.cmake)
+    include(${CMAKE_SOURCE_DIR}/cmake/usb_fw_version.cmake)
 endif()
 
 # Include tokenizers when client tokenizer is enabled
@@ -110,7 +111,8 @@ target_link_libraries(libhailort PRIVATE rpc_proto)
 target_link_libraries(libhailort PRIVATE genai_scheme_proto)
 target_link_libraries(libhailort PRIVATE minja_wrapper)
 if(HAILO_BUILD_USB)
-    target_link_libraries(libhailort PRIVATE PkgConfig::LIBUSB)
+    target_link_libraries(libhailort PRIVATE LibUSB::LibUSB)
+    target_include_directories(libhailort PRIVATE ${CMAKE_BINARY_DIR}/generated/loader_protocol)
 endif()
 
 # Link tokenizers when client tokenizer is enabled

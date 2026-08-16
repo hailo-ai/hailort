@@ -16,11 +16,14 @@
 #include "hrpc/session_internal/usb/usb_control_protocol.hpp"
 #include "hailort_server/usb/usb_functionfs_configure.hpp"
 #include "vdma/transfer_common.hpp"
+#include "device_common/usb/usb_utils.hpp"
 
 #include "hrpc/session_internal/usb/usb_host/libusb_event_thread.hpp"
 #include "hrpc/session_internal/usb/usb_host/usb_transfer_queue.hpp"
 
-#include <libusb-1.0/libusb.h>
+#include <libusb.h>
+
+#include <memory>
 
 namespace hailort
 {
@@ -31,8 +34,8 @@ public:
     static Expected<std::shared_ptr<UsbInterface>> acquire(const hailo_usb_device_info_t &usb_info);
     UsbInterface(usb_interface_t interface, NamedMutex::LockGuard &&guard)
         : m_interface(interface), m_guard(std::move(guard)) {}
-    ~UsbInterface() = default;
 
+    ~UsbInterface() = default;
     UsbInterface &operator=(UsbInterface &&other) noexcept = default;
     UsbInterface(UsbInterface &&other) noexcept = default;
     UsbInterface(const UsbInterface &other) = delete;
@@ -72,11 +75,13 @@ class UsbSessionHostSide : public UsbSession
 {
 public:
     static Expected<std::shared_ptr<UsbSessionHostSide>> connect(std::shared_ptr<UsbConnectionContext> context, uint16_t port);
-    static Expected<std::shared_ptr<UsbSessionHostSide>> create(uint16_t port, libusb_device_handle *handle,
-        std::shared_ptr<UsbInterface> interface, std::shared_ptr<UsbControlCommunication> usb_comm);
+    static Expected<std::shared_ptr<UsbSessionHostSide>> create(uint16_t port,
+        std::shared_ptr<LibusbDeviceHandle> shared_handle, std::shared_ptr<UsbInterface> interface,
+        std::shared_ptr<UsbControlCommunication> usb_comm);
 
-    UsbSessionHostSide(uint16_t port, libusb_device_handle *handle, std::shared_ptr<UsbInterface> interface,
-        std::shared_ptr<UsbControlCommunication> usb_comm, uint8_t receive_endpoint, uint8_t send_endpoint);
+    UsbSessionHostSide(uint16_t port, std::shared_ptr<LibusbDeviceHandle> shared_handle,
+        std::shared_ptr<UsbInterface> interface, std::shared_ptr<UsbControlCommunication> usb_comm,
+        uint8_t receive_endpoint, uint8_t send_endpoint);
     
     virtual hailo_status close() override;
 
@@ -104,7 +109,7 @@ private:
     hailo_status release_handles();
 
     static std::mutex m_mutex; // TODO: Find out why we need this mutex here. It seems like all libusb operations are not thread safe (HRT-19951)
-    libusb_device_handle *m_handle;
+    std::shared_ptr<LibusbDeviceHandle> m_shared_handle;
     std::shared_ptr<UsbControlCommunication> m_usb_comm;
     uint8_t m_receive_endpoint;
     uint8_t m_send_endpoint;

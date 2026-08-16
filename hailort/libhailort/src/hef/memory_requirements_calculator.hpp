@@ -34,6 +34,7 @@ struct EdgeTypeMemoryRequirements {
 struct MemoryRequirements {
     EdgeTypeMemoryRequirements intermediate_buffers;
     EdgeTypeMemoryRequirements config_buffers;
+    EdgeTypeMemoryRequirements cache_buffers;
 };
 
 // Memory requirements for several models

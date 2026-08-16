@@ -123,7 +123,7 @@ hailo_status LegacyPcieDevice::reset_impl(CONTROL_PROTOCOL__reset_type_t reset_t
         is_expecting_response = false; // TODO: Check boot source, set is_expecting_response = (boot_source != pcie)
     }
 
-    common_status = CONTROL_PROTOCOL__pack_reset_request(&request, &request_size, m_control_sequence, reset_type);
+    common_status = CONTROL_PROTOCOL__pack_reset_request(&request, &request_size, reset_type);
     status = (HAILO_COMMON_STATUS__SUCCESS == common_status) ? HAILO_SUCCESS : HAILO_INTERNAL_FAILURE;
     CHECK_SUCCESS(status);
 
@@ -133,7 +133,7 @@ hailo_status LegacyPcieDevice::reset_impl(CONTROL_PROTOCOL__reset_type_t reset_t
     // TODO: fix logic with respect to is_expecting_response, implement wait_for_wakeup();
     if (HAILO_SUCCESS == status) {
         status = Control::parse_and_validate_response(response_buffer, (uint32_t)(response_size), &header,
-            &payload, &request, *this);
+            &payload, &request);
         CHECK_SUCCESS(status);
         CHECK(is_expecting_response, HAILO_INTERNAL_FAILURE, "Recived valid response from FW for control who is not expecting one.");
     } else if ((HAILO_DRIVER_TIMEOUT == status) && (!is_expecting_response)){

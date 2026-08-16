@@ -84,11 +84,13 @@ LLMServer::LLMServer(std::shared_ptr<Session> session, std::shared_ptr<VDeviceMa
 
 LLMServer::~LLMServer()
 {
-    // Remove all references to local VDevice before marking it as removed
+    // Mark before HW teardown so concurrent new connections aren't blocked during the slow reset.
+    m_vdevice_manager->mark_vdevice_for_close(DEFAULT_LLM_CONNECTION_PORT);
+
     m_inference_manager_prefill.reset();
     m_inference_manager_tbt.reset();
 
-    m_vdevice_manager->remove_vdevice(DEFAULT_LLM_CONNECTION_PORT); // Use it as a unique client id
+    m_vdevice_manager->remove_vdevice(DEFAULT_LLM_CONNECTION_PORT);
 
     m_kv_cache_guard.reset();
 }
@@ -191,15 +193,17 @@ hailo_status LLMServer::parse_config_json(const nlohmann::json &hailo_config_jso
 
 std::future<hailo_status> LLMServer::create_inference_managers_future(std::shared_ptr<VDevice> vdevice, const Hef &hef,
     const std::string &lora_name, std::shared_ptr<Event> external_resources_created_event,
-    std::shared_ptr<Event> inference_models_created_event, std::shared_ptr<Event> shutdown_event)
+    std::shared_ptr<Event> inference_models_created_event, StatusEventPtr ccws_ready_event,
+    std::shared_ptr<Event> shutdown_event)
 {
     return std::async(std::launch::async, [this, vdevice, hef, lora_name, external_resources_created_event,
-        inference_models_created_event, shutdown_event]() -> hailo_status {
+        inference_models_created_event, ccws_ready_event, shutdown_event]() -> hailo_status {
 
         LOGGER__GENAI_STATS_START("[create] create prefill model");
         TRY(auto prefill_model_name_suffix, get_prefill_model_name_suffix(lora_name));
         TRY(m_inference_manager_prefill, LLMInferenceManager::create(vdevice, hef, prefill_model_name_suffix));
         CHECK_SUCCESS(WaitOrShutdown(external_resources_created_event, shutdown_event).wait(WAIT_FOR_OPERATION_TIMEOUT));
+        m_inference_manager_prefill->set_ccws_ready_event(ccws_ready_event);
         auto model_prefill = m_inference_manager_prefill->get_model();
         for (auto input : model_prefill->inputs()) {
             if (LLMPreProcess::is_positional_embed_layer(input.name(), m_input_layers_names_suffixes) ||
@@ -218,6 +222,7 @@ std::future<hailo_status> LLMServer::create_inference_managers_future(std::share
         auto inference_manager_tbt = LLMInferenceManager::create(vdevice, hef, tbt_model_name_suffix);
         if (inference_manager_tbt) {
             m_inference_manager_tbt = inference_manager_tbt.release();
+            m_inference_manager_tbt->set_ccws_ready_event(ccws_ready_event);
             auto model_tbt = m_inference_manager_tbt->get_model();
             for (auto input : model_tbt->inputs()) {
                 if (LLMPreProcess::is_positional_embed_layer(input.name(), m_input_layers_names_suffixes) ||
@@ -243,14 +248,14 @@ std::future<hailo_status> LLMServer::create_inference_managers_future(std::share
             return HAILO_SUCCESS;
         });
 
-        LOGGER__GENAI_STATS_START("[create] configure tbt model");
         if (m_inference_manager_tbt) {
+            LOGGER__GENAI_STATS_START("[create] configure tbt model");
             TRY(m_tbt_buffers, m_inference_manager_tbt->allocate_buffers());
             m_tbt_inputs = buffers_to_memviews(m_tbt_buffers.first);
             m_tbt_outputs = buffers_to_memviews(m_tbt_buffers.second);
             CHECK_SUCCESS(m_inference_manager_tbt->configure());
+            LOGGER__GENAI_STATS_END("[create] configure tbt model");
         }
-        LOGGER__GENAI_STATS_END("[create] configure tbt model");
         CHECK_SUCCESS(wait_for_future_status_or_shutdown(configure_prefill_future, shutdown_event));
 
         return HAILO_SUCCESS;
@@ -354,7 +359,8 @@ std::future<hailo_status> LLMServer::create_token_embedder_future(const Hef &hef
 
 Expected<std::future<hailo_status>> LLMServer::create_resources_async(std::shared_ptr<VDevice> vdevice, std::shared_ptr<Buffer> hef_buffer, const std::string lora_name,
     bool tokenizer_on_host, std::shared_ptr<Event> theta_arrived_event, std::shared_ptr<Event> hailo_config_json_arrived_event,
-    std::shared_ptr<Event> tokenizer_arrived_event, std::shared_ptr<Event> embeddings_arrived_event, std::shared_ptr<Event> shutdown_event)
+    std::shared_ptr<Event> tokenizer_arrived_event, std::shared_ptr<Event> embeddings_arrived_event,
+    StatusEventPtr ccws_ready_event, std::shared_ptr<Event> shutdown_event)
 {
     TRY(auto inference_models_created_event, Event::create_shared(Event::State::not_signalled));
     TRY(auto external_resources_created_event, Event::create_shared(Event::State::not_signalled));
@@ -362,7 +368,7 @@ Expected<std::future<hailo_status>> LLMServer::create_resources_async(std::share
 
     return std::async(std::launch::async, [this, vdevice, hef_buffer, lora_name, tokenizer_on_host, theta_arrived_event,
         hailo_config_json_arrived_event, tokenizer_arrived_event, embeddings_arrived_event, inference_models_created_event,
-        external_resources_created_event, pre_process_created_event, shutdown_event]() -> hailo_status {
+        external_resources_created_event, pre_process_created_event, ccws_ready_event, shutdown_event]() -> hailo_status {
 
         // Create HEF
         LOGGER__GENAI_STATS_START("[create] create HEF");
@@ -375,7 +381,7 @@ Expected<std::future<hailo_status>> LLMServer::create_resources_async(std::share
             theta_arrived_event, external_resources_created_event, shutdown_event);
 
         auto inference_managers_future = create_inference_managers_future(vdevice, hef, lora_name,
-            external_resources_created_event, inference_models_created_event, shutdown_event);
+            external_resources_created_event, inference_models_created_event, ccws_ready_event, shutdown_event);
 
         auto pre_process_future = create_pre_process_future(hef, inference_models_created_event, external_resources_future,
             pre_process_created_event, shutdown_event);
@@ -423,12 +429,20 @@ Expected<Buffer> LLMServer::handle_create_llm_request(const MemoryView &request)
     TRY_AS_HRPC_STATUS(auto hailo_config_json_arrived_event, Event::create_shared(Event::State::not_signalled), LLMCreateSerializer);
     TRY_AS_HRPC_STATUS(auto tokenizer_arrived_event, Event::create_shared(Event::State::not_signalled), LLMCreateSerializer);
     TRY_AS_HRPC_STATUS(auto embeddings_arrived_event, Event::create_shared(Event::State::not_signalled), LLMCreateSerializer);
+    TRY_AS_HRPC_STATUS(auto ccws_ready_event, StatusEvent::create_shared(), LLMCreateSerializer);
     TRY_AS_HRPC_STATUS(auto shutdown_event, Event::create_shared(Event::State::not_signalled), LLMCreateSerializer);
 
-    // Create EventGuard AFTER futures are declared but BEFORE any operations that might fail
-    // This ensures that if any error occurs, shutdown_event will be signaled on early return
-    // and any already-launched futures will be notified to stop waiting
-    EventGuard event_guard(shutdown_event);
+    // On error: unblock async config tasks and free VDevice, before std::async future destructors block.
+    // Must be declared after futures so it fires before they block on destruction.
+    bool is_error_cleanup_needed = true;
+    DEFER_IF({
+        auto status = shutdown_event->signal();
+        if (HAILO_SUCCESS != status) {
+            LOGGER__ERROR("Failed to signal shutdown event: {}", status);
+        }
+        (void)ccws_ready_event->signal_failure(HAILO_SHUTDOWN_EVENT_SIGNALED);
+        m_vdevice_manager->mark_vdevice_for_close(DEFAULT_LLM_CONNECTION_PORT);
+    }, is_error_cleanup_needed);
 
     if (!hef_path.empty()) { // hef path is not none only if hef exists locally, so no need to transfer it over the session
         if (BUILTIN == hef_path) {
@@ -440,12 +454,13 @@ Expected<Buffer> LLMServer::handle_create_llm_request(const MemoryView &request)
 
         // For local HEF, create resources immediately in async task
         TRY_AS_HRPC_STATUS(resources_creation_future, create_resources_async(vdevice, hef_buffer_ptr, lora_name, tokenizer_on_host, theta_arrived_event,
-            hailo_config_json_arrived_event, tokenizer_arrived_event, embeddings_arrived_event, shutdown_event), LLMCreateSerializer);
+            hailo_config_json_arrived_event, tokenizer_arrived_event, embeddings_arrived_event, ccws_ready_event, shutdown_event), LLMCreateSerializer);
         // Since all data is already in the buffer, signal the events
         theta_arrived_event->signal();
         hailo_config_json_arrived_event->signal();
         tokenizer_arrived_event->signal();
         embeddings_arrived_event->signal();
+        ccws_ready_event->signal_success();
     } else {
         // Use total HEF size from the request
         LOGGER__INFO("hef buffer of size '{}', lora: '{}'", total_hef_size, lora_name);
@@ -458,18 +473,26 @@ Expected<Buffer> LLMServer::handle_create_llm_request(const MemoryView &request)
                 CHECK_SUCCESS_AS_HRPC_STATUS(receive_hef_chunk_sync(m_session, chunk, hef_buffer_ptr),
                     LLMCreateSerializer);
             } else {
-                ccws_future = std::async(std::launch::async, [this, &chunk, &hef_buffer_ptr]() -> hailo_status {
+                ccws_future = std::async(std::launch::async, [this, chunk, hef_buffer_ptr, ccws_ready_event]() -> hailo_status {
                     LOGGER__INFO("Receiving CCWs chunk '{}' (offset: {}, size: {} bytes) [ASYNC]", chunk.name, chunk.offset, chunk.size);
                     auto status = receive_hef_chunk_sync(m_session, chunk, hef_buffer_ptr);
+                    if (HAILO_SUCCESS != status) {
+                        const auto signal_status = ccws_ready_event->signal_failure(status);
+                        if (HAILO_SUCCESS != signal_status) {
+                            LOGGER__ERROR("Failed to signal CCWs ready event, status={}", signal_status);
+                        }
+                        return status;
+                    }
+                    CHECK_SUCCESS(ccws_ready_event->signal_success());
                     LOGGER__GENAI_STATS_END("[create] transfer HEF");
-                    return status;
+                    return HAILO_SUCCESS;
                 });
             }
             // After receiving HEADER_PROTO_PADDING, start HEF creation asynchronously
             if (chunk.name == HEADER_PROTO_PADDING) {
                 LOGGER__INFO("HEADER_PROTO_PADDING received, starting async resources creation");
                 TRY_AS_HRPC_STATUS(resources_creation_future, create_resources_async(vdevice, hef_buffer_ptr, lora_name, tokenizer_on_host,
-                    theta_arrived_event, hailo_config_json_arrived_event, tokenizer_arrived_event, embeddings_arrived_event, shutdown_event), LLMCreateSerializer);
+                    theta_arrived_event, hailo_config_json_arrived_event, tokenizer_arrived_event, embeddings_arrived_event, ccws_ready_event, shutdown_event), LLMCreateSerializer);
             } else if (chunk.name == HAILO_CONFIG_JSON) {
                 hailo_config_json_arrived_event->signal();
             } else if (chunk.name == THETA) {
@@ -488,6 +511,9 @@ Expected<Buffer> LLMServer::handle_create_llm_request(const MemoryView &request)
     }
 
     m_recovery.tokens = {m_end_of_sentence_token_id};
+
+    // Success — skip DEFER cleanup (mark_vdevice_for_close will be called in ~LLMServer on normal shutdown)
+    is_error_cleanup_needed = false;
 
     TRY_AS_HRPC_STATUS(auto reply, LLMCreateSerializer::serialize_reply(HAILO_SUCCESS, m_chat_template, m_embeddings_features), LLMCreateSerializer);
     return reply;
@@ -848,7 +874,7 @@ void LLMServer::reset_cnversation_context()
     m_tokens_history.clear();
     m_pre_process->reset_local_cache();
     m_post_process.reset_random_generator();
-    m_inference_manager_prefill->init_cache(0); // TODO (HRT-16833): Check if required
+    m_inference_manager_prefill->init_cache(0);
 
     prepare_for_new_generation();
 }

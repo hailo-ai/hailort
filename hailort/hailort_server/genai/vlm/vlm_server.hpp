@@ -59,10 +59,11 @@ protected:
 
     std::future<hailo_status> create_frame_encoder_future(std::shared_ptr<VDevice> vdevice, const Hef &hef,
         std::shared_ptr<Event> frame_encoder_created_event, std::shared_ptr<Event> external_resources_created_event,
-        std::shared_ptr<Event> shutdown_event);
+        StatusEventPtr ccws_ready_event, std::shared_ptr<Event> shutdown_event);
     Expected<std::future<hailo_status>> create_resources_async(std::shared_ptr<VDevice> vdevice, std::shared_ptr<Buffer> hef_buffer,
         bool tokenizer_on_host, std::shared_ptr<Event> theta_arrived_event, std::shared_ptr<Event> hailo_config_json_arrived_event,
-        std::shared_ptr<Event> tokenizer_arrived_event, std::shared_ptr<Event> embeddings_arrived_event, std::shared_ptr<Event> shutdown_event);
+        std::shared_ptr<Event> tokenizer_arrived_event, std::shared_ptr<Event> embeddings_arrived_event,
+        StatusEventPtr ccws_ready_event, std::shared_ptr<Event> shutdown_event);
 
 private:
     hailo_status parse_config_json(const MemoryView &config_json) override;

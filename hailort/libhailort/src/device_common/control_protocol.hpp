@@ -40,114 +40,110 @@ HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__parse_response(uint8_t *message,
         uint32_t message_size,
         CONTROL_PROTOCOL__response_header_t **header,
         CONTROL_PROTOCOL__payload_t **payload,
-        CONTROL_PROTOCOL__status_t *fw_status);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__get_sequence_from_response_buffer(uint8_t *response_buffer,
-        size_t response_buffer_size, uint32_t *sequence);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_identify_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_core_identify_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_read_memory_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, uint32_t address, uint32_t data_length);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_write_memory_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, uint32_t address, const uint8_t *data, uint32_t data_length);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_set_fw_logger_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, hailo_fw_logger_level_t level, uint8_t interface_mask);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_open_stream_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, uint8_t dataflow_manager_id, uint8_t is_input);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_config_stream_udp_input_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, CONTROL_PROTOCOL__config_stream_params_t *params);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_config_stream_udp_output_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, CONTROL_PROTOCOL__config_stream_params_t *params);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_config_stream_mipi_input_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, CONTROL_PROTOCOL__config_stream_params_t *params);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_config_stream_mipi_output_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, CONTROL_PROTOCOL__config_stream_params_t *params);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_config_stream_pcie_input_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, CONTROL_PROTOCOL__config_stream_params_t *params);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_config_stream_pcie_output_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, CONTROL_PROTOCOL__config_stream_params_t *params);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_close_stream_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, uint8_t dataflow_manager_id, uint8_t is_input);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_reset_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, CONTROL_PROTOCOL__reset_type_t reset_type);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_power_measurement_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, CONTROL_PROTOCOL__dvm_options_t dvm, CONTROL_PROTOCOL__power_measurement_types_t measurement_type);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_set_power_measurement_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, uint32_t index, CONTROL_PROTOCOL__dvm_options_t dvm, CONTROL_PROTOCOL__power_measurement_types_t measurement_type);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_get_power_measurement_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, uint32_t index, bool should_clear);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_start_power_measurement_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, uint32_t delay_milliseconds, CONTROL_PROTOCOL__averaging_factor_t averaging_factor , CONTROL_PROTOCOL__sampling_period_t sampling_period);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_stop_power_measurement_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_phy_operation_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, CONTROL_PROTOCOL__phy_operation_t operation_type);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_config_core_top_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, CONTROL_PROTOCOL__config_core_top_type_t config_type, CONTROL_PROTOCOL__config_core_top_params_t *params);
+        uint32_t *fw_status);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_identify_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_core_identify_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_read_memory_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t address, uint32_t data_length);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_write_memory_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t address, const uint8_t *data, uint32_t data_length);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_set_fw_logger_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, hailo_fw_logger_level_t level, uint8_t interface_mask);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_open_stream_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint8_t dataflow_manager_id, uint8_t is_input);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_config_stream_mipi_input_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, CONTROL_PROTOCOL__config_stream_params_t *params);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_config_stream_mipi_output_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, CONTROL_PROTOCOL__config_stream_params_t *params);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_config_stream_pcie_input_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, CONTROL_PROTOCOL__config_stream_params_t *params);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_config_stream_pcie_output_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, CONTROL_PROTOCOL__config_stream_params_t *params);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_close_stream_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint8_t dataflow_manager_id, uint8_t is_input);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_reset_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, CONTROL_PROTOCOL__reset_type_t reset_type);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_power_measurement_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, CONTROL_PROTOCOL__dvm_options_t dvm, CONTROL_PROTOCOL__power_measurement_types_t measurement_type);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_set_power_measurement_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t index, CONTROL_PROTOCOL__dvm_options_t dvm, CONTROL_PROTOCOL__power_measurement_types_t measurement_type);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_get_power_measurement_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t index, bool should_clear);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_start_power_measurement_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t delay_milliseconds, CONTROL_PROTOCOL__averaging_factor_t averaging_factor , CONTROL_PROTOCOL__sampling_period_t sampling_period);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_stop_power_measurement_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_phy_operation_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, CONTROL_PROTOCOL__phy_operation_t operation_type);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_config_core_top_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, CONTROL_PROTOCOL__config_core_top_type_t config_type, CONTROL_PROTOCOL__config_core_top_params_t *params);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_i2c_write_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size,
-        uint32_t sequence, uint32_t offset, uint8_t endianness,
+        uint32_t offset, uint8_t endianness,
         uint16_t slave_address, uint8_t register_address_size, uint8_t bus_index, const uint8_t *data, uint32_t data_length);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_i2c_read_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size,
-        uint32_t sequence, uint32_t offset, uint8_t endianness,
+        uint32_t offset, uint8_t endianness,
         uint16_t slave_address, uint8_t register_address_size, uint8_t bus_index, uint32_t data_length, bool should_hold_bus);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_latency_measurement_read_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_latency_measurement_config_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, uint8_t latency_measurement_en, uint32_t inbound_start_buffer_number, uint32_t outbound_stop_buffer_number, uint32_t inbound_stream_index, uint32_t outbound_stream_index);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_latency_measurement_read_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_latency_measurement_config_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint8_t latency_measurement_en, uint32_t inbound_start_buffer_number, uint32_t outbound_stop_buffer_number, uint32_t inbound_stream_index, uint32_t outbound_stream_index);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_context_switch_set_network_group_header_request(
-    CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence,
+    CONTROL_PROTOCOL__request_t *request, size_t *request_size,
     const CONTROL_PROTOCOL__application_header_t *network_group_header);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_context_switch_signal_cache_updated_request(
-    CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence);
+    CONTROL_PROTOCOL__request_t *request, size_t *request_size);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_context_switch_set_context_info_request(
-        CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence,
+        CONTROL_PROTOCOL__request_t *request, size_t *request_size,
         const CONTROL_PROTOCOL__context_switch_context_info_chunk_t *context_info);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_idle_time_set_measuremment_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, uint8_t measurement_enable);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_idle_time_get_measuremment_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_idle_time_set_measuremment_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint8_t measurement_enable);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_idle_time_get_measuremment_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_download_context_action_list_request(CONTROL_PROTOCOL__request_t *request,
-    size_t *request_size, uint32_t sequence, uint32_t network_group_id,
+    size_t *request_size, uint32_t network_group_id,
     CONTROL_PROTOCOL__context_switch_context_type_t context_type, uint16_t context_index, uint16_t action_list_offset);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_change_context_switch_status_request(
-        CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence,
+        CONTROL_PROTOCOL__request_t *request, size_t *request_size,
         CONTROL_PROTOCOL__CONTEXT_SWITCH_STATUS_t state_machine_status, uint8_t application_index,
         uint16_t dynamic_batch_size, uint16_t batch_count);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_wd_enable(
     CONTROL_PROTOCOL__request_t *request,
     size_t *request_size,
-    uint32_t sequence,
+
     uint8_t cpu_id,
     bool should_enable);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_wd_config(
     CONTROL_PROTOCOL__request_t *request,
     size_t *request_size,
-    uint32_t sequence,
+
     uint8_t cpu_id,
     uint32_t wd_cycles,
     CONTROL_PROTOCOL__WATCHDOG_MODE_t wd_mode);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_context_switch_clear_configured_apps_request(
-    CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_previous_system_state(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, uint8_t cpu_id);
+    CONTROL_PROTOCOL__request_t *request, size_t *request_size);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_previous_system_state(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint8_t cpu_id);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_set_dataflow_interrupt_request(
-        CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, 
+        CONTROL_PROTOCOL__request_t *request, size_t *request_size, 
         uint8_t interrupt_type, uint8_t interrupt_index, uint8_t interrupt_sub_index);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_d2h_event_manager_set_host_info_request( CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, 
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_d2h_event_manager_set_host_info_request( CONTROL_PROTOCOL__request_t *request, size_t *request_size, 
         uint8_t connection_type, uint16_t host_port, uint32_t host_ip_address);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_d2h_event_manager_send_host_info_event_request( CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, 
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_d2h_event_manager_send_host_info_event_request( CONTROL_PROTOCOL__request_t *request, size_t *request_size, 
         uint8_t event_priority);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_get_chip_temperature_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_read_board_config(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, uint32_t address, uint32_t data_length);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_write_board_config_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, uint32_t address, const uint8_t *data, uint32_t data_length);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_enable_debugging_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, bool is_rma);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_get_extended_device_information_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_get_chip_temperature_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_read_board_config(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t address, uint32_t data_length);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_write_board_config_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t address, const uint8_t *data, uint32_t data_length);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_enable_debugging_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, bool is_rma);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_get_extended_device_information_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_config_context_switch_breakpoint_request(
-        CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence,
+        CONTROL_PROTOCOL__request_t *request, size_t *request_size,
         uint8_t breakpoint_id, 
         CONTROL_PROTOCOL__context_switch_breakpoint_control_t breakpoint_control, 
         CONTROL_PROTOCOL__context_switch_breakpoint_data_t *breakpoint_data);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_get_context_switch_breakpoint_status_request(
-        CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence,
+        CONTROL_PROTOCOL__request_t *request, size_t *request_size,
         uint8_t breakpoint_id); 
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_get_context_switch_main_header_request(
-        CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence); 
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_set_pause_frames_request(CONTROL_PROTOCOL__request_t *request, 
+        CONTROL_PROTOCOL__request_t *request, size_t *request_size);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_set_pause_frames_request(CONTROL_PROTOCOL__request_t *request,
             size_t *request_size, 
-            uint32_t sequence, 
+            
             uint8_t rx_pause_frames_enable);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_config_context_switch_timestamp_request(
-        CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence,
+        CONTROL_PROTOCOL__request_t *request, size_t *request_size,
         uint32_t batch_index, bool enable_user_configuration);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_run_bist_test_request(
-        CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, bool is_top_test,
+        CONTROL_PROTOCOL__request_t *request, size_t *request_size, bool is_top_test,
         uint32_t top_bypass_bitmap, uint8_t cluster_index, uint32_t cluster_bypass_bitmap_0, uint32_t cluster_bypass_bitmap_1);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_set_clock_freq_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence,
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_set_clock_freq_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size,
         uint32_t clock_freq);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_get_health_information_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_set_throttling_state_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, bool should_activate);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_get_throttling_state_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_set_overcurrent_state_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, bool should_activate);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_get_overcurrent_state_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_get_hw_consts_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence);
-HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_set_sleep_state_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint32_t sequence, uint8_t sleep_state);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_get_health_information_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_set_throttling_state_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, bool should_activate);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_get_throttling_state_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_set_overcurrent_state_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, bool should_activate);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_get_overcurrent_state_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_get_hw_consts_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size);
+HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_set_sleep_state_request(CONTROL_PROTOCOL__request_t *request, size_t *request_size, uint8_t sleep_state);
 HAILO_COMMON_STATUS_t CONTROL_PROTOCOL__pack_change_hw_infer_status_request(CONTROL_PROTOCOL__request_t *request,
-    size_t *request_size, uint32_t sequence, uint8_t hw_infer_state, uint8_t network_group_index,
+    size_t *request_size, uint8_t hw_infer_state, uint8_t network_group_index,
     uint16_t dynamic_batch_size, uint16_t batch_count, CONTROL_PROTOCOL__hw_infer_channels_info_t *channels_info,
     CONTROL_PROTOCOL__boundary_channel_mode_t boundary_channel_mode);
 

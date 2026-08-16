@@ -1,6 +1,6 @@
 /**
  * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
- * Distributed under the LGPL 2.1 license (https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt)
+ * Distributed under the LGPL-2.1-or-later license (https://spdx.org/licenses/LGPL-2.1-or-later.html)
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -21,7 +21,7 @@
  * @file hailo_gst.h
  * @brief Includes the hailo_gst header file with the required compiler instructions
  **/
-#ifdef _MSC_VER
+#if defined(_MSC_VER)
     #pragma warning(push)
     #pragma warning(disable : 4244)  // Disable conversion warnings
     #include <gst/gst.h>

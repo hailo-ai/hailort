@@ -11,6 +11,7 @@
 #include "device_common/control.hpp"
 #include "core_op/resource_manager/internal_buffer_manager.hpp"
 #include "common/internal_env_vars.hpp"
+#include "common/timeouts.hpp"
 #include "vdma/memory/descriptor_list.hpp"
 #include "vdma/memory/dma_able_buffer.hpp"
 #include "hef/hef_internal.hpp"
@@ -257,7 +258,8 @@ static Expected<LatencyMetersMap> create_latency_meters_from_config_params(
 
 Expected<ResourcesManager> ResourcesManager::create(VdmaDevice &vdma_device, HailoRTDriver &driver,
     const ConfigureNetworkParams &config_params, CacheManagerPtr cache_manager,
-    std::shared_ptr<CoreOpMetadata> core_op_metadata, uint8_t core_op_index)
+    std::shared_ptr<CoreOpMetadata> core_op_metadata, uint8_t core_op_index,
+    StatusEventPtr ccws_ready_event)
 {
     TRY(const auto device_arch, vdma_device.get_architecture());
     // Allocate config channels. In order to use the same channel ids for config channels in all contexts,
@@ -281,7 +283,8 @@ Expected<ResourcesManager> ResourcesManager::create(VdmaDevice &vdma_device, Hai
 
     ResourcesManager resources_manager(vdma_device, driver, std::move(allocator), config_params, cache_manager,
         std::move(core_op_metadata), core_op_index, std::move(network_index_map), std::move(latency_meters),
-        std::move(config_channels_ids), internal_buffer_manager, std::move(action_list_buffer_builder));
+        std::move(config_channels_ids), internal_buffer_manager, std::move(action_list_buffer_builder),
+        std::move(ccws_ready_event));
 
     return resources_manager;
 }
@@ -293,7 +296,8 @@ ResourcesManager::ResourcesManager(VdmaDevice &vdma_device, HailoRTDriver &drive
                                    LatencyMetersMap &&latency_meters,
                                    std::vector<vdma::ChannelId> &&config_channels_ids,
                                    std::shared_ptr<InternalBufferManager> internal_buffer_manager,
-                                   std::shared_ptr<ActionListBufferBuilder> &&action_list_buffer_builder) :
+                                   std::shared_ptr<ActionListBufferBuilder> &&action_list_buffer_builder,
+                                   StatusEventPtr ccws_ready_event) :
     m_contexts_resources(),
     m_channel_allocator(std::move(channel_allocator)),
     m_vdma_device(vdma_device),
@@ -309,6 +313,8 @@ ResourcesManager::ResourcesManager(VdmaDevice &vdma_device, HailoRTDriver &drive
     m_latency_meters(std::move(latency_meters)),
     m_is_configured(false),
     m_is_activated(false),
+    m_was_ccws_section_synced(false),
+    m_ccws_ready_event(std::move(ccws_ready_event)),
     m_config_channels_ids(std::move(config_channels_ids)),
     m_hw_only_desc_boundary_buffers(),
     m_hw_only_ccb_boundary_buffers(),
@@ -335,6 +341,8 @@ ResourcesManager::ResourcesManager(ResourcesManager &&other) noexcept :
     m_is_configured(std::exchange(other.m_is_configured, false)),
     m_is_activated(std::exchange(other.m_is_activated, false)),
     m_ccws_section_mapped_buffers(std::move(other.m_ccws_section_mapped_buffers)),
+    m_was_ccws_section_synced(std::exchange(other.m_was_ccws_section_synced, false)),
+    m_ccws_ready_event(std::move(other.m_ccws_ready_event)),
     m_nops_mapped_buffer(std::move(other.m_nops_mapped_buffer)),
     m_hef_as_buffer(std::move(other.m_hef_as_buffer)),
     m_config_channels_ids(std::move(other.m_config_channels_ids)),
@@ -690,7 +698,12 @@ hailo_status ResourcesManager::configure()
         m_vdma_device.set_amount_of_sram_used(amount_sram_used + get_action_list_buffer_builder()->get_action_list_buffer_size());
     }
 
-    return HAILO_SUCCESS;
+    // When the HEF is streamed into the buffer asynchronously, wait for that write to complete before syncing CCWs.
+    if (nullptr != m_ccws_ready_event) {
+        CHECK_SUCCESS(m_ccws_ready_event->wait(CCWS_READY_TIMEOUT),
+            "Timed out or errored waiting for CCWs to be ready before sync");
+    }
+    return sync_ccws_section_buffers();
 }
 
 hailo_status ResourcesManager::enable_state_machine(uint16_t dynamic_batch_size, uint16_t batch_count)
@@ -1066,6 +1079,7 @@ hailo_status ResourcesManager::map_and_set_ccws_section_buffer(BufferPtr hef_as_
 
     TRY(const auto buffer_size, parse_buffer_size_from_env_var());
     const auto buffers_count = DIV_ROUND_UP(ccws_section_size, buffer_size);
+
     for (size_t i = 0; i < buffers_count; i++) {
         auto current_buffer_size = (i == (buffers_count - 1)) ? (ccws_section_size % buffer_size) : buffer_size;
         TRY(auto dmable_buffer_ptr, vdma::DmaAbleBuffer::create_from_user_address(
@@ -1075,6 +1089,23 @@ hailo_status ResourcesManager::map_and_set_ccws_section_buffer(BufferPtr hef_as_
         m_ccws_section_mapped_buffers.push_back(mapped_buffer_ptr);
     }
 
+    return HAILO_SUCCESS;
+}
+
+// Sync DRAM and Cache for the mapped CCWs to prevent non-synced buffers (see HRT-20334).
+// TODO: HRT-20488 - evaluate sync location and whether should run both for PCIe and USB.
+hailo_status ResourcesManager::sync_ccws_section_buffers()
+{
+    if (m_was_ccws_section_synced || m_ccws_section_mapped_buffers.empty()) {
+        return HAILO_SUCCESS;
+    }
+
+    for (size_t i = 0; i < m_ccws_section_mapped_buffers.size(); ++i) {
+        auto status = m_ccws_section_mapped_buffers[i]->synchronize(HailoRTDriver::DmaSyncDirection::TO_DEVICE);
+        CHECK_SUCCESS(status, "Failed to sync CCW mapped_buffer[{}]", i);
+    }
+
+    m_was_ccws_section_synced = true;
     return HAILO_SUCCESS;
 }
 

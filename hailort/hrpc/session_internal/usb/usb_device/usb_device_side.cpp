@@ -83,11 +83,13 @@ hailo_status UsbSessionDeviceSide::abort_transfers()
 
 hailo_status UsbSessionDeviceSide::wait_for_write_async_ready(size_t /*transfer_size*/, std::chrono::milliseconds timeout)
 {
+    CHECK(!m_is_closed, HAILO_COMMUNICATION_CLOSED);
     return m_write_actions_thread->wait_for_enqueue_ready(timeout);
 }
 
 hailo_status UsbSessionDeviceSide::wait_for_read_async_ready(size_t /*transfer_size*/, std::chrono::milliseconds timeout)
 {
+    CHECK(!m_is_closed, HAILO_COMMUNICATION_CLOSED);
     return m_read_actions_thread->wait_for_enqueue_ready(timeout);
 }
 
@@ -162,7 +164,7 @@ hailo_status UsbSessionDeviceSide::read_async_impl(uint8_t *data, size_t size)
         CHECK_SUCCESS(status);
 
         TRY_WITH_ACCEPTABLE_STATUS(HAILO_COMMUNICATION_CLOSED,
-            auto bytes_transferred, m_read_aio_context->wait_for_completion(read_fd, m_is_closed));
+            auto bytes_transferred, m_read_aio_context->wait_for_completion());
         offset += bytes_transferred;
     }
     return HAILO_SUCCESS;
@@ -182,7 +184,7 @@ hailo_status UsbSessionDeviceSide::write_async_impl(const uint8_t *data, size_t 
         CHECK_SUCCESS(status);
 
         TRY_WITH_ACCEPTABLE_STATUS(HAILO_COMMUNICATION_CLOSED,
-            auto bytes_transferred, m_write_aio_context->wait_for_completion(write_fd, m_is_closed));
+            auto bytes_transferred, m_write_aio_context->wait_for_completion());
         offset += bytes_transferred;
     }
     return HAILO_SUCCESS;
@@ -196,14 +198,14 @@ UsbSessionDeviceSide::~UsbSessionDeviceSide()
 hailo_status UsbSessionDeviceSide::close()
 {
     if (m_is_closed.exchange(true)) {
-        return HAILO_SUCCESS; 
-    }    
+        return HAILO_SUCCESS;
+    }
 
     if (m_read_aio_context) {
-        m_read_aio_context->wake();
+        m_read_aio_context->complete();
     }
     if (m_write_aio_context) {
-        m_write_aio_context->wake();
+        m_write_aio_context->complete();
     }
 
     auto status = abort_transfers();

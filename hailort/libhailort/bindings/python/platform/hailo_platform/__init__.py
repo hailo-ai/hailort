@@ -1,12 +1,5 @@
 #!/usr/bin/env python
 import os
-import sys
-import pathlib
-import pprint
-
-class MissingPyHRTLib(Exception):
-    pass
-
 
 # Must appear before other imports:
 def join_drivers_path(path):
@@ -26,19 +19,8 @@ from hailo_platform.pyhailort.pyhailort import (HEF, ConfigureParams,
                                                 HailoRTException, HailoSchedulingAlgorithm, HailoRTStreamAbortedByUser, AsyncInferJob,
                                                 HailoCommunicationClosedException, HailoSessionListener, HailoSession)
 
-def _verify_pyhailort_lib_exists():
-    python_version = "".join(str(i) for i in sys.version_info[:2])
-    lib_extension = {
-        "posix": "so",
-        "nt": "pyd",  # Windows
-    }[os.name]
-
-    path = f"{__path__[0]}/pyhailort/"
-    if next(pathlib.Path(path).glob(f"_pyhailort*.{lib_extension}"), None) is None:
-        raise MissingPyHRTLib(f"{path} should include a _pyhailort library (_pyhailort*{python_version}*.{lib_extension}). Includes: {pprint.pformat(list(pathlib.Path(path).iterdir()))}")
-_verify_pyhailort_lib_exists()
-
-__version__ = "5.3.0"
+from importlib.metadata import version as _pkg_version
+__version__ = _pkg_version("hailort")
 def _verify_version():
     if _pyhailort.__version__ != __version__:
         raise ImportError(

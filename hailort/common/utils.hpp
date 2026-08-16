@@ -406,7 +406,7 @@ inline hailo_status get_status(const Expected<T> &exp)
 
 #define TRY_V_AS_HRPC_STATUS(var_decl, expr, ...) _TRY_V_AS_HRPC_STATUS(_HAILO_CONCAT(__expected, __COUNTER__), var_decl, expr, __VA_ARGS__)
 
-#ifndef _MSC_VER
+#if defined(__GNUC__) || defined(__clang__)
 #define IGNORE_DEPRECATION_WARNINGS_BEGIN _Pragma("GCC diagnostic push") \
                                           _Pragma("GCC diagnostic ignored \"-Wdeprecated-declarations\"")
 #define IGNORE_DEPRECATION_WARNINGS_END  _Pragma("GCC diagnostic pop")

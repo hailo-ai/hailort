@@ -15,8 +15,10 @@
 #include "hailo/expected.hpp"
 #include "common/logger_macros.hpp"
 
-#if defined(_MSC_VER)
+#if defined(_WIN32)
 #include <windows.h>
+#include <mutex>
+#include <unordered_map>
 #else
 #include "common/filesystem.hpp"
 #endif
@@ -31,8 +33,9 @@ class NamedMutex final
 public:
     static Expected<std::shared_ptr<NamedMutex>> create(const std::string &path);
 
-#if defined(_MSC_VER)
-    NamedMutex(const std::string &path, HANDLE mutex_handle) : m_path(path), m_mutex_handle(mutex_handle) {}
+#if defined(_WIN32)
+    NamedMutex(const std::string &path, HANDLE mutex_handle, std::shared_ptr<std::timed_mutex> in_process_mutex)
+        : m_path(path), m_mutex_handle(mutex_handle), m_in_process_mutex(std::move(in_process_mutex)) {}
 #else
     NamedMutex(const std::string &path, LockedFile &&locked_file) : m_path(path), m_locked_file(std::move(locked_file)) {}
 #endif
@@ -45,8 +48,11 @@ public:
 private:
     const std::string m_path;
 
-#if defined(_MSC_VER)
+#if defined(_WIN32)
     HANDLE m_mutex_handle;
+    std::shared_ptr<std::timed_mutex> m_in_process_mutex;
+    static std::unordered_map<std::string, std::shared_ptr<std::timed_mutex>> m_shared_mutexes;
+    static std::mutex m_map_mutex;
 #else
     LockedFile m_locked_file;
 #endif

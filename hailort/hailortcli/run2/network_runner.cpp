@@ -16,7 +16,7 @@
 
 #include "network_runner.hpp"
 
-#if defined(_MSC_VER)
+#if defined(_WIN32)
 #include <mmsystem.h>
 #endif
 
@@ -42,7 +42,7 @@ BarrierTerminateScopeGuard::~BarrierTerminateScopeGuard()
     }
 }
 
-#if defined(_MSC_VER) 
+#if defined(_WIN32) 
 class TimeBeginScopeGuard final
 {
 public:
@@ -361,7 +361,7 @@ hailo_status NetworkRunner::run(EventPtr shutdown_event, LiveStats &live_stats, 
         m_overall_latency_meter, measure_fps, m_params.hef_path, m_params.should_print_ops, computational_ops);
     live_stats.add(net_live_track, 1); //support progress over multiple outputs
 
-#if defined(_MSC_VER)
+#if defined(_WIN32)
     TimeBeginScopeGuard time_begin_scope_guard;
 #endif
 

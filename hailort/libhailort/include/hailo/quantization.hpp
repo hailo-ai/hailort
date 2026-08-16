@@ -16,9 +16,11 @@
 #include <math.h>
 #include <fenv.h>
 
-#ifdef _MSC_VER
+#if defined(_MSC_VER)
 #include <immintrin.h>
-#endif
+#else
+/* GCC/Clang use rintf() instead of MSVC SSE intrinsics — no header needed */
+#endif /* defined(_MSC_VER) */
 
 namespace hailort
 {
@@ -35,7 +37,7 @@ namespace net_flow
 
 inline float bankers_round(float x)
 {
-#ifdef _MSC_VER
+#if defined(_MSC_VER)
     // These instructions are intrinsics that the Microsoft C/C++ compiler supports when x86 is targeted
     __m128 xmm = _mm_set_ss(x);
     xmm = _mm_round_ss(xmm, xmm, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);

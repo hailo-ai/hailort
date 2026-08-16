@@ -11,10 +11,13 @@
 #define _HAILO_INTEGRATED_MONITOR_HPP_
 
 #include "hailo/hailort.h"
+#include "hailo/expected.hpp"
 
 #include "utils/profiler/monitor_handler.hpp"
 #include "common/runtime_statistics_internal.hpp"
 
+#include <chrono>
+#include <string>
 #include <vector>
 #include <ostream>
 
@@ -27,6 +30,8 @@ public:
     static hailo_status run(bool verbose);
 
 private:
+    static std::vector<std::string> get_recent_mon_files(const std::string &dir_path,
+        std::chrono::milliseconds time_interval);
     static hailo_status print_tables(const std::vector<ProtoMon> &mon_messages, bool verbose);
     static void add_devices_info_header(std::ostream &buffer);
     static void add_networks_info_header(std::ostream &buffer);

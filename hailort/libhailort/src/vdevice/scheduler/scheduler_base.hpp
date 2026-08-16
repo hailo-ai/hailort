@@ -15,6 +15,7 @@
 
 #include "common/utils.hpp"
 #include "common/filesystem.hpp"
+#include "common/timeouts.hpp"
 
 #include "stream_common/stream_internal.hpp"
 
@@ -25,7 +26,6 @@
 namespace hailort
 {
 
-#define DEFAULT_SCHEDULER_TIMEOUT (std::chrono::milliseconds(0))
 #define DEFAULT_SCHEDULER_MIN_THRESHOLD (0)
 
 

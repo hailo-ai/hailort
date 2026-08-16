@@ -11,7 +11,7 @@
 #define _HAILOTRACKER_SRC_EIGEN_WRAPPER_HPP_
 
 // Disable warning 4127
-#ifdef _MSC_VER
+#if defined(_MSC_VER)
     #pragma warning(push)
     #pragma warning(disable: 4127)
 #else
@@ -24,7 +24,7 @@
 
 #include <Eigen/Dense>
 
-#ifdef _MSC_VER
+#if defined(_MSC_VER)
     #pragma warning(pop)
 #else
     #pragma GCC diagnostic pop

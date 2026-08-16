@@ -33,6 +33,7 @@ public:
 
         hailo_status start();
         std::string get_text() const;
+        std::string get_summary_text() const;
         void push_json(nlohmann::ordered_json &json);
         virtual hailort::Expected<double> get_last_measured_fps();
         virtual void measure() = 0;
@@ -40,6 +41,7 @@ public:
     protected:
         virtual hailo_status start_impl() = 0;
         virtual std::string get_text_impl() const = 0;
+        virtual std::string get_summary_text_impl() const { return ""; }
         virtual void push_json_impl(nlohmann::ordered_json &json) = 0;
 
         bool m_started;
@@ -57,6 +59,7 @@ private:
     void measure_and_print();
     void measure();
     void print_measurements();
+    void print_summary();
 
     bool m_running;
     std::chrono::milliseconds m_interval;

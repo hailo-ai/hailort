@@ -176,12 +176,14 @@ std::future<hailo_status> VLMServer::create_token_embedder_future(const Hef &hef
 // VLM-specific: Create frame encoder asynchronously
 std::future<hailo_status> VLMServer::create_frame_encoder_future(std::shared_ptr<VDevice> vdevice, const Hef &hef,
     std::shared_ptr<Event> frame_encoder_created_event, std::shared_ptr<Event> external_resources_created_event,
-    std::shared_ptr<Event> shutdown_event)
+    StatusEventPtr ccws_ready_event, std::shared_ptr<Event> shutdown_event)
 {
-    return std::async(std::launch::async, [this, vdevice, hef, frame_encoder_created_event, external_resources_created_event, shutdown_event]() -> hailo_status {
+    return std::async(std::launch::async, [this, vdevice, hef, frame_encoder_created_event, external_resources_created_event,
+        ccws_ready_event, shutdown_event]() -> hailo_status {
         LOGGER__GENAI_STATS_START("[create] create vision encoder model");
         TRY(auto frame_encoder_model_name, get_model_name_from_suffix(hef, FRAME_ENCODER_MODEL_NAME_SUFFIX));
         TRY(m_inference_manager_frame_encoder, InferenceManager::create(vdevice, hef, frame_encoder_model_name));
+        m_inference_manager_frame_encoder->set_ccws_ready_event(ccws_ready_event);
 
         auto model_encoder = m_inference_manager_frame_encoder->get_model();
         auto &encoder_input_config = *model_encoder->inputs().begin(); // All inputs are the same shape
@@ -237,7 +239,8 @@ std::future<hailo_status> VLMServer::create_frame_encoder_future(std::shared_ptr
 
 Expected<std::future<hailo_status>> VLMServer::create_resources_async(std::shared_ptr<VDevice> vdevice, std::shared_ptr<Buffer> hef_buffer,
     bool tokenizer_on_host, std::shared_ptr<Event> theta_arrived_event, std::shared_ptr<Event> hailo_config_json_arrived_event,
-    std::shared_ptr<Event> tokenizer_arrived_event, std::shared_ptr<Event> embeddings_arrived_event, std::shared_ptr<Event> shutdown_event)
+    std::shared_ptr<Event> tokenizer_arrived_event, std::shared_ptr<Event> embeddings_arrived_event,
+    StatusEventPtr ccws_ready_event, std::shared_ptr<Event> shutdown_event)
 {
     TRY(auto inference_models_created_event , Event::create_shared(Event::State::not_signalled));
     TRY(auto external_resources_created_event, Event::create_shared(Event::State::not_signalled));
@@ -246,7 +249,8 @@ Expected<std::future<hailo_status>> VLMServer::create_resources_async(std::share
 
     return std::async(std::launch::async, [this, vdevice, hef_buffer, tokenizer_on_host, theta_arrived_event,
         hailo_config_json_arrived_event, tokenizer_arrived_event, embeddings_arrived_event, inference_models_created_event,
-        external_resources_created_event, pre_process_created_event, frame_encoder_created_event, shutdown_event]() -> hailo_status {
+        external_resources_created_event, pre_process_created_event, frame_encoder_created_event,
+        ccws_ready_event, shutdown_event]() -> hailo_status {
 
         // Create HEF
         LOGGER__GENAI_STATS_START("[create] create HEF");
@@ -259,9 +263,10 @@ Expected<std::future<hailo_status>> VLMServer::create_resources_async(std::share
             theta_arrived_event, external_resources_created_event, shutdown_event);
 
         auto inference_managers_future = create_inference_managers_future(vdevice, hef, "",
-            external_resources_created_event, inference_models_created_event, shutdown_event);
+            external_resources_created_event, inference_models_created_event, ccws_ready_event, shutdown_event);
 
-        auto frame_encoder_future = create_frame_encoder_future(vdevice, hef, frame_encoder_created_event, external_resources_created_event, shutdown_event);
+        auto frame_encoder_future = create_frame_encoder_future(vdevice, hef, frame_encoder_created_event,
+            external_resources_created_event, ccws_ready_event, shutdown_event);
 
         // Wait for frame encoder to set m_encoder_input_shape before creating PreProcess
         CHECK_SUCCESS(WaitOrShutdown(frame_encoder_created_event, shutdown_event).wait(WAIT_FOR_OPERATION_TIMEOUT));
@@ -320,6 +325,7 @@ Expected<Buffer> VLMServer::handle_create_vlm_request(const MemoryView &request)
     TRY_AS_HRPC_STATUS(auto hailo_config_json_arrived_event, Event::create_shared(Event::State::not_signalled), VLMCreateSerializer);
     TRY_AS_HRPC_STATUS(auto tokenizer_arrived_event, Event::create_shared(Event::State::not_signalled), VLMCreateSerializer);
     TRY_AS_HRPC_STATUS(auto embeddings_arrived_event, Event::create_shared(Event::State::not_signalled), VLMCreateSerializer);
+    TRY_AS_HRPC_STATUS(auto ccws_ready_event, StatusEvent::create_shared(), VLMCreateSerializer);
     TRY_AS_HRPC_STATUS(auto shutdown_event, Event::create_shared(Event::State::not_signalled), VLMCreateSerializer);
 
     // Create EventGuard AFTER futures are declared but BEFORE any operations that might fail
@@ -334,12 +340,13 @@ Expected<Buffer> VLMServer::handle_create_vlm_request(const MemoryView &request)
 
         // For local HEF, create resources immediately in async task
         TRY_AS_HRPC_STATUS(resources_creation_future, create_resources_async(vdevice, hef_buffer_ptr, tokenizer_on_host, theta_arrived_event,
-            hailo_config_json_arrived_event, tokenizer_arrived_event, embeddings_arrived_event, shutdown_event), VLMCreateSerializer);
+            hailo_config_json_arrived_event, tokenizer_arrived_event, embeddings_arrived_event, ccws_ready_event, shutdown_event), VLMCreateSerializer);
         // Since all data is already in the buffer, signal the events
         theta_arrived_event->signal();
         hailo_config_json_arrived_event->signal();
         tokenizer_arrived_event->signal();
         embeddings_arrived_event->signal();
+        ccws_ready_event->signal_success();
     } else {
         // Use total HEF size from the request
         LOGGER__INFO("hef buffer of size '{}'", total_hef_size);
@@ -352,18 +359,26 @@ Expected<Buffer> VLMServer::handle_create_vlm_request(const MemoryView &request)
                 CHECK_SUCCESS_AS_HRPC_STATUS(receive_hef_chunk_sync(m_session, chunk, hef_buffer_ptr),
                 VLMCreateSerializer);
             } else {
-                ccws_future = std::async(std::launch::async, [this, &chunk, &hef_buffer_ptr]() -> hailo_status {
+                ccws_future = std::async(std::launch::async, [this, chunk, hef_buffer_ptr, ccws_ready_event]() -> hailo_status {
                     LOGGER__INFO("Receiving CCWs chunk '{}' (offset: {}, size: {} bytes) [ASYNC]", chunk.name, chunk.offset, chunk.size);
                     auto status = receive_hef_chunk_sync(m_session, chunk, hef_buffer_ptr);
-	                LOGGER__GENAI_STATS_END("[create] transfer HEF");
-                    return status;
+                    if (HAILO_SUCCESS != status) {
+                        const auto signal_status = ccws_ready_event->signal_failure(status);
+                        if (HAILO_SUCCESS != signal_status) {
+                            LOGGER__ERROR("Failed to signal CCWs ready event, status={}", signal_status);
+                        }
+                        return status;
+                    }
+                    CHECK_SUCCESS(ccws_ready_event->signal_success());
+                    LOGGER__GENAI_STATS_END("[create] transfer HEF");
+                    return HAILO_SUCCESS;
                 });
             }
             // After receiving HEADER_PROTO_PADDING, start HEF creation asynchronously
             if (chunk.name == HEADER_PROTO_PADDING) {
                 LOGGER__INFO("{} received, starting async resources creation", HEADER_PROTO_PADDING);
                 TRY_AS_HRPC_STATUS(resources_creation_future, create_resources_async(vdevice, hef_buffer_ptr, tokenizer_on_host,
-                    theta_arrived_event, hailo_config_json_arrived_event, tokenizer_arrived_event, embeddings_arrived_event, shutdown_event), VLMCreateSerializer);
+                    theta_arrived_event, hailo_config_json_arrived_event, tokenizer_arrived_event, embeddings_arrived_event, ccws_ready_event, shutdown_event), VLMCreateSerializer);
             } else if (chunk.name == HAILO_CONFIG_JSON) {
                 hailo_config_json_arrived_event->signal();
             } else if (chunk.name == THETA) {

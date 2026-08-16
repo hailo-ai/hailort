@@ -13,7 +13,7 @@
 #include "hailo/hailort.h"
 #include "vdma/transfer_common.hpp"
 
-#include <libusb-1.0/libusb.h>
+#include <libusb.h>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>

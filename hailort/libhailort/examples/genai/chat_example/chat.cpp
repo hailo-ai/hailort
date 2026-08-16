@@ -10,12 +10,13 @@
 #include <iostream>
 #include <fstream>
 
-std::string get_user_prompt()
+bool get_user_prompt(std::string &prompt)
 {
     std::cout << ">>> ";
-    std::string prompt;
-    getline(std::cin, prompt);
-    return prompt;
+    if (!getline(std::cin, prompt) || ("exit" == prompt) || ("quit" == prompt)) {
+        return false;
+    }
+    return true;
 }
 
 int main(int argc, char **argv)
@@ -33,10 +34,14 @@ int main(int argc, char **argv)
         auto llm_params = hailort::genai::LLMParams(llm_hef_path);
         auto llm = hailort::genai::LLM::create(vdevice, llm_params).expect("Failed to create LLM");
 
-        std::cout << "Enter prompt: (use Ctrl+C to exit)\n";
+        std::cout << "Enter prompt (type 'exit', 'quit' or Ctrl+D to exit):\n";
 
         while (true) {
-            std::string user_input = get_user_prompt();
+            std::string user_input;
+            if (!get_user_prompt(user_input)) {
+                std::cout << "Exiting...\n";
+                break;
+            }
             std::vector<std::string> prompt_json_strings = {
                 R"({"role": "user", "content": ")" + user_input + R"("})"
             };

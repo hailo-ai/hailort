@@ -18,6 +18,7 @@
 #include "net_flow/pipeline/async_infer_runner.hpp"
 #include "net_flow/ops/nms_post_process.hpp"
 #include "hrpc/client.hpp"
+#include "common/status_event.hpp"
 
 namespace hailort
 {
@@ -62,6 +63,10 @@ public:
     virtual void set_power_mode(hailo_power_mode_t power_mode) override;
     virtual void set_hw_latency_measurement_flags(hailo_latency_measurement_flags_t latency) override;
     virtual void set_enable_kv_cache(bool enable_kv_cache) override;
+    void set_ccws_ready_event(StatusEventPtr ccws_ready_event)
+    {
+        m_ccws_ready_event = ccws_ready_event;
+    }
     virtual Expected<ConfiguredInferModel> configure() override;
     virtual Expected<InferStream> input() override;
     virtual Expected<InferStream> output() override;
@@ -92,6 +97,9 @@ protected:
     std::vector<std::string> m_input_names;
     std::vector<std::string> m_output_names;
     ConfigureNetworkParams m_config_params;
+
+private:
+    StatusEventPtr m_ccws_ready_event;
 };
 
 class InferModel::InferStream::Impl

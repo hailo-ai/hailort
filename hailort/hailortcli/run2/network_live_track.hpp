@@ -32,6 +32,7 @@ public:
     virtual void measure() override;
     virtual hailo_status start_impl() override;
     virtual std::string get_text_impl() const override;
+    virtual std::string get_summary_text_impl() const override;
     virtual void push_json_impl(nlohmann::ordered_json &json) override;
 
     void progress();
@@ -39,15 +40,16 @@ public:
     hailort::Expected<double> get_last_measured_fps() override;
 
 private:
-    double get_fps();
+    double get_cumulative_fps();
     std::string prettify_ops(double ops) const;
+    std::string format_text(const std::string &fps_display) const;
 
     static size_t max_ng_name;
     static std::mutex mutex;
 
     std::string m_name;
-    std::atomic<uint32_t> m_count;
-    std::chrono::time_point<std::chrono::steady_clock> m_last_get_time;
+    std::atomic<uint32_t> m_total_frames_count;
+    std::chrono::time_point<std::chrono::steady_clock> m_start_time;
     std::shared_ptr<hailort::ConfiguredNetworkGroup> m_cng;
     std::shared_ptr<hailort::ConfiguredInferModel> m_configured_infer_model;
     hailort::LatencyMeterPtr m_overall_latency_meter;
@@ -56,9 +58,11 @@ private:
     const bool m_should_print_ops;
     const uint64_t m_computational_ops;
 
-    double m_fps;
+    double m_cumulative_fps;
     double m_ops_value;
     double m_last_measured_fps;
+    uint32_t m_total_frames_count_at_last_tick;
+    uint32_t m_last_interval_frame_count;
 };
 
 #endif /* _HAILO_HAILORTCLI_RUN2_NETWORK_LIVE_TRACK_HPP_ */

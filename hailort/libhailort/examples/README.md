@@ -55,6 +55,8 @@ The following examples below demonstrate the HailoRT API:
   - `speech2text_example` - Demonstrates Speech2Text usage for audio transcription using HailoRT C++ API.
 
 ## Compiling with CMake
+> **_NOTE:_** When compiling examples from source, it is recommended to also compile libhailort from source to ensure include path and ABI compatibility. See the [HailoRT GitHub repository](https://github.com/hailo-ai/hailort) for source compilation details.
+
 Examples are configured and compiled using the following commands:
 ```sh
 cmake -S. -Bbuild -DCMAKE_BUILD_TYPE=Release

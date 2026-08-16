@@ -84,13 +84,13 @@ hailo_status UsbFunctionFsConfiguration::append_interface_descriptor(Buffer &buf
 hailo_status UsbFunctionFsConfiguration::append_bulk_endpoint(Buffer &buffer, size_t &offset, uint8_t endpoint_address, uint16_t max_packet_size)
 {
     usb_endpoint_descriptor endpoint = {};
-    endpoint.bLength = sizeof(usb_endpoint_descriptor);
+    endpoint.bLength = USB_DT_ENDPOINT_SIZE;
     endpoint.bDescriptorType = USB_DT_ENDPOINT;
     endpoint.bEndpointAddress = endpoint_address;
     endpoint.bmAttributes = USB_ENDPOINT_XFER_BULK;
     endpoint.wMaxPacketSize = BYTE_ORDER__htole16(max_packet_size);
     endpoint.bInterval = 0;
-    return append_to_buffer(buffer, offset, &endpoint, sizeof(endpoint));
+    return append_to_buffer(buffer, offset, &endpoint, USB_DT_ENDPOINT_SIZE);
 }
 
 hailo_status UsbFunctionFsConfiguration::append_superspeed_companion(Buffer &buffer, size_t &offset)

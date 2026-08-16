@@ -22,7 +22,6 @@
 namespace hailort
 {
 
-#define CONTROL__MAX_SEQUENCE (0xFFFFFFFF)
 #define CONTROL__MAX_WRITE_MEMORY_CHUNK_SIZE (1024)
 
 #define FW_MAGIC (0x1DD89DE0)
@@ -42,7 +41,7 @@ public:
 
     static hailo_status parse_and_validate_response(uint8_t *message, uint32_t message_size, 
         CONTROL_PROTOCOL__response_header_t **header, CONTROL_PROTOCOL__payload_t **payload, 
-        CONTROL_PROTOCOL__request_t *request, Device &device);
+        CONTROL_PROTOCOL__request_t *request);
 
     /**
      * Receive information about the device.
@@ -69,26 +68,6 @@ public:
      * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a static hailo_status error.
      */
     static hailo_status core_identify(Device &device, hailo_core_information_t *core_info);
-
-    /**
-     * Configure a UDP input dataflow stream at a Hailo device.
-     * 
-     * @param[in]     device - The Hailo device.
-     * @param[in]     params - The stream params that would be configured.
-     * @param[out]    dataflow_manager_id - Unique id of the dataflow manager.
-     * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a static hailo_status error.
-     */
-    static hailo_status config_stream_udp_input(Device &device, CONTROL_PROTOCOL__config_stream_params_t *params, uint8_t &dataflow_manager_id);
-
-    /**
-     * Configure a UDP output dataflow stream at a Hailo device.
-     * 
-     * @param[in]     device - The Hailo device.
-     * @param[in]     params - The stream params that would be configured.
-     * @param[out]    dataflow_manager_id - Unique id of the dataflow manager.
-     * @return Upon success, returns @a HAILO_SUCCESS. Otherwise, returns an @a static hailo_status error.
-     */
-    static hailo_status config_stream_udp_output(Device &device, CONTROL_PROTOCOL__config_stream_params_t *params, uint8_t &dataflow_manager_id);
 
     /**
      * Configure a MIPI input dataflow stream at a Hailo device.

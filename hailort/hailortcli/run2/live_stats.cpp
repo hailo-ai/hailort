@@ -17,6 +17,8 @@
 using namespace hailort;
 
 const uint8_t NETWORK_STATS_LEVEL = 1;
+static constexpr const char *SUMMARY_BANNER = "\nSummary\n";
+static constexpr uint8_t PROGRESS_LEVEL = 0;
 
 hailo_status LiveStats::Track::start()
 {
@@ -28,6 +30,11 @@ hailo_status LiveStats::Track::start()
 std::string LiveStats::Track::get_text() const
 {
     return m_started ? get_text_impl() : "";
+}
+
+std::string LiveStats::Track::get_summary_text() const
+{
+    return m_started ? get_summary_text_impl() : "";
 }
 
 void LiveStats::Track::push_json(nlohmann::ordered_json &json)
@@ -63,7 +70,8 @@ LiveStats::LiveStats(std::chrono::milliseconds interval, bool should_print) :
 LiveStats::~LiveStats()
 {
     stop();
-    measure_and_print();
+    measure();
+    print_summary();
 }
 
 void LiveStats::add(std::shared_ptr<Track> track, uint8_t level)
@@ -101,6 +109,44 @@ void LiveStats::print_measurements()
     CliCommon::reset_cursor(m_prev_line_count);
     std::cout << s << std::flush;
     m_prev_line_count = std::count(s.begin(), s.end(), '\n');
+}
+
+void LiveStats::print_summary()
+{
+    if (!m_should_print) {
+        return;
+    }
+
+    CliCommon::reset_cursor(m_prev_line_count);
+    m_prev_line_count = 0;
+
+    std::string progress;
+    const auto progress_it = m_tracks.find(PROGRESS_LEVEL);
+    if (m_tracks.end() != progress_it) {
+        for (const auto &track : progress_it->second) {
+            progress += track->get_text();
+        }
+    }
+
+    std::string summary;
+    for (const auto &[level, level_tracks] : m_tracks) {
+        if (PROGRESS_LEVEL == level) {
+            continue;
+        }
+        for (const auto &track : level_tracks) {
+            summary += track->get_summary_text();
+        }
+    }
+
+    if (progress.empty() && summary.empty()) {
+        return;
+    }
+
+    std::cout << progress;
+    if (!summary.empty()) {
+        std::cout << SUMMARY_BANNER << summary;
+    }
+    std::cout << std::flush;
 }
 
 hailo_status LiveStats::dump_stats(const std::string &json_path, const std::string &inference_mode)

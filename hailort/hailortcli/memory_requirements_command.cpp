@@ -30,6 +30,8 @@ private:
     void add_net_subcom();
 
     std::vector<MemoryRequirementsCalculator::HefParams> m_network_params;
+    // Keeping old subcommand alive, because we use weak_ptr for the current one to prevent leaks in lambda
+    std::shared_ptr<CLI::App> m_prev_net_app;
 };
 
 MemoryRequirementsNetworkApp::MemoryRequirementsNetworkApp() :
@@ -52,19 +54,24 @@ void MemoryRequirementsApp::add_net_subcom()
 {
     auto net_app = std::make_shared<MemoryRequirementsNetworkApp>();
     net_app->immediate_callback();
-    net_app->callback([this, net_app_weak=std::weak_ptr<MemoryRequirementsNetworkApp>(net_app)]() {
-        auto net_app = net_app_weak.lock();
-        if (!net_app) { return; }
-        m_network_params.push_back(net_app->get_params());
+    std::weak_ptr<MemoryRequirementsNetworkApp> weak_net_app = net_app;
+    net_app->callback([this, weak_net_app]() {
+        auto locked_net_app = weak_net_app.lock();
+        if (!locked_net_app) {
+            LOGGER__ERROR("Failed to lock net_app weak_ptr in callback");
+            return;
+        }
+        m_network_params.push_back(locked_net_app->get_params());
 
         // Throw an error if anything is left over and should not be.
         _process_extras();
 
-        remove_subcommand(net_app.get());
+        m_prev_net_app = locked_net_app;
+        remove_subcommand(locked_net_app.get());
         // Remove from parsed_subcommands_ as well (probably a bug in CLI11)
         parsed_subcommands_.erase(std::remove_if(
             parsed_subcommands_.begin(), parsed_subcommands_.end(),
-            [net_app](auto x){return x == net_app.get();}),
+            [&locked_net_app](auto x){return x == locked_net_app.get();}),
             parsed_subcommands_.end());
         add_net_subcom();
     });
@@ -122,7 +129,7 @@ hailo_status MemoryRequirementsCommand::execute()
     const auto elements_count = 3; // CMA, CMA-Desc, Pinned
 
     const size_t per_type_size = element_size * elements_count + (elements_count - 1); // Size includes (elements_count - 1) delimiters
-    const auto memory_types_count = 3; // Config, Intermediate, Total
+    const auto memory_types_count = 4; // Config, Intermediate, KV-Cache, Total
 
     const auto header_seperator = "+" + repeat("-", model_name_size) + "+" +
         repeat(repeat("-", per_type_size) + "+", memory_types_count);
@@ -138,9 +145,9 @@ hailo_status MemoryRequirementsCommand::execute()
 
     const auto print_row = [=](const std::string &name, const MemoryRequirements &req) {
         auto total = EdgeTypeMemoryRequirements{
-            req.config_buffers.cma_memory + req.intermediate_buffers.cma_memory,
-            req.config_buffers.cma_memory_for_descriptors + req.intermediate_buffers.cma_memory_for_descriptors,
-            req.config_buffers.pinned_memory + req.intermediate_buffers.pinned_memory
+            req.config_buffers.cma_memory + req.intermediate_buffers.cma_memory + req.cache_buffers.cma_memory,
+            req.config_buffers.cma_memory_for_descriptors + req.intermediate_buffers.cma_memory_for_descriptors + req.cache_buffers.cma_memory_for_descriptors,
+            req.config_buffers.pinned_memory + req.intermediate_buffers.pinned_memory + req.cache_buffers.pinned_memory
         };
         std::cout << fmt::format(body_table_format, name,
             pretty_byte_size_print(req.config_buffers.cma_memory),
@@ -149,6 +156,9 @@ hailo_status MemoryRequirementsCommand::execute()
             pretty_byte_size_print(req.intermediate_buffers.cma_memory),
             pretty_byte_size_print(req.intermediate_buffers.cma_memory_for_descriptors),
             pretty_byte_size_print(req.intermediate_buffers.pinned_memory),
+            pretty_byte_size_print(req.cache_buffers.cma_memory),
+            pretty_byte_size_print(req.cache_buffers.cma_memory_for_descriptors),
+            pretty_byte_size_print(req.cache_buffers.pinned_memory),
             pretty_byte_size_print(total.cma_memory),
             pretty_byte_size_print(total.cma_memory_for_descriptors),
             pretty_byte_size_print(total.pinned_memory)) << "\n";
@@ -156,11 +166,12 @@ hailo_status MemoryRequirementsCommand::execute()
 
     std::cout << "Memory Requirements:\n";
     std::cout << header_seperator << "\n";
-    std::cout << fmt::format(header_first_format, "Weights", "Inter", "Total") << "\n";
+    std::cout << fmt::format(header_first_format, "Weights", "Inter", "KV-Cache", "Total") << "\n";
     std::cout << fmt::format(header_second_format, "Model") << "\n";
 
     std::cout << fmt::format(body_table_format, "", "CMA", "CMA-Desc", "Pinned",
-        "CMA", "CMA-Desc", "Pinned", "CMA", "CMA-Desc", "Pinned")  << "\n";
+        "CMA", "CMA-Desc", "Pinned", "CMA", "CMA-Desc", "Pinned",
+        "CMA", "CMA-Desc", "Pinned")  << "\n";
     std::cout << body_seperator << "\n";
     for (size_t i = 0; i < params.size(); i++) {
         print_row(get_name(params[i]), requirements.hefs_memory_requirements[i]);

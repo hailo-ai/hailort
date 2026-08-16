@@ -13,7 +13,6 @@
 #include "hailortcli.hpp"
 #include "command.hpp"
 
-
 class LogsCommand : public Command {
 public:
     explicit LogsCommand(CLI::App &parent_app);
@@ -28,6 +27,7 @@ private:
     hailo_device_params m_device_params;
     hailo_log_type_t m_log_type;
     bool m_should_follow;
+    bool m_should_clear;
 };
 
 #endif /* _HAILO_LOGS_COMMAND_HPP_ */

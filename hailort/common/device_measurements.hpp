@@ -35,6 +35,7 @@ public:
     virtual hailo_status start_measurement() = 0;
     void stop_measurement();
     hailort::AccumulatorResults get_data();
+    hailort::AccumulatorResults get_interval_data_and_reset();
 
     virtual std::string measurement_unit() = 0;
 
@@ -44,6 +45,7 @@ protected:
     std::atomic_bool m_is_thread_running;
     std::mutex m_mutex;
     hailort::AccumulatorPtr m_acc;
+    hailort::AccumulatorPtr m_interval_acc;
 
 private:
     virtual hailo_status sanity_check() = 0;

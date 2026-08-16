@@ -16,20 +16,13 @@
 #include "hrpc/server_resource_manager.hpp"
 #include "hrpc_protocol/serializer.hpp"
 #include "net_flow/ops/nms_post_process.hpp"
+#include "common/timeouts.hpp"
 
 #include <unordered_map>
 
 using namespace hailort;
 
 #define ASYNC_QUEUE_SIZE_FACTOR (2) // double buffer
-
-#ifndef HAILO_EMULATOR
-constexpr std::chrono::milliseconds WAIT_FOR_VDEVICE_TIMEOUT(std::chrono::seconds(5));
-constexpr std::chrono::milliseconds KV_CACHE_RELEASE_TIMEOUT(std::chrono::seconds(5));
-#else /* ifndef HAILO_EMULATOR */
-constexpr std::chrono::milliseconds WAIT_FOR_VDEVICE_TIMEOUT(std::chrono::seconds(5000));
-constexpr std::chrono::milliseconds KV_CACHE_RELEASE_TIMEOUT(std::chrono::seconds(5000));
-#endif /* ifndef HAILO_EMULATOR */
 
 #define REGISTER_ACTION(_dispatcher, action_id, handler_func) \
     _dispatcher.register_handler(static_cast<uint32_t>(HailoRpcActionID::action_id), \
@@ -68,7 +61,7 @@ hailo_status VDeviceManager::wait_for_vdevice_ready(uint32_t client_id, std::uni
                (m_active_clients_with_vdevice.size() == 0) &&
                (m_pending_close_clients_with_vdevice.size() == 0);
     };
-    auto is_ready = m_vdevice_clients_cv.wait_for(lock, WAIT_FOR_VDEVICE_TIMEOUT, check_ready);
+    auto is_ready = m_vdevice_clients_cv.wait_for(lock, SERVER_WAIT_FOR_VDEVICE_TIMEOUT, check_ready);
     CHECK(is_ready, HAILO_TIMEOUT, "Timeout out waiting for VDevice ready");
 
     return HAILO_SUCCESS;
@@ -155,7 +148,7 @@ std::timed_mutex KvCacheFlag::m_mutex;
 Expected<KvCacheGuard> KvCacheFlag::acquire()
 {
     KvCacheGuard lock(m_mutex, std::defer_lock);
-    auto was_lock_successful = lock.try_lock_for(KV_CACHE_RELEASE_TIMEOUT);
+    auto was_lock_successful = lock.try_lock_for(SERVER_KV_CACHE_RELEASE_TIMEOUT);
     CHECK(was_lock_successful, HAILO_INVALID_OPERATION, "KV-Cache is already in use!");
 
     LOGGER__INFO("Marking KV-Cache in use");
@@ -1149,12 +1142,13 @@ hailo_status HailoRTServer::handle_device_fetch_logs(const MemoryView &request, 
     auto device_handle = std::get<0>(tuple);
     auto buffer_size = std::get<1>(tuple);
     auto log_type = std::get<2>(tuple);
+    auto should_clear = std::get<3>(tuple);
     auto &manager = ServerResourceManager<Device>::get_instance();
 
     TRY(auto syslog_buffer, Buffer::create_shared(buffer_size));
 
-    auto device_lambda = [mem_view = syslog_buffer->as_view(), log_type] (std::shared_ptr<Device> device) -> Expected<size_t> {
-        return device->fetch_logs(mem_view, log_type);
+    auto device_lambda = [mem_view = syslog_buffer->as_view(), log_type, should_clear] (std::shared_ptr<Device> device) -> Expected<size_t> {
+        return device->fetch_logs(mem_view, log_type, should_clear);
     };
 
     TRY(auto log_size, manager.execute<Expected<size_t>>(device_handle, device_lambda));

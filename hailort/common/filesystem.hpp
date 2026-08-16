@@ -24,7 +24,7 @@
 #include <dirent.h>
 #endif
 
-#if defined(_MSC_VER)
+#if defined(_WIN32)
 #include <minwinbase.h>
 #endif
 
@@ -36,7 +36,6 @@ public:
     Filesystem() = delete;
 
     static Expected<std::vector<std::string>> get_files_in_dir_flat(const std::string &dir_path);
-    static Expected<std::vector<std::string>> get_latest_files_in_dir_flat(const std::string &dir_path, std::chrono::milliseconds time_interval);
     static Expected<bool> is_directory(const std::string &path);
     static hailo_status create_directory(const std::string &dir_path);
     static hailo_status remove_directory(const std::string &dir_path);

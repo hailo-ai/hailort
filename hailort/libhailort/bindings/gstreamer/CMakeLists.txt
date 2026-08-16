@@ -54,7 +54,6 @@ elseif (WIN32)
     set(HAILORT_COMPILE_OPTIONS
         ${HAILORT_COMPILE_OPTIONS}
         /DWIN32_LEAN_AND_MEAN
-        /DNOMINMAX                  # NOMINMAX is required in order to avoid conflicts with std::min/std::max (otherwise Windows.h defines it's own)
         /D_HAILO_EXPORTING
         /wd4201                     # Anonymous union/struct
         /wd4251                     # C++ ABI with STL
@@ -91,11 +90,13 @@ elseif (MSVC)
 endif()
 
 # Install command using the set variables
-install(TARGETS gsthailo
-    RUNTIME DESTINATION "${GSTREAMER_LIB_DEST}"
-    LIBRARY DESTINATION "${GSTREAMER_LIB_DEST}"
-    ARCHIVE DESTINATION "${GSTREAMER_LIB_DEST}"
-)
+if (NOT HAILO_SUPPORT_PACKAGING)
+    install(TARGETS gsthailo
+        RUNTIME DESTINATION "${GSTREAMER_LIB_DEST}"
+        LIBRARY DESTINATION "${GSTREAMER_LIB_DEST}"
+        ARCHIVE DESTINATION "${GSTREAMER_LIB_DEST}"
+    )
+endif()
 
 # Install the entire gst-hailo/include directory and its contents
 install(DIRECTORY gst-hailo/include

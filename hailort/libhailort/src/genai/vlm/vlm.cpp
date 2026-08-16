@@ -85,7 +85,7 @@ Expected<std::unique_ptr<VLM::Impl>> VLM::Impl::create_unique(std::shared_ptr<ha
     TRY(auto acquire_kv_cache_reply, session_wrapper->execute(MemoryView(acquire_kv_cache_request)));
     auto acquire_status = LLMAcquireKvCacheSerializer::deserialize_reply(MemoryView(*acquire_kv_cache_reply));
     CHECK_SUCCESS(acquire_status, "Failed to acquire KV-Cache. KV-Cache is already in use by another model.");
-    // Note: If any subsequent step fails, the server-side KV cache is release when LLMServerManager is destroyed on session close.
+    // Note: If any subsequent step fails, the server-side KV cache guard is released in ~LLMServer on session close.
 
     // Translate vlm_params.hef() to an absolute path if it is not already
     std::string hef_path = vlm_params.hef();
@@ -129,7 +129,7 @@ Expected<std::unique_ptr<VLM::Impl>> VLM::Impl::create_unique(std::shared_ptr<ha
         LOGGER__INFO("Sending {} HEF chunks to server", parse_result.chunks.size());
         for (const auto &chunk : parse_result.chunks) {
             LOGGER__DEBUG("Sending HEF chunk '{}' (offset: {}, size: {} bytes)", chunk.name, chunk.offset, chunk.size);
-            CHECK_SUCCESS(session_wrapper->send_file_chunked(hef_path, chunk.size, static_cast<uint32_t>(chunk.offset)));
+            CHECK_SUCCESS(session_wrapper->send_file_chunked(hef_path, chunk.size, chunk.offset));
         }
 
 #ifdef HAILO_CLIENT_TOKENIZER_ENABLED

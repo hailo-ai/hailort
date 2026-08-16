@@ -16,11 +16,54 @@
 #include "common.hpp"
 #include "monitor_common.hpp"
 
+#include <chrono>
+#include <filesystem>
 #include <iostream>
 #include <thread>
 
 namespace hailort
 {
+
+namespace fs = std::filesystem;
+
+std::vector<std::string> IntegratedMonitor::get_recent_mon_files(const std::string &dir_path,
+    std::chrono::milliseconds time_interval)
+{
+    const auto std_path = fs::path(dir_path);
+    std::error_code ec;
+    if (!fs::is_directory(std_path, ec)) {
+        return std::vector<std::string>{};
+    }
+
+    fs::directory_iterator it(std_path, ec);
+    if (ec) {
+        LOGGER__DEBUG("Failed to scan monitor directory {}: {}", dir_path, ec.message());
+        return std::vector<std::string>{};
+    }
+
+    const auto cutoff = fs::file_time_type::clock::now() - time_interval;
+    std::vector<std::string> file_paths;
+    for (; it != fs::directory_iterator(); it.increment(ec)) {
+        if (ec) { break; }
+        const auto &dir_entry = *it;
+        if (!dir_entry.is_regular_file(ec)) {
+            continue;
+        }
+        const auto &entry_path = dir_entry.path();
+        // Skip in-flight writes from MonitorHandler::dump_state, which renames <file>.tmp onto <file>.
+        if (".tmp" == entry_path.extension()) {
+            continue;
+        }
+        const auto ftime = fs::last_write_time(entry_path, ec);
+        if (ec) {
+            continue;
+        }
+        if (ftime >= cutoff) {
+            file_paths.emplace_back(entry_path.string());
+        }
+    }
+    return file_paths;
+}
 
 constexpr size_t STRING_WIDTH = 60;
 constexpr size_t NETWORK_GROUP_NAME_WIDTH = STRING_WIDTH;
@@ -197,51 +240,33 @@ hailo_status IntegratedMonitor::run(bool verbose)
     std::chrono::milliseconds time_interval = DEFAULT_SCHEDULER_MON_INTERVAL + EPSILON_TIME;
     AlternativeTerminal alt_terminal;
     while (InterruptHandler::is_running()) {
-        bool print_warning_msg = true; // Will change to false only if mon directory is valid and there are updated files in it.
-        TRY(const auto mon_dir_valid, Filesystem::is_directory(SCHEDULER_MON_TMP_DIR));
+        const auto scheduler_mon_files = get_recent_mon_files(SCHEDULER_MON_TMP_DIR, time_interval);
 
         std::vector<ProtoMon> mon_messages;
-        if (mon_dir_valid) {
-            TRY(auto scheduler_mon_files_with_tmp, Filesystem::get_latest_files_in_dir_flat(SCHEDULER_MON_TMP_DIR, time_interval));
-
-            // Filter out .tmp files - these files are created for temporary use and should not be considered
-            std::vector<std::string> scheduler_mon_files;
-            std::copy_if(scheduler_mon_files_with_tmp.begin(), scheduler_mon_files_with_tmp.end(), std::back_inserter(scheduler_mon_files),
-                [](const std::string &file) {
-                    return !Filesystem::has_suffix(file, ".tmp");
-                });
-
-            print_warning_msg = scheduler_mon_files.empty();
-
-            mon_messages.reserve(scheduler_mon_files.size());
-            for (const auto &mon_file : scheduler_mon_files) {
-                auto file = LockedFile::create(mon_file, "r");
-                if (HAILO_SUCCESS != file.status()) {
-                    LOGGER__ERROR("Failed to open and lock file {}, with status: {}", mon_file, file.status());
-                    continue;
-                }
-
-                auto status = file->lock();
-                if (HAILO_SUCCESS != status) {
-                    LOGGER__ERROR("Failed to lock file {}, with status: {}", mon_file, status);
-                    continue;
-                }
-
-                ProtoMon mon_message;
-                if (!mon_message.ParseFromFileDescriptor(file->get_fd())) {
-                    LOGGER__WARNING("Failed to ParseFromFileDescriptor monitor file {} with errno {}", mon_file, errno);
-                    continue;
-                }
-
-                mon_messages.emplace_back(std::move(mon_message));
+        mon_messages.reserve(scheduler_mon_files.size());
+        for (const auto &mon_file : scheduler_mon_files) {
+            auto file = LockedFile::create(mon_file, "r");
+            if (HAILO_SUCCESS != file.status()) {
+                LOGGER__ERROR("Failed to open and lock file {}, with status: {}", mon_file, file.status());
+                continue;
             }
+
+            auto status = file->lock();
+            if (HAILO_SUCCESS != status) {
+                LOGGER__ERROR("Failed to lock file {}, with status: {}", mon_file, status);
+                continue;
+            }
+
+            ProtoMon mon_message;
+            if (!mon_message.ParseFromFileDescriptor(file->get_fd())) {
+                LOGGER__WARNING("Failed to ParseFromFileDescriptor monitor file {} with errno {}", mon_file, errno);
+                continue;
+            }
+
+            mon_messages.emplace_back(std::move(mon_message));
         }
 
         CHECK_SUCCESS(print_tables(mon_messages, verbose));
-        if (print_warning_msg) {
-            std::cout << FORMAT_GREEN_PRINT << "Monitor did not retrieve any files. This occurs when there is no application currently running.\n"
-            << "If this is not the case, verify that environment variable '" << SCHEDULER_MON_ENV_VAR << "' is set to 1.\n" << FORMAT_NORMAL_PRINT;
-        }
 
         std::this_thread::sleep_for(DEFAULT_SCHEDULER_MON_INTERVAL);
     }

@@ -33,10 +33,8 @@ public:
 
     hailo_status submit_read(int fd, uint8_t *data, size_t size, size_t offset);
     hailo_status submit_write(int fd, const uint8_t *data, size_t size, size_t offset);
-    Expected<size_t> wait_for_completion(int fd, const std::atomic_bool &is_closed);
-    
-    // Signals the eventfd to unblock a pending wait_for_completion().
-    void wake();
+    Expected<size_t> wait_for_completion();
+    void complete();
 
     AioContext(io_context_t ctx, int eventfd);
 

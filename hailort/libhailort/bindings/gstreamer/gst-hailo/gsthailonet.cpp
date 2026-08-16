@@ -1,6 +1,6 @@
 /**
  * Copyright (c) 2019-2026 Hailo Technologies Ltd. All rights reserved.
- * Distributed under the LGPL 2.1 license (https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt)
+ * Distributed under the LGPL-2.1-or-later license (https://spdx.org/licenses/LGPL-2.1-or-later.html)
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -27,8 +27,6 @@
 
 #include <algorithm>
 #include <unordered_map>
-
-#define WAIT_FOR_ASYNC_READY_TIMEOUT (std::chrono::milliseconds(10000))
 
 enum
 {

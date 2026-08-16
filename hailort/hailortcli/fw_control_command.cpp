@@ -204,7 +204,6 @@ hailo_status FwControlIdentifyCommand::execute_on_device(Device &device)
     std::cout << "Control Protocol Version: " << identity.protocol_version << std::endl;
     std::cout << "Firmware Version: " << fw_version_string(identity) << std::endl;
     std::cout << "Logger Version: " << identity.logger_version << std::endl;
-    std::cout << valid_attr_str("Board Name", identity.board_name, identity.board_name_length);
     std::cout << "Device Architecture: " << identity_arch_string(identity) << std::endl;
     std::cout << valid_attr_str("Serial Number", identity.serial_number, identity.serial_number_length);
     std::cout << valid_attr_str("Part Number", identity.part_number, identity.part_number_length);

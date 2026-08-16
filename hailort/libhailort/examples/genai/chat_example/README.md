@@ -30,7 +30,7 @@ cmake --build build --config release
 
 ### Execution
 ```bash
-./build/cpp/chat_example/chat_example <hef_path>
+./build/chat_example <hef_path>
 ```
 
 ## Structured Prompts

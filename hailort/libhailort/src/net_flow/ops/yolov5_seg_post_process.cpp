@@ -13,15 +13,19 @@
 #include "transform/eigen.hpp"
 #include <cmath>
 
-#ifndef _MSC_VER
+#if !defined(_MSC_VER)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wconversion"
-#endif // Not MSC
+#else
+/* MSVC does not emit conversion warnings for stb_image_resize */
+#endif /* !defined(_MSC_VER) */
 #define STB_IMAGE_RESIZE_IMPLEMENTATION
 #include "stb_image_resize.h"
-#ifndef _MSC_VER
+#if !defined(_MSC_VER)
 #pragma GCC diagnostic pop
-#endif // Not MSC
+#else
+/* No action needed — MSVC did not push diagnostics */
+#endif /* !defined(_MSC_VER) */
 
 namespace hailort
 {
