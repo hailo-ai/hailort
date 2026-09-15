@@ -34,6 +34,14 @@ Expected<CacheBuffer> CacheBuffer::create(std::shared_ptr<vdma::VdmaBuffer> back
         ((output_size % padded_entry_size) == 0),
         HAILO_INVALID_ARGUMENT, "Invalid cache entry size: {}", padded_entry_size);
 
+    // Each side's entry count is passed on as its edge layer's batch size, which is a uint16_t
+    static constexpr auto MAX_ENTRIES_PER_SIDE = std::numeric_limits<uint16_t>::max();
+    const auto input_length = input_size / padded_entry_size;
+    const auto output_length = output_size / padded_entry_size;
+    CHECK((input_length <= MAX_ENTRIES_PER_SIDE) && (output_length <= MAX_ENTRIES_PER_SIDE), HAILO_INVALID_ARGUMENT,
+        "Cache read/write lengths ({}/{} entries) exceed the maximum of {} entries", input_length, output_length,
+        MAX_ENTRIES_PER_SIDE);
+
     return CacheBuffer(cache_size, input_size, output_size, static_cast<uint16_t>(entry_size),
         static_cast<uint16_t>(padded_entry_size), backing_buffer);
 }
@@ -167,6 +175,8 @@ hailo_status CacheBuffer::reprogram_descriptors_per_side(bool is_side_input, siz
 
     const auto offset_in_entries = buffer_offset / m_padded_entry_size;
     const auto total_entries_count = multi_sg_edge_layer->backing_buffer_size() / m_padded_entry_size;
+    CHECK(offset_in_entries < total_entries_count, HAILO_INTERNAL_FAILURE,
+        "Buffer offset {} entries is past the end of the {}-entry cache", offset_in_entries, total_entries_count);
     const auto entries_to_end = std::min(entries_to_program, static_cast<uint32_t>(total_entries_count - offset_in_entries));
     const auto entries_from_start = entries_to_program - entries_to_end;
 
@@ -188,26 +198,25 @@ hailo_status CacheBuffer::reprogram_descriptors_per_side(bool is_side_input, siz
     return HAILO_SUCCESS;
 }
 
-hailo_status CacheBuffer::reprogram_descriptors(uint32_t new_read_offset_entries)
+hailo_status CacheBuffer::reprogram_descriptors(uint64_t absolute_read_offset_entries)
 {
     CHECK(m_cache_input && m_cache_output, HAILO_INTERNAL_FAILURE, "IOs not set");
-    bool is_side_input = true;
 
-    const auto new_read_offset_bytes = new_read_offset_entries * padded_entry_size();
-    // Input buffer
-    auto status = reprogram_descriptors_per_side(is_side_input, new_read_offset_bytes);
-    CHECK_SUCCESS(status, "Failed to reprogram read cache descriptors to offset 0x{:x} (0x{:x} B)",
-        new_read_offset_entries, new_read_offset_bytes);
+    const auto read_offset_in_cache = absolute_read_offset_entries % m_cache_length;
+    const size_t read_offset_bytes = static_cast<size_t>(read_offset_in_cache) * padded_entry_size();
+    bool is_side_input = true;
+    auto status = reprogram_descriptors_per_side(is_side_input, read_offset_bytes);
+    CHECK_SUCCESS(status, "Failed to reprogram read cache descriptors to in-cache offset 0x{:x} (0x{:x} B)",
+        read_offset_in_cache, read_offset_bytes);
 
     // The write offset is right after the end of read buffer (i.e. cache_input_length entries from the read offset)
     const auto write_offset_entries_delta = input_length();
-    const auto new_write_offset_entries = (new_read_offset_entries + write_offset_entries_delta) % m_cache_length;
-    const auto new_write_offset_bytes = new_write_offset_entries * padded_entry_size();
-    // Output buffer
+    const auto write_offset_in_cache = (read_offset_in_cache + write_offset_entries_delta) % m_cache_length;
+    const size_t write_offset_bytes = static_cast<size_t>(write_offset_in_cache) * padded_entry_size();
     is_side_input = false;
-    status = reprogram_descriptors_per_side(is_side_input, new_write_offset_bytes);
-    CHECK_SUCCESS(status, "Failed to reprogram write cache descriptors to offset 0x{:x} (0x{:x} B)",
-        new_write_offset_entries, new_write_offset_bytes);
+    status = reprogram_descriptors_per_side(is_side_input, write_offset_bytes);
+    CHECK_SUCCESS(status, "Failed to reprogram write cache descriptors to in-cache offset 0x{:x} (0x{:x} B)",
+        write_offset_in_cache, write_offset_bytes);
 
     return HAILO_SUCCESS;
 }
@@ -257,10 +266,12 @@ uint32_t CacheBuffer::Snapshot::read_offset() const
     return m_read_offset;
 }
 
-Expected<CacheBuffer::Snapshot> CacheBuffer::create_snapshot(uint32_t read_offset)
+Expected<CacheBuffer::Snapshot> CacheBuffer::create_snapshot(uint64_t absolute_read_offset_entries)
 {
+    const auto read_offset_in_cache = absolute_read_offset_entries % m_cache_length;
+
     TRY(auto buffer, read_cache());
-    return Snapshot(std::move(buffer), read_offset);
+    return Snapshot(std::move(buffer), static_cast<uint32_t>(read_offset_in_cache));
 }
 
 CONTROL_PROTOCOL__host_buffer_info_t CacheBuffer::get_host_input_buffer_info() const

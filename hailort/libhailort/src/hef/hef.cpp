@@ -32,6 +32,7 @@
 #include "net_flow/ops/yolov5_seg_post_process.hpp"
 #include "net_flow/ops/yolov8_post_process.hpp"
 #include "net_flow/ops/yolov8_bbox_only_post_process.hpp"
+#include "net_flow/ops/damoyolo_post_process.hpp"
 #include "hef/hef_internal.hpp"
 #include "vdma/legacy_pcie/legacy_pcie_device.hpp"
 #include "vdma/vdma_config_manager.hpp"
@@ -1325,6 +1326,42 @@ Expected<net_flow::PostProcessOpMetadataPtr> create_yolov8_op_metadata(const Pro
         network_name);
 }
 
+Expected<net_flow::Yolov8PostProcessConfig> create_damoyolo_config(const ProtoHEFOp &op_proto, const std::map<size_t, LayerInfo> &pad_index_to_streams_info)
+{
+    // DAMO-YOLO reuses YOLOv8's config schema (per-stride reg/cls layers + image dims).
+    net_flow::Yolov8PostProcessConfig damoyolo_config{};
+    damoyolo_config.image_height = (float32_t)op_proto.nms_op().damoyolo_nms_op().image_height();
+    damoyolo_config.image_width = (float32_t)op_proto.nms_op().damoyolo_nms_op().image_width();
+
+    for (auto &bbox_proto : op_proto.nms_op().damoyolo_nms_op().bbox_decoders()) {
+        assert(contains(pad_index_to_streams_info, static_cast<size_t>(bbox_proto.reg_pad_index())));
+        auto reg_name = pad_index_to_streams_info.at(bbox_proto.reg_pad_index()).name;
+        assert(contains(pad_index_to_streams_info, static_cast<size_t>(bbox_proto.cls_pad_index())));
+        auto cls_name = pad_index_to_streams_info.at(bbox_proto.cls_pad_index()).name;
+        damoyolo_config.reg_to_cls_inputs.emplace_back(net_flow::Yolov8MatchingLayersNames{reg_name, cls_name, bbox_proto.stride()});
+    }
+    return damoyolo_config;
+}
+
+Expected<net_flow::PostProcessOpMetadataPtr> create_damoyolo_op_metadata(const ProtoHEFOp &op_proto,
+    const std::map<size_t, LayerInfo> &pad_index_to_streams_info, const std::map<size_t, size_t> &input_to_output_pads,
+    const std::string &network_name)
+{
+    auto nms_config = create_post_process_nms_config(op_proto);
+    TRY(auto damoyolo_config, create_damoyolo_config(op_proto, pad_index_to_streams_info));
+
+    std::unordered_map<std::string, net_flow::BufferMetaData> outputs_metadata;
+    net_flow::BufferMetaData output_metadata{};
+    output_metadata.format = net_flow::NmsOpMetadata::expand_output_format_autos_by_op_type(
+        { HAILO_FORMAT_TYPE_AUTO, HAILO_FORMAT_ORDER_AUTO, HAILO_FORMAT_FLAGS_NONE }, net_flow::OperationType::DAMOYOLO, nms_config.bbox_only);
+    outputs_metadata.insert({op_proto.output_pads()[0].name(), output_metadata});
+
+    TRY(auto inputs_metadata, create_inputs_metadata(op_proto, pad_index_to_streams_info, input_to_output_pads));
+
+    return net_flow::DamoyoloOpMetadata::create(inputs_metadata, outputs_metadata, nms_config, damoyolo_config,
+        network_name);
+}
+
 uint32_t compute_yolov8_bbox_only_num_of_proposals(const std::unordered_map<std::string, net_flow::BufferMetaData> &inputs_metadatas)
 {
     static const uint32_t YOLOV8_NUM_OF_OUTPUTS_PER_SHAPE = 2;
@@ -1690,6 +1727,11 @@ Expected<std::vector<net_flow::PostProcessOpMetadataPtr>> Hef::Impl::create_ops_
                                 input_to_output_pads, network_name));
                             break;
                         }
+                    }
+                    case ProtoHEFNmsOp::kDamoyoloNmsOp: {
+                        TRY(post_process_op_metadata, create_damoyolo_op_metadata(op_proto, pad_index_to_streams_info,
+                            input_to_output_pads, network_name));
+                        break;
                     }
                     default: {
                         LOGGER__ERROR("Unsupported Net-Flow NMS-Op");

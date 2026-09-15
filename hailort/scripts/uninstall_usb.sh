@@ -33,7 +33,7 @@ else
     echo "Upload tool not found, skipping."
 fi
 
-echo "Removing image files and load_image.sh script..."
+echo "Removing image files and load_usb_image.sh script..."
 if [[ -d "${IMAGE_DIR_DEST}" ]]; then
     rm -rf "${IMAGE_DIR_DEST:?}"/*
     echo "Directory ${IMAGE_DIR_DEST} cleaned."

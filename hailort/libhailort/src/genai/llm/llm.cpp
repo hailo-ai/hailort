@@ -257,9 +257,10 @@ Expected<std::unique_ptr<LLM::Impl>> LLM::Impl::create_unique(std::shared_ptr<VD
         TRY(create_llm_request, LLMCreateSerializer::serialize_request(vdevice_params, llm_params, hef_path_to_send));
         TRY(create_llm_reply, session_wrapper->execute(MemoryView(create_llm_request)));
     }
-    TRY(auto reply_tuple, LLMCreateSerializer::deserialize_reply(MemoryView(*create_llm_reply)), "Failed to create LLM");
-    auto prompt_template = std::get<0>(reply_tuple);
-    auto embedding_features = std::get<1>(reply_tuple);
+    TRY(auto create_llm_reply_info, LLMCreateSerializer::deserialize_reply(MemoryView(*create_llm_reply)),
+        "Failed to create LLM");
+    const auto &prompt_template = create_llm_reply_info.prompt_template;
+    const auto embedding_features = create_llm_reply_info.embedding_features;
 
     if (llm_params.optimize_memory_on_device()) {
 #ifndef HAILO_CLIENT_TOKENIZER_ENABLED
@@ -279,7 +280,8 @@ Expected<std::unique_ptr<LLM::Impl>> LLM::Impl::create_unique(std::shared_ptr<VD
     TRY_V(auto get_generator_default_params, session_wrapper->execute(MemoryView(get_generator_default_params_request)));
     TRY(auto default_generator_params, LLMGetGeneratorParamsSerializer::deserialize_reply(MemoryView(*get_generator_default_params)));
 
-    TRY(auto prompt_template_handler, PromptTemplateHandler::create(prompt_template));
+    TRY(auto prompt_template_handler, PromptTemplateHandler::create(prompt_template,
+        create_llm_reply_info.bos_token, create_llm_reply_info.eos_token));
     auto prompt_template_handler_ptr = make_shared_nothrow<PromptTemplateHandler>(std::move(prompt_template_handler));
     CHECK_NOT_NULL_AS_EXPECTED(prompt_template_handler_ptr, HAILO_OUT_OF_HOST_MEMORY);
 

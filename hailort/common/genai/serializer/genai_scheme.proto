@@ -93,6 +93,8 @@ message LLM_Create_Reply {
     uint32 status = 1;
     string prompt_template = 2;
     uint32 embedding_features = 3;
+    string bos_token = 4;
+    string eos_token = 5;
 }
 
 message LLM_Get_Generator_Params_Request {
@@ -301,6 +303,8 @@ message VLM_Create_Reply {
     uint32 image_pad_token_id = 6;
     uint32 video_pad_token_id = 7;
     uint32 embeddings_per_frame = 8;
+    string bos_token = 9;
+    string eos_token = 10;
 }
 
 message VLM_Generator_Generate_Request {

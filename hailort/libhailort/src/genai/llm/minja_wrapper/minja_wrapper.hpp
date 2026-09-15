@@ -27,7 +27,10 @@ namespace genai
 class PromptTemplateHandler final
 {
 public:
-    static Expected<PromptTemplateHandler> create(const std::string &prompt_template);
+    // bos_token / eos_token are the strings the template substitutes for '{{bos_token}}' / '{{eos_token}}'.
+    // A model whose template does not reference them may pass empty strings.
+    static Expected<PromptTemplateHandler> create(const std::string &prompt_template, const std::string &bos_token,
+        const std::string &eos_token);
 
     Expected<std::string> render(const std::vector<std::string> &prompt_json_strings, const std::vector<std::string> &tools_json_strings = {});
     void reset_state();

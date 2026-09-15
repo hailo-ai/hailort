@@ -27,6 +27,15 @@ namespace hailort
 
 constexpr std::chrono::seconds LONG_RPC_ACTION_TIMEOUT = std::chrono::seconds(45);
 
+// A multi-GB HEF outlasts any fixed RPC timeout, so the budget scales with size.
+// The rate is a conservative floor.
+constexpr uint64_t MIN_HEF_TRANSFER_RATE_BYTES_PER_SEC = 25 * 1024 * 1024;
+
+inline std::chrono::seconds hef_transfer_timeout(uint64_t hef_size)
+{
+    return LONG_RPC_ACTION_TIMEOUT + std::chrono::seconds(static_cast<int64_t>(hef_size / MIN_HEF_TRANSFER_RATE_BYTES_PER_SEC));
+}
+
 enum class HailoRpcActionID {
     VDEVICE__CREATE,
     VDEVICE__DESTROY,

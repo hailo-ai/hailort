@@ -57,8 +57,9 @@ protected:
                        const NmsPostProcessConfig &nms_post_process_config,
                        const Yolov8PostProcessConfig &yolov8_post_process_config,
                        const std::string &network_name,
-                       const std::string &name = "YOLOV8-Post-Process")
-        : NmsOpMetadata(inputs_metadata, outputs_metadata, nms_post_process_config, name, network_name, OperationType::YOLOV8)
+                       const std::string &name = "YOLOV8-Post-Process",
+                       const OperationType type = OperationType::YOLOV8)
+        : NmsOpMetadata(inputs_metadata, outputs_metadata, nms_post_process_config, name, network_name, type)
         , m_yolov8_config(yolov8_post_process_config)
     {}
     Yolov8PostProcessConfig m_yolov8_config;

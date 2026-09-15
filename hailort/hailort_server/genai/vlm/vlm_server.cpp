@@ -129,9 +129,10 @@ std::future<hailo_status> VLMServer::create_pre_process_future(const Hef &hef,
         TRY(auto embeddings_input_name, get_layer_name_from_suffix<size_t>(m_input_layers_names_suffixes.embeddings, prefill_inputs_frame_size));
         TRY(auto embeddings_input, m_inference_manager_prefill->get_model()->input(embeddings_input_name));
         m_embeddings_features = embeddings_input.shape().features;
+        auto embeddings_dtype = embeddings_input.format().type;
 
         // Get scaled-mask value
-        TRY(auto mask_input_name, get_layer_name_from_suffix<size_t>(m_input_layers_names_suffixes.attention_mask, prefill_inputs_frame_size));
+        TRY(auto mask_input_name, get_layer_name_from_suffix<size_t>(m_input_layers_names_suffixes.attention.mask, prefill_inputs_frame_size));
         TRY(auto mask_input, m_inference_manager_prefill->get_model()->input(mask_input_name));
         auto mask_quant_infos = mask_input.get_quant_infos();
         CHECK(1 == mask_quant_infos.size(), HAILO_INTERNAL_FAILURE);
@@ -145,8 +146,9 @@ std::future<hailo_status> VLMServer::create_pre_process_future(const Hef &hef,
             deepstack_suffix_to_tokens_per_frame[info.decoder_input_suffix] = info.tokens_per_frame;
         }
         TRY(m_pre_process, VLMPreProcess::create(prefill_inputs_frame_size, tbt_inputs_frame_size,
-            std::move(theta), m_embeddings_features, m_encoder_input_shape, scaled_mask_value, m_input_layers_names_suffixes,
-            m_pre_process_params, m_has_deepstack_layers, deepstack_suffix_to_tokens_per_frame));
+            theta, m_embeddings_features, embeddings_dtype, m_encoder_input_shape, scaled_mask_value,
+            m_input_layers_names_suffixes, m_pre_process_params, m_has_deepstack_layers,
+            deepstack_suffix_to_tokens_per_frame));
         LOGGER__GENAI_STATS_END("[create] create PreProcess");
         pre_process_created_event->signal();
 
@@ -408,8 +410,19 @@ Expected<Buffer> VLMServer::handle_create_vlm_request(const MemoryView &request)
     const auto embeddings_per_frame = static_cast<uint32_t>(
         encoder_main_output.get_frame_size() / (m_embeddings_features * sizeof(uint16_t)));
 
-    TRY_AS_HRPC_STATUS(auto reply, VLMCreateSerializer::serialize_reply(HAILO_SUCCESS, input_frame_shape, input_frame_format, m_chat_template, m_embeddings_features,
-        m_image_pad_token_id, m_video_pad_token_id, embeddings_per_frame), VLMCreateSerializer);
+    VLMCreateSerializer::ReplyInfo reply_info {};
+    reply_info.input_frame_shape = input_frame_shape;
+    reply_info.input_frame_format = input_frame_format;
+    reply_info.prompt_template = m_chat_template;
+    reply_info.embedding_features = m_embeddings_features;
+    reply_info.image_pad_token_id = m_image_pad_token_id;
+    reply_info.video_pad_token_id = m_video_pad_token_id;
+    reply_info.embeddings_per_frame = embeddings_per_frame;
+    reply_info.bos_token = m_bos_token;
+    reply_info.eos_token = m_eos_token;
+
+    TRY_AS_HRPC_STATUS(auto reply, VLMCreateSerializer::serialize_reply(HAILO_SUCCESS, reply_info),
+        VLMCreateSerializer);
 
     return reply;
 }
@@ -636,7 +649,7 @@ hailo_status VLMServer::process_prefill_inputs_chunk(std::map<std::string, Memor
     EmbeddingsVectorState &standalone_frame_embeddings_state, EmbeddingsVectorState &video_embeddings_state)
 {
     LOGGER__GENAI_STATS_START("[generate-prefill] pre process");
-    CHECK_SUCCESS(dynamic_cast<VLMPreProcess*>(m_pre_process.get())->prepare_inputs_prefill(prefill_inputs, input_embeddings,
+    CHECK_SUCCESS(dynamic_cast<VLMPreProcess*>(m_pre_process.get())->prepare_inputs_prefill_multimodal(prefill_inputs, input_embeddings,
         standalone_frame_embeddings_state, video_embeddings_state));
     LOGGER__GENAI_STATS_END("[generate-prefill] pre process");
 

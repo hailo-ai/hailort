@@ -42,7 +42,7 @@ public:
     ExpectedRef<CacheBuffer> get_output();
     Expected<Buffer> read_cache();
     hailo_status write_cache(MemoryView buffer);
-    hailo_status reprogram_descriptors(uint32_t new_read_offset_entries);
+    hailo_status reprogram_descriptors(uint64_t absolute_read_offset_entries);
 
     uint16_t entry_size() const;
     uint32_t cache_length() const;
@@ -77,7 +77,7 @@ public:
         Buffer m_buffer;
         uint32_t m_read_offset;
     };
-    Expected<Snapshot> create_snapshot(uint32_t read_offset);
+    Expected<Snapshot> create_snapshot(uint64_t absolute_read_offset_entries);
 
 private:
     CacheBuffer(uint32_t cache_size, uint32_t input_size, uint32_t output_size, uint16_t entry_size,

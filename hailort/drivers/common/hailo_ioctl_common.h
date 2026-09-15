@@ -7,7 +7,7 @@
 #define _HAILO_IOCTL_COMMON_H_
 
 #define HAILO_DRV_VER_MAJOR 5
-#define HAILO_DRV_VER_MINOR 4
+#define HAILO_DRV_VER_MINOR 5
 #define HAILO_DRV_VER_REVISION 0
 
 #define _STRINGIFY_EXPANDED( x ) #x
@@ -262,7 +262,6 @@ struct hailo_desc_list_program_params {
     uintptr_t desc_handle;      // in
     uint8_t channel_index;      // in
     uint32_t starting_desc;     // in
-    bool is_debug;              // in
 };
 
 /* structure used in ioctl HAILO_VDMA_CANCEL_PREPARED_TRANSFER */
@@ -286,7 +285,6 @@ struct hailo_vdma_interrupts_channel_data {
     uint8_t channel_index;
 
 #define HAILO_VDMA_TRANSFER_DATA_CHANNEL_NOT_ACTIVE  (0xff)
-#define HAILO_VDMA_TRANSFER_DATA_CHANNEL_WITH_ERROR  (0xfe)
 
     // Either amount of transfers done or one of the above defines
     uint8_t data;
@@ -443,9 +441,6 @@ struct hailo_vdma_prepare_transfer_params {
     uint8_t buffers_count;                                              // in
     struct hailo_vdma_transfer_buffer
         buffers[HAILO_MAX_BUFFERS_PER_SINGLE_TRANSFER];                 // in
-
-    bool is_debug;                                                      // in, if set program hw to send
-                                                                        // more info (e.g desc complete status)
 };
 
 struct hailo_vdma_launch_transfer_params {

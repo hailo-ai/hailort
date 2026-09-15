@@ -14,6 +14,7 @@ option(HAILO_BUILD_HX18 "Build HX18" OFF)
 option(ENABLE_PERFETTO "Build with Perfetto tracing support" OFF)
 option(HAILO_BUILD_HAILORT_SERVER "Build Hailort Server" OFF)
 option(HAILO_BUILD_GENAI_SERVER "Build GenAI Server" OFF)
+option(HAILO_BUILD_GENAI_SERVER_TESTS "Build GenAI Server host-only tests" OFF)
 option(HAILO_BUILD_USB "Build USB" OFF)
 option(HAILO_BUILD_FUNCTIONFS_LISTENER "Build FunctionFS listener" OFF)
 option(HAILO_BUILD_OLLAMA "Build Hailo-Ollama GenAI Model Server" OFF)
@@ -78,7 +79,7 @@ endif()
 
 # Set firmware version
 add_definitions( -DFIRMWARE_VERSION_MAJOR=5 )
-add_definitions( -DFIRMWARE_VERSION_MINOR=4 )
+add_definitions( -DFIRMWARE_VERSION_MINOR=5 )
 add_definitions( -DFIRMWARE_VERSION_REVISION=0 )
 
 # TODO: temporary hack to support offline builds. Remove HAILO_OFFLINE_COMPILATION and use FETCHCONTENT_FULLY_DISCONNECTED
@@ -101,6 +102,7 @@ set(RPC_DIR ${PROJECT_SOURCE_DIR}/hailort/rpc)
 set(HRPC_DIR ${PROJECT_SOURCE_DIR}/hailort/hrpc)
 set(HRPC_PROTOCOL_DIR ${PROJECT_SOURCE_DIR}/hailort/hrpc_protocol)
 set(HAILORT_GENAI_DIR ${HAILORT_SRC_DIR}/genai)
+set(HAILORT_GENAI_SERVER_DIR ${PROJECT_SOURCE_DIR}/hailort/hailort_server/genai)
 set(HAILORT_TOKENIZER_DIR ${PROJECT_SOURCE_DIR}/hailort/common/genai/tokenizer)
 
 add_subdirectory(common)

@@ -246,7 +246,7 @@ hailo_status VDeviceCreateInferModelHandler::parse_request(const MemoryView &req
     assert(hef_size <= SIZE_MAX);
     TRY(m_hef_buffer, Buffer::create_shared(static_cast<size_t>(hef_size), BufferStorageParams::create_dma()));
 
-    auto status = client_connection->read_buffer(m_hef_buffer->as_view(), LONG_RPC_ACTION_TIMEOUT);
+    auto status = client_connection->read_buffer(m_hef_buffer->as_view(), hef_transfer_timeout(hef_size));
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;

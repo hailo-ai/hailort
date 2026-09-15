@@ -323,12 +323,9 @@ static Expected<IrqData> to_irq_data(const hailo_vdma_interrupts_wait_params& pa
 
         irq.channels_irq_data[i].channel_id.engine_index = engine_index;
         irq.channels_irq_data[i].channel_id.channel_index = channel_index;
-        irq.channels_irq_data[i].validation_success = true;
         irq.channels_irq_data[i].is_active = true;
 
-        if (params.irq_data[i].data == HAILO_VDMA_TRANSFER_DATA_CHANNEL_WITH_ERROR) {
-            irq.channels_irq_data[i].validation_success = false;
-        } else if (params.irq_data[i].data == HAILO_VDMA_TRANSFER_DATA_CHANNEL_NOT_ACTIVE) {
+        if (params.irq_data[i].data == HAILO_VDMA_TRANSFER_DATA_CHANNEL_NOT_ACTIVE) {
             irq.channels_irq_data[i].is_active = false;
         } else {
             irq.channels_irq_data[i].transfers_completed = params.irq_data[i].data;
@@ -498,12 +495,6 @@ hailo_status HailoRTDriver::descriptors_list_program(uintptr_t desc_handle, Vdma
     params.channel_index = channel_index;
     params.starting_desc = starting_desc;
 
-#ifdef NDEBUG
-    params.is_debug = false;
-#else
-    params.is_debug = true;
-#endif
-
     RUN_AND_CHECK_IOCTL_RESULT(HAILO_DESC_LIST_PROGRAM, &params, "Failed bind buffer to desc list");
     return HAILO_SUCCESS;
 }
@@ -527,12 +518,6 @@ static Expected<hailo_vdma_prepare_transfer_params> fill_prepare_transfer_params
         params.buffers[i].addr_or_fd = transfer_buffers[i].addr_or_fd();
         params.buffers[i].size = static_cast<uint32_t>(transfer_buffers[i].size());
     }
-
-#ifdef NDEBUG
-    params.is_debug = false;
-#else
-    params.is_debug = true;
-#endif
 
     return params;
 }

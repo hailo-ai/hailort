@@ -68,7 +68,6 @@ struct ChannelIrqData {
     vdma::ChannelId channel_id;
     bool is_active;
     uint8_t transfers_completed;
-    bool validation_success;
 };
 
 struct IrqData {

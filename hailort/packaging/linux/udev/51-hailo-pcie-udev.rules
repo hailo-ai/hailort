@@ -1,0 +1,2 @@
+# Change mode rules for Hailo's pcie device
+SUBSYSTEM=="hailo1x", MODE="0666"

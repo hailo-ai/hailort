@@ -106,6 +106,13 @@ hailo_status LLMServer::parse_config_json(const nlohmann::json &hailo_config_jso
     CHECK(hailo_config_json.contains("eos_token_id"), HAILO_INVALID_ARGUMENT);
     m_end_of_sentence_token_id = hailo_config_json["eos_token_id"].get<int>();
 
+    if (hailo_config_json.contains("bos_token") && hailo_config_json["bos_token"].is_string()) {
+        m_bos_token = hailo_config_json["bos_token"].get<std::string>();
+    }
+    if (hailo_config_json.contains("eos_token") && hailo_config_json["eos_token"].is_string()) {
+        m_eos_token = hailo_config_json["eos_token"].get<std::string>();
+    }
+
     m_chat_template = "";
     if (hailo_config_json.contains("chat_template")) {
         m_chat_template = hailo_config_json["chat_template"].get<std::string>();
@@ -173,19 +180,19 @@ hailo_status LLMServer::parse_config_json(const nlohmann::json &hailo_config_jso
             m_input_layers_names_suffixes.embeddings = hailo_config_json["input_layers_names_suffixes"]["embeddings"].get<std::string>();
         }
         if (hailo_config_json["input_layers_names_suffixes"].contains("attention_mask")) {
-            m_input_layers_names_suffixes.attention_mask = hailo_config_json["input_layers_names_suffixes"]["attention_mask"].get<std::string>();
+            m_input_layers_names_suffixes.attention.mask = hailo_config_json["input_layers_names_suffixes"]["attention_mask"].get<std::string>();
         }
         if (hailo_config_json["input_layers_names_suffixes"].contains("pe_q_cos")) {
-            m_input_layers_names_suffixes.pe_q_cos = hailo_config_json["input_layers_names_suffixes"]["pe_q_cos"].get<std::string>();
+            m_input_layers_names_suffixes.attention.pe_q_cos = hailo_config_json["input_layers_names_suffixes"]["pe_q_cos"].get<std::string>();
         }
         if (hailo_config_json["input_layers_names_suffixes"].contains("pe_q_sin")) {
-            m_input_layers_names_suffixes.pe_q_sin = hailo_config_json["input_layers_names_suffixes"]["pe_q_sin"].get<std::string>();
+            m_input_layers_names_suffixes.attention.pe_q_sin = hailo_config_json["input_layers_names_suffixes"]["pe_q_sin"].get<std::string>();
         }
         if (hailo_config_json["input_layers_names_suffixes"].contains("pe_k_cos")) {
-            m_input_layers_names_suffixes.pe_k_cos = hailo_config_json["input_layers_names_suffixes"]["pe_k_cos"].get<std::string>();
+            m_input_layers_names_suffixes.attention.pe_k_cos = hailo_config_json["input_layers_names_suffixes"]["pe_k_cos"].get<std::string>();
         }
         if (hailo_config_json["input_layers_names_suffixes"].contains("pe_k_sin")) {
-            m_input_layers_names_suffixes.pe_k_sin = hailo_config_json["input_layers_names_suffixes"]["pe_k_sin"].get<std::string>();
+            m_input_layers_names_suffixes.attention.pe_k_sin = hailo_config_json["input_layers_names_suffixes"]["pe_k_sin"].get<std::string>();
         }
     }
     return HAILO_SUCCESS;
@@ -323,7 +330,7 @@ std::future<hailo_status> LLMServer::create_pre_process_future(const Hef &hef,
         auto embeddings_dtype = embeddings_input.format().type;
 
         // Get scaled-mask value
-        TRY(auto mask_input_name, get_layer_name_from_suffix<size_t>(m_input_layers_names_suffixes.attention_mask, prefill_inputs_frame_size));
+        TRY(auto mask_input_name, get_layer_name_from_suffix<size_t>(m_input_layers_names_suffixes.attention.mask, prefill_inputs_frame_size));
         TRY(auto mask_input, m_inference_manager_prefill->get_model()->input(mask_input_name));
         auto mask_quant_infos = mask_input.get_quant_infos();
         CHECK(1 == mask_quant_infos.size(), HAILO_INTERNAL_FAILURE);
@@ -332,7 +339,7 @@ std::future<hailo_status> LLMServer::create_pre_process_future(const Hef &hef,
         Quantization::quantize_input_buffer<float32_t, uint8_t>(&dequantized_mask_value, &scaled_mask_value, 1, mask_quant_infos[0]);
 
         TRY(m_pre_process, LLMPreProcess::create(prefill_inputs_frame_size, tbt_inputs_frame_size,
-            std::move(theta), m_embeddings_features, embeddings_dtype, scaled_mask_value, m_input_layers_names_suffixes, m_pre_process_params));
+            theta, m_embeddings_features, embeddings_dtype, scaled_mask_value, m_input_layers_names_suffixes, m_pre_process_params));
         LOGGER__GENAI_STATS_END("[create] create PreProcess");
 
         pre_process_created_event->signal();
@@ -512,10 +519,17 @@ Expected<Buffer> LLMServer::handle_create_llm_request(const MemoryView &request)
 
     m_recovery.tokens = {m_end_of_sentence_token_id};
 
+    LLMCreateSerializer::ReplyInfo reply_info {};
+    reply_info.prompt_template = m_chat_template;
+    reply_info.embedding_features = m_embeddings_features;
+    reply_info.bos_token = m_bos_token;
+    reply_info.eos_token = m_eos_token;
+
     // Success — skip DEFER cleanup (mark_vdevice_for_close will be called in ~LLMServer on normal shutdown)
     is_error_cleanup_needed = false;
 
-    TRY_AS_HRPC_STATUS(auto reply, LLMCreateSerializer::serialize_reply(HAILO_SUCCESS, m_chat_template, m_embeddings_features), LLMCreateSerializer);
+    TRY_AS_HRPC_STATUS(auto reply, LLMCreateSerializer::serialize_reply(HAILO_SUCCESS, reply_info),
+        LLMCreateSerializer);
     return reply;
 }
 
@@ -660,7 +674,7 @@ Expected<Buffer> LLMServer::handle_clear_context_request(const MemoryView &reque
     CHECK_SUCCESS_AS_HRPC_STATUS(LLMClearContextSerializer::deserialize_request(request), LLMClearContextSerializer);
     // Wait on a lock to make sure that no generation is in progress
     std::unique_lock<std::mutex> lock(m_generation_mutex);
-    reset_cnversation_context();
+    CHECK_SUCCESS_AS_HRPC_STATUS(reset_conversation_context(), LLMClearContextSerializer);
     TRY_AS_HRPC_STATUS(auto reply, LLMClearContextSerializer::serialize_reply(HAILO_SUCCESS),
         LLMClearContextSerializer);
     return reply;
@@ -867,16 +881,19 @@ Expected<int> LLMServer::get_next_token_prefill(std::map<std::string, MemoryView
     return next_token;
 }
 
-void LLMServer::reset_cnversation_context()
+hailo_status LLMServer::reset_conversation_context()
 {
     LOGGER__INFO("Resetting conversation context");
+
+    // Nothing is cleared unless the device cache can be reset too, so a failure leaves the conversation intact
+    CHECK_SUCCESS(m_inference_manager_prefill->init_cache(0));
 
     m_tokens_history.clear();
     m_pre_process->reset_local_cache();
     m_post_process.reset_random_generator();
-    m_inference_manager_prefill->init_cache(0);
-
     prepare_for_new_generation();
+
+    return HAILO_SUCCESS;
 }
 
 bool LLMServer::check_stop_sequences(int latest_token)
@@ -1155,8 +1172,10 @@ hailo_status LLMServer::handle_reasoning_generation_completion()
     LOGGER__GENAI_STATS_END("[generate-reasoning] set local cache for reasoning");
 
     LOGGER__GENAI_STATS_START("[generate-reasoning] update cache offset for reasoning");
-    // Roll back by: reasoning tokens + generated tokens
-    const auto total_rollback = m_reasoning.reasoning_section_token_count + m_generated_token_count;
+    // The reasoning section cached the after-reasoning prefill entries plus one per tbt token, and the last
+    // generated token is not in the cache.
+    assert(m_generated_token_count >= 1);
+    const auto total_rollback = m_reasoning.reasoning_section_token_count + m_generated_token_count - 1;
     CHECK_SUCCESS(m_inference_manager_prefill->update_cache_offset(-static_cast<int32_t>(total_rollback)));
     LOGGER__GENAI_STATS_END("[generate-reasoning] update cache offset for reasoning");
 

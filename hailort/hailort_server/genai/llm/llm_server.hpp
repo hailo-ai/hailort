@@ -116,7 +116,7 @@ protected:
 
     void prepare_for_new_generation();
 
-    void reset_cnversation_context();
+    hailo_status reset_conversation_context();
 
     // Check if current-generation generated-tokens matches any custom stop sequence
     bool check_stop_sequences(int latest_token);
@@ -174,7 +174,9 @@ protected:
     std::deque<int> m_recent_tokens_sequence;
     static constexpr size_t MAX_STOP_SEQUENCE_LENGTH = 50; // Reasonable limit for stop sequences
 
-    int m_end_of_sentence_token_id;
+    int m_end_of_sentence_token_id = INVALID_TOKEN_VALUE;
+    std::string m_bos_token;
+    std::string m_eos_token;
 
     // Relevant for reasoning models only
     // Reasoning model configuration and state

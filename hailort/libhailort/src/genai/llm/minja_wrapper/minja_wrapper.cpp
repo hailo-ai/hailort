@@ -17,7 +17,8 @@ namespace genai
 
 static const json empty_role = {{"role", "TMP"}, {"content", "TMP"}};
 
-Expected<PromptTemplateHandler> PromptTemplateHandler::create(const std::string &prompt_template)
+Expected<PromptTemplateHandler> PromptTemplateHandler::create(const std::string &prompt_template,
+    const std::string &bos_token, const std::string &eos_token)
 {
     if (prompt_template.empty()) {
         // Create an empty PromptTemplateHandler
@@ -25,7 +26,7 @@ Expected<PromptTemplateHandler> PromptTemplateHandler::create(const std::string 
     }
 
     try {
-        auto pimpl = std::make_unique<PromptTemplateHandler::Impl>(prompt_template);
+        auto pimpl = std::make_unique<PromptTemplateHandler::Impl>(prompt_template, bos_token, eos_token);
         return PromptTemplateHandler(std::move(pimpl));
     } catch (const std::exception &e) {
         LOGGER__ERROR("Failed to create PromptTemplateHandler: {}", e.what());
@@ -38,8 +39,9 @@ PromptTemplateHandler::PromptTemplateHandler(std::unique_ptr<Impl> pimpl)
 {
 }
 
-PromptTemplateHandler::Impl::Impl(const std::string &prompt_template)
-    : m_templ(prompt_template, "", ""), m_is_first(true), m_prompt_template(prompt_template)
+PromptTemplateHandler::Impl::Impl(const std::string &prompt_template, const std::string &bos_token,
+    const std::string &eos_token)
+    : m_templ(prompt_template, bos_token, eos_token), m_is_first(true), m_prompt_template(prompt_template)
 {
     minja::chat_template_inputs inputs;
     inputs.add_generation_prompt = false;
@@ -85,7 +87,9 @@ Expected<std::string> PromptTemplateHandler::Impl::render(const std::vector<std:
             inputs.messages.push_back(parsed_json);
         }
         std::string templated_prompt = m_templ.apply(inputs);
-        // Remove system prompt from the beginning
+        // Remove the bos and system prompt from the beginning
+        CHECK(0 == templated_prompt.rfind(m_system_prompt, 0), HAILO_INTERNAL_FAILURE,
+            "Rendered prompt does not start with the template's constant prefix, refusing to strip it");
         templated_prompt.erase(0, m_system_prompt.size());
 
         return templated_prompt;

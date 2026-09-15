@@ -116,8 +116,18 @@ struct LLMCreateSerializer
         const std::string &hef_path, const std::vector<Hef::HefChunksInfo> &chunks_to_transfer, uint64_t total_hef_size);
     static Expected<RequestInfo> deserialize_request(const MemoryView &serialized_request);
 
-    static Expected<Buffer> serialize_reply(hailo_status status, const std::string &prompt_template = "", uint32_t embedding_features = 0);
-    static Expected<std::pair<std::string, uint32_t>> deserialize_reply(const MemoryView &serialized_reply);
+    struct ReplyInfo {
+        std::string prompt_template;
+        uint32_t embedding_features = 0;
+        std::string bos_token;
+        std::string eos_token;
+    };
+
+    static Expected<Buffer> serialize_reply(hailo_status status, const ReplyInfo &reply_info);
+    // ReplyInfo cannot be a default argument - its member initializers are not complete until the end of
+    // the enclosing struct - and the error-path macros serialize a bare status
+    static Expected<Buffer> serialize_reply(hailo_status status) { return serialize_reply(status, ReplyInfo()); }
+    static Expected<ReplyInfo> deserialize_reply(const MemoryView &serialized_reply);
 };
 
 struct LLMGetGeneratorParamsSerializer
@@ -349,26 +359,22 @@ struct VLMCreateSerializer
     static Expected<std::tuple<std::string, std::string, std::vector<Hef::HefChunksInfo>, bool, uint64_t>> deserialize_request(const MemoryView &serialized_request);
 
 
-    static Expected<Buffer> serialize_reply(hailo_status status,
-        hailo_3d_image_shape_t input_frame_shape = {}, hailo_format_t input_frame_format = {}, const std::string &prompt_template = "", uint32_t embedding_features = 0,
-        uint32_t image_pad_token_id = 0, uint32_t video_pad_token_id = 0, uint32_t embeddings_per_frame = 0);
-
     struct ReplyInfo {
-        hailo_3d_image_shape_t input_frame_shape;
-        hailo_format_t input_frame_format;
+        hailo_3d_image_shape_t input_frame_shape = {};
+        hailo_format_t input_frame_format = {};
         std::string prompt_template;
-        uint32_t embedding_features;
-        uint32_t image_pad_token_id;
-        uint32_t video_pad_token_id;
-        uint32_t embeddings_per_frame;
-
-        ReplyInfo(hailo_3d_image_shape_t input_frame_shape, hailo_format_t input_frame_format, const std::string &prompt_template, uint32_t embedding_features,
-            uint32_t image_pad_token_id, uint32_t video_pad_token_id, uint32_t embeddings_per_frame) :
-                input_frame_shape(input_frame_shape), input_frame_format(input_frame_format), prompt_template(prompt_template),
-                embedding_features(embedding_features), image_pad_token_id(image_pad_token_id), video_pad_token_id(video_pad_token_id),
-                embeddings_per_frame(embeddings_per_frame)
-            {}
+        uint32_t embedding_features = 0;
+        uint32_t image_pad_token_id = 0;
+        uint32_t video_pad_token_id = 0;
+        uint32_t embeddings_per_frame = 0;
+        std::string bos_token;
+        std::string eos_token;
     };
+
+    static Expected<Buffer> serialize_reply(hailo_status status, const ReplyInfo &reply_info);
+    // ReplyInfo cannot be a default argument - its member initializers are not complete until the end of
+    // the enclosing struct - and the error-path macros serialize a bare status
+    static Expected<Buffer> serialize_reply(hailo_status status) { return serialize_reply(status, ReplyInfo()); }
     static Expected<ReplyInfo> deserialize_reply(const MemoryView &serialized_reply);
 };
 

@@ -154,7 +154,8 @@ Expected<std::unique_ptr<VLM::Impl>> VLM::Impl::create_unique(std::shared_ptr<ha
     auto input_frame_format = vlm_create_reply_info.input_frame_format;
 
     auto chat_template = vlm_create_reply_info.prompt_template;
-    TRY(auto prompt_template_handler, PromptTemplateHandler::create(chat_template));
+    TRY(auto prompt_template_handler, PromptTemplateHandler::create(chat_template,
+        vlm_create_reply_info.bos_token, vlm_create_reply_info.eos_token));
     auto prompt_template_handler_ptr = make_shared_nothrow<PromptTemplateHandler>(std::move(prompt_template_handler));
     CHECK_NOT_NULL_AS_EXPECTED(prompt_template_handler_ptr, HAILO_OUT_OF_HOST_MEMORY);
 

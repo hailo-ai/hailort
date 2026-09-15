@@ -13,6 +13,7 @@
 #include "net_flow/ops/yolov5_bbox_only_post_process.hpp"
 #include "net_flow/ops/yolov8_post_process.hpp"
 #include "net_flow/ops/yolov8_bbox_only_post_process.hpp"
+#include "net_flow/ops/damoyolo_post_process.hpp"
 #include "net_flow/ops/argmax_post_process.hpp"
 #include "net_flow/ops/softmax_post_process.hpp"
 #include "net_flow/ops/yolox_post_process.hpp"
@@ -711,6 +712,13 @@ hailo_status AsyncPipelineBuilder::add_nms_flows(std::shared_ptr<AsyncPipeline> 
             break;
         }
     }
+    case net_flow::OperationType::DAMOYOLO:
+    {
+        auto metadata = std::dynamic_pointer_cast<net_flow::DamoyoloOpMetadata>(op_metadata);
+        assert(nullptr != metadata);
+        TRY(op, net_flow::DAMOYOLOPostProcessOp::create(metadata));
+        break;
+    }
     case net_flow::OperationType::YOLOV5:
     {
         auto metadata = std::dynamic_pointer_cast<net_flow::Yolov5OpMetadata>(op_metadata);
@@ -759,6 +767,7 @@ hailo_status AsyncPipelineBuilder::add_ops_flows(std::shared_ptr<AsyncPipeline> 
     switch (op_metadata->type()) {
     case net_flow::OperationType::YOLOX:
     case net_flow::OperationType::YOLOV8:
+    case net_flow::OperationType::DAMOYOLO:
     case net_flow::OperationType::SSD:
     case net_flow::OperationType::YOLOV5:
     case net_flow::OperationType::YOLOV5SEG:

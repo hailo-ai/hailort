@@ -38,7 +38,7 @@ namespace genai
 class PromptTemplateHandler::Impl final
 {
 public:
-    Impl(const std::string &prompt_template);
+    Impl(const std::string &prompt_template, const std::string &bos_token, const std::string &eos_token);
     ~Impl() = default;
 
     Expected<std::string> render(const std::vector<std::string> &prompt_json_strings, const std::vector<std::string> &tools_json_strings);

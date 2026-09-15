@@ -143,17 +143,19 @@ Expected<LLMCreateSerializer::RequestInfo> LLMCreateSerializer::deserialize_requ
         llm_create.tokenizer_on_host(), llm_create.total_hef_size());
 }
 
-Expected<Buffer> LLMCreateSerializer::serialize_reply(hailo_status status, const std::string &prompt_template, uint32_t embedding_features)
+Expected<Buffer> LLMCreateSerializer::serialize_reply(hailo_status status, const ReplyInfo &reply_info)
 {
     LLM_Create_Reply llm_create;
     llm_create.set_status(status);
-    llm_create.set_prompt_template(prompt_template);
-    llm_create.set_embedding_features(embedding_features);
+    llm_create.set_prompt_template(reply_info.prompt_template);
+    llm_create.set_embedding_features(reply_info.embedding_features);
+    llm_create.set_bos_token(reply_info.bos_token);
+    llm_create.set_eos_token(reply_info.eos_token);
 
     return get_serialized_message<LLM_Create_Reply>(llm_create, static_cast<uint32_t>(HailoGenAIActionID::LLM__CREATE), "LLM_Create_Reply");
 }
 
-Expected<std::pair<std::string, uint32_t>> LLMCreateSerializer::deserialize_reply(const MemoryView &serialized_reply)
+Expected<LLMCreateSerializer::ReplyInfo> LLMCreateSerializer::deserialize_reply(const MemoryView &serialized_reply)
 {
     TRY(auto llm_create, get_deserialized_message<LLM_Create_Reply>(serialized_reply,
         static_cast<uint32_t>(HailoGenAIActionID::LLM__CREATE), "LLM_Create_Reply"));
@@ -161,9 +163,12 @@ Expected<std::pair<std::string, uint32_t>> LLMCreateSerializer::deserialize_repl
     CHECK(llm_create.status() < HAILO_STATUS_COUNT, HAILO_INTERNAL_FAILURE, "Failed to de-serialize 'LLM_Create_Reply'");
     CHECK_SUCCESS_AS_EXPECTED(static_cast<hailo_status>(llm_create.status()), "Failed to create LLM");
 
-    auto prompt_template = llm_create.prompt_template();
-    auto embedding_features = llm_create.embedding_features();
-    return std::make_pair(prompt_template, embedding_features);
+    ReplyInfo reply_info {};
+    reply_info.prompt_template = llm_create.prompt_template();
+    reply_info.embedding_features = llm_create.embedding_features();
+    reply_info.bos_token = llm_create.bos_token();
+    reply_info.eos_token = llm_create.eos_token();
+    return reply_info;
 }
 
 Expected<Buffer> LLMGetGeneratorParamsSerializer::serialize_request()
@@ -985,28 +990,29 @@ Expected<std::tuple<std::string, std::string, std::vector<Hef::HefChunksInfo>, b
         vlm_create.group_id(), vlm_create.hef_path(), chunks_to_transfer, vlm_create.tokenizer_on_host(), vlm_create.total_hef_size());
 }
 
-Expected<Buffer> VLMCreateSerializer::serialize_reply(hailo_status status,
-    hailo_3d_image_shape_t input_frame_shape, hailo_format_t input_frame_format, const std::string &prompt_template, uint32_t embedding_features,
-    uint32_t image_pad_token_id, uint32_t video_pad_token_id, uint32_t embeddings_per_frame)
+Expected<Buffer> VLMCreateSerializer::serialize_reply(hailo_status status, const ReplyInfo &reply_info)
 {
     VLM_Create_Reply vlm_create;
     vlm_create.set_status(status);
 
     auto input_frame_shape_proto = vlm_create.mutable_frame_shape();
-    input_frame_shape_proto->set_height(input_frame_shape.height);
-    input_frame_shape_proto->set_width(input_frame_shape.width);
-    input_frame_shape_proto->set_features(input_frame_shape.features);
+    input_frame_shape_proto->set_height(reply_info.input_frame_shape.height);
+    input_frame_shape_proto->set_width(reply_info.input_frame_shape.width);
+    input_frame_shape_proto->set_features(reply_info.input_frame_shape.features);
 
     auto input_frame_format_proto = vlm_create.mutable_frame_format();
-    input_frame_format_proto->set_format_order(static_cast<uint32_t>(input_frame_format.order));
-    input_frame_format_proto->set_format_type(static_cast<uint32_t>(input_frame_format.type));
+    input_frame_format_proto->set_format_order(static_cast<uint32_t>(reply_info.input_frame_format.order));
+    input_frame_format_proto->set_format_type(static_cast<uint32_t>(reply_info.input_frame_format.type));
 
-    vlm_create.set_prompt_template(prompt_template);
-    vlm_create.set_embedding_features(embedding_features);
+    vlm_create.set_prompt_template(reply_info.prompt_template);
+    vlm_create.set_embedding_features(reply_info.embedding_features);
 
-    vlm_create.set_image_pad_token_id(image_pad_token_id);
-    vlm_create.set_video_pad_token_id(video_pad_token_id);
-    vlm_create.set_embeddings_per_frame(embeddings_per_frame);
+    vlm_create.set_image_pad_token_id(reply_info.image_pad_token_id);
+    vlm_create.set_video_pad_token_id(reply_info.video_pad_token_id);
+    vlm_create.set_embeddings_per_frame(reply_info.embeddings_per_frame);
+
+    vlm_create.set_bos_token(reply_info.bos_token);
+    vlm_create.set_eos_token(reply_info.eos_token);
 
     return get_serialized_message<VLM_Create_Reply>(vlm_create,
         static_cast<uint32_t>(HailoGenAIActionID::VLM__CREATE), "VLM_Create_Reply");
@@ -1029,8 +1035,17 @@ Expected<VLMCreateSerializer::ReplyInfo> VLMCreateSerializer::deserialize_reply(
     input_frame_format.order = static_cast<hailo_format_order_t>(vlm_create.frame_format().format_order());
     input_frame_format.type = static_cast<hailo_format_type_t>(vlm_create.frame_format().format_type());
 
-    return VLMCreateSerializer::ReplyInfo(input_frame_shape, input_frame_format, vlm_create.prompt_template(), vlm_create.embedding_features(),
-        vlm_create.image_pad_token_id(), vlm_create.video_pad_token_id(), vlm_create.embeddings_per_frame());
+    VLMCreateSerializer::ReplyInfo reply_info {};
+    reply_info.input_frame_shape = input_frame_shape;
+    reply_info.input_frame_format = input_frame_format;
+    reply_info.prompt_template = vlm_create.prompt_template();
+    reply_info.embedding_features = vlm_create.embedding_features();
+    reply_info.image_pad_token_id = vlm_create.image_pad_token_id();
+    reply_info.video_pad_token_id = vlm_create.video_pad_token_id();
+    reply_info.embeddings_per_frame = vlm_create.embeddings_per_frame();
+    reply_info.bos_token = vlm_create.bos_token();
+    reply_info.eos_token = vlm_create.eos_token();
+    return reply_info;
 }
 
 Expected<Buffer> VLMGeneratorGenerateSerializer::serialize_request(uint32_t number_of_standalone_frames,

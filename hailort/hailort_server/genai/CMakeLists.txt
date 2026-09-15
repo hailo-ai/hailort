@@ -1,6 +1,5 @@
 cmake_minimum_required(VERSION 3.5.0)
 
-set(HAILO_GENAI_SRC_DIR ${CMAKE_CURRENT_LIST_DIR})
 set(HAILORT_GENAI_SERVER_COMPONENTS_SOURCES "")
 
 add_subdirectory(llm)

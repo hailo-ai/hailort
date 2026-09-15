@@ -31,6 +31,7 @@ enum class OperationType {
     YOLOX,
     YOLOV5,
     YOLOV8,
+    DAMOYOLO,
     YOLOV5SEG,
     SSD,
     SOFTMAX,
@@ -81,6 +82,8 @@ public:
             return "YOLOV5SEG";
         case OperationType::YOLOV8:
             return "YOLOV8";
+        case OperationType::DAMOYOLO:
+            return "DAMOYOLO";
         case OperationType::SSD:
             return "SSD";
         case OperationType::SOFTMAX:
