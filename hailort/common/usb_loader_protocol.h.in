@@ -4,7 +4,8 @@
  **/
 /**
  * @file usb_loader_protocol.h
- * @brief Shared loader/GUI protocol: expected fw version, loader output strings consumed by both sides.
+ * @brief Definitions shared with the USB loader: expected fw version, functional product name and the loader
+ *        output format.
  **/
 
 #ifndef _HAILO_USB_LOADER_PROTOCOL_H_
@@ -20,5 +21,8 @@
 #define LOADER_OUTPUT_RECONNECT_FAILED    "Failed to reconnect after changing into update mode"
 #define LOADER_OUTPUT_DONT_POWER_OFF      "Don't power off the device until the process is complete"
 #define LOADER_OUTPUT_PLEASE_WAIT         "Please wait"
+
+// Line format: "Phase <n>/<count>: <label>", n is 1-based
+#define LOADER_OUTPUT_PHASE_PREFIX        "Phase "
 
 #endif /* _HAILO_USB_LOADER_PROTOCOL_H_ */

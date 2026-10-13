@@ -74,21 +74,31 @@ class VLMPreProcess : public LLMPreProcess
 {
 public:
     static Expected<std::unique_ptr<LLMPreProcess>> create(const std::map<std::string, size_t> &prefill_inputs_frame_size,
-        const std::map<std::string, size_t> &tbt_inputs_frame_size, Eigen::VectorXf &&theta,
-        uint32_t text_embeddings_layer_features, const hailo_3d_image_shape_t &input_encoder_shape, uint8_t scaled_mask_value,
-        const InputLayersNamesSuffixes &input_layers_names_suffixes, const PreProcessParams &pre_process_params, bool has_deepstack_layers,
+        const std::map<std::string, size_t> &tbt_inputs_frame_size, const std::vector<Eigen::VectorXf> &group_thetas,
+        uint32_t text_embeddings_layer_features, hailo_format_type_t text_embeddings_layer_type,
+        const EmbeddingTables &embedding_tables, const hailo_3d_image_shape_t &input_encoder_shape,
+        const std::vector<AttentionGroupMaskValues> &group_mask_values,
+        const InputLayersNamesSuffixes &input_layers_names_suffixes, const PreProcessParams &pre_process_params,
+        const std::vector<AttentionGroupParams> &attention_groups, bool has_deepstack_layers,
         const std::unordered_map<std::string, size_t> &deepstack_suffix_to_tokens_per_frame = {});
 
     void reset_local_cache() override;
 
-    hailo_status prepare_inputs_prefill(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer,
+    hailo_status prepare_inputs_prefill_multimodal(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer,
         std::vector<EmbeddingViewWrapper> input_embeddings, EmbeddingsVectorState &standalone_frame_embeddings_state,
         EmbeddingsVectorState &video_embeddings_state);
 
-    VLMPreProcess(Eigen::VectorXf &&theta, Eigen::Matrix<uint16_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> &&local_cached_embeddings,
+    // The text-only prefill skips every vision token. Deleting it rejects that call on a VLMPreProcess-typed
+    // expression only: the base is not virtual, so a call through a LLMPreProcess pointer to a VLM object still
+    // resolves to the base and runs the text-only path.
+    hailo_status prepare_inputs_prefill(std::map<layer_name_t, MemoryView> &,
+        const std::vector<EmbeddingViewWrapper> &, const std::vector<EmbeddingViewWrapper> &) = delete;
+
+    VLMPreProcess(Eigen::Matrix<uint16_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> &&local_cached_embeddings,
         const std::map<std::string, size_t> &prefill_inputs_frame_size, const std::map<std::string, size_t> &tbt_inputs_frame_size,
-        const hailo_3d_image_shape_t &input_encoder_shape, uint8_t scaled_mask_value, const InputLayersNamesSuffixes &input_layers_names_suffixes,
-        const PreProcessParams &pre_process_params, bool has_deepstack_layers,
+        const hailo_3d_image_shape_t &input_encoder_shape, const EmbeddingTables &embedding_tables,
+        const InputLayersNamesSuffixes &input_layers_names_suffixes, const PreProcessParams &pre_process_params,
+        std::vector<AttentionGroupContext> &&groups, bool has_deepstack_layers,
         const std::unordered_map<std::string, size_t> &deepstack_suffix_to_tokens_per_frame);
 
     bool has_deepstack_layers() const { return m_has_deepstack_layers; }
@@ -103,8 +113,8 @@ private:
     Eigen::Matrix<uint16_t, 1, Eigen::Dynamic, Eigen::RowMajor> get_embedding(int token, const std::vector<MemoryView> &input_frames_embeddings,
         uint32_t &current_frame_index, uint32_t &current_emb_index_in_frame) const;
 
-    hailo_status prepare_positional_embed_inputs(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer, 
-        int layer_input_tokens_size, const std::vector<std::pair<uint32_t, uint32_t>> &frames_tokens_indices, int input_tokens_count);
+    hailo_status prepare_positional_embed_inputs_mrope(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer,
+        InferencePhase phase, const std::vector<std::pair<uint32_t, uint32_t>> &frames_tokens_indices, int input_tokens_count);
 
     void fill_temporal_positional_embed(int pos_ids_start_index, int relative_st_image_index,
         int position_ids_features, int merged_patch_size_h, int merged_patch_size_w);

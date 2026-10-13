@@ -17,12 +17,34 @@
 #include "common/genai/eigen.hpp"
 #include "common/genai/tokenizer/embedding_view_wrapper.hpp"
 
+#include <string>
+
 namespace hailort
 {
 namespace genai
 {
 
 constexpr int INVALID_TOKEN_VALUE = INT32_MAX;
+
+// The per-layer inputs table may be shorter than the vocabulary (Gemma 3n), and the model reads row 0 for every
+// token id outside the table
+inline int per_layer_inputs_row(int token_id, size_t rows_count)
+{
+    const auto is_inside_table = (0 <= token_id) && (static_cast<size_t>(token_id) < rows_count);
+    return is_inside_table ? token_id : 0;
+}
+
+// Row 0 must exist, and a trailing partial row would otherwise be dropped silently
+inline Expected<size_t> embedding_table_rows_count(size_t table_size, size_t features, const std::string &resource)
+{
+    CHECK(0 < features, HAILO_INVALID_ARGUMENT, "The embedding table '{}' has no row width", resource);
+    const auto row_size = sizeof(uint16_t) * features;
+    CHECK((0 < table_size) && (0 == (table_size % row_size)), HAILO_INVALID_ARGUMENT,
+        "The embedding table '{}' has {} bytes, but must be a non-zero multiple of its {}-byte row",
+        resource, table_size, row_size);
+
+    return table_size / row_size;
+}
 
 template<typename T>
 class TokenEmbedder
@@ -76,6 +98,11 @@ public:
         m_image_token_id(image_token_id),
         m_video_token_id(video_token_id)
     {}
+
+    size_t rows() const
+    {
+        return static_cast<size_t>(m_embeddings_matrix.rows());
+    }
 
     size_t cols() const
     {
@@ -150,6 +177,18 @@ private:
     std::vector<size_t> m_embeddings_count_per_video;
     BufferPtr m_embeddings;
 };
+
+inline Expected<std::vector<EmbeddingViewWrapper>> gather_per_layer_inputs(const TokenEmbedder<uint16_t> &table,
+    const std::vector<int> &tokens)
+{
+    std::vector<int> rows;
+    rows.reserve(tokens.size());
+    for (const auto token : tokens) {
+        rows.push_back(per_layer_inputs_row(token, table.rows()));
+    }
+
+    return table.tokens_to_embeddings(rows);
+}
 
 } /* namespace genai */
 } /* namespace hailort */

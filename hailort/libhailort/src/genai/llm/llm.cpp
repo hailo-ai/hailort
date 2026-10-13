@@ -180,6 +180,8 @@ Expected<std::unique_ptr<LLM::Impl>> LLM::Impl::create_unique(std::shared_ptr<VD
         // When using BUILTIN HEF, LoRA must be set
         CHECK(!llm_params.lora().empty(), HAILO_INVALID_OPERATION,
             "Failed to create LLM. When using '{}' model, LoRA name must be set.", BUILTIN);
+        CHECK(!llm_params.optimize_memory_on_device(), HAILO_INVALID_OPERATION,
+            "Failed to create LLM. 'optimize_memory_on_device' is not supported for the built-in '{}' model.", BUILTIN);
     }
     // Check if HEF exists on the server
     std::string hef_hash = "";
@@ -206,7 +208,7 @@ Expected<std::unique_ptr<LLM::Impl>> LLM::Impl::create_unique(std::shared_ptr<VD
     TRY(auto check_hef_exists_on_server_request, GenAICheckHefExistsSerializer::serialize_request(hef_path, hef_hash));
     TRY(auto check_hef_exists_on_server_reply, session_wrapper->execute(MemoryView(check_hef_exists_on_server_request)));
     TRY(auto hef_exists, GenAICheckHefExistsSerializer::deserialize_reply(MemoryView(*check_hef_exists_on_server_reply)));
-    CHECK_AS_EXPECTED(!(hef_exists && llm_params.optimize_memory_on_device()), HAILO_INVALID_OPERATION,
+    CHECK(!(hef_exists && llm_params.optimize_memory_on_device()), HAILO_INVALID_OPERATION,
         "Failed to create LLM. When 'optimize_memory_on_device' is set to true, the HEF must not exist on the server.");
 
     Buffer create_llm_request;
@@ -214,20 +216,25 @@ Expected<std::unique_ptr<LLM::Impl>> LLM::Impl::create_unique(std::shared_ptr<VD
     std::unordered_set<std::string> local_resources;
     std::shared_ptr<HailoTokenizer> tokenizer;
     std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder;
-    BufferPtr token_embedder_buffer;
+    std::shared_ptr<TokenEmbedder<uint16_t>> per_layer_inputs_embedder;
+    std::map<std::string, BufferPtr> kept_resources;
+    EmbeddingTables embedding_tables;
     if (!is_builtin && !hef_exists) {
         if (llm_params.optimize_memory_on_device()) {
 #ifndef HAILO_CLIENT_TOKENIZER_ENABLED
             LOGGER__ERROR("Host-tokenization is not enabled in lib compilation");
             return make_unexpected(HAILO_NOT_IMPLEMENTED);
 #else
-            local_resources = {TOKENIZER, INPUT_EMB_BINARY};
+            TRY(embedding_tables, GenAICommon::read_hef_embedding_tables(hef_path));
+            local_resources = GenAICommon::host_kept_resources(embedding_tables);
 #endif // HAILO_CLIENT_TOKENIZER_ENABLED
         }
 
         // Parse HEF once to get both chunk offsets and buffers of local_resources
         // local_resources will be in local_resources_buffers but not in chunks
         TRY(auto parse_result, Hef::parse_hef_for_transfer(hef_path, local_resources));
+        CHECK_SUCCESS(GenAICommon::validate_kept_resources_found(hef_path, local_resources,
+            parse_result.local_resources_buffers));
 
         // Create request with chunks info for chunked transfer
         TRY(create_llm_request, LLMCreateSerializer::serialize_request(vdevice_params, llm_params, "", parse_result.chunks, parse_result.total_hef_size));
@@ -247,7 +254,7 @@ Expected<std::unique_ptr<LLM::Impl>> LLM::Impl::create_unique(std::shared_ptr<VD
             auto &tokenizer_buffer = parse_result.local_resources_buffers[TOKENIZER];
             TRY(tokenizer, HailoTokenizer::create(tokenizer_buffer->as_view()));
 
-            token_embedder_buffer = parse_result.local_resources_buffers[INPUT_EMB_BINARY];
+            kept_resources = std::move(parse_result.local_resources_buffers);
         }
 #endif // HAILO_CLIENT_TOKENIZER_ENABLED
 
@@ -257,21 +264,28 @@ Expected<std::unique_ptr<LLM::Impl>> LLM::Impl::create_unique(std::shared_ptr<VD
         TRY(create_llm_request, LLMCreateSerializer::serialize_request(vdevice_params, llm_params, hef_path_to_send));
         TRY(create_llm_reply, session_wrapper->execute(MemoryView(create_llm_request)));
     }
-    TRY(auto reply_tuple, LLMCreateSerializer::deserialize_reply(MemoryView(*create_llm_reply)), "Failed to create LLM");
-    auto prompt_template = std::get<0>(reply_tuple);
-    auto embedding_features = std::get<1>(reply_tuple);
+    TRY(auto create_llm_reply_info, LLMCreateSerializer::deserialize_reply(MemoryView(*create_llm_reply)),
+        "Failed to create LLM");
+    const auto &prompt_template = create_llm_reply_info.prompt_template;
+    const auto embedding_features = create_llm_reply_info.embedding_features;
 
     if (llm_params.optimize_memory_on_device()) {
 #ifndef HAILO_CLIENT_TOKENIZER_ENABLED
         (void)embedding_features;
-        (void)token_embedder_buffer;
+        (void)kept_resources;
+        (void)embedding_tables;
         LOGGER__ERROR("Host-tokenization is not enabled in lib compilation");
         return make_unexpected(HAILO_NOT_IMPLEMENTED);
 #else
-        CHECK_AS_EXPECTED(nullptr != token_embedder_buffer, HAILO_NOT_AVAILABLE,
-            "Token embedder buffer is not available. This might happen if the HEF exists locally on the server, but 'optimize_memory_on_device' is set to true.");
-        TRY(token_embedder, TokenEmbedder<uint16_t>::create(token_embedder_buffer,
-            token_embedder_buffer->size() / (sizeof(uint16_t) * embedding_features), embedding_features));
+        TRY(token_embedder, GenAICommon::create_kept_table_embedder(kept_resources,
+            embedding_tables.token_embeddings.resource, embedding_features, TOKEN_EMBEDDINGS_TABLE_DESCRIPTION));
+        if (embedding_tables.per_layer_inputs) {
+            CHECK(0 < create_llm_reply_info.per_layer_inputs_features, HAILO_NOT_SUPPORTED,
+                "The HEF declares a per-layer inputs table, but the server didn't report a per-layer row width");
+            TRY(per_layer_inputs_embedder, GenAICommon::create_kept_table_embedder(kept_resources,
+                embedding_tables.per_layer_inputs->resource, create_llm_reply_info.per_layer_inputs_features,
+                PER_LAYER_INPUTS_TABLE_DESCRIPTION));
+        }
 #endif // HAILO_CLIENT_TOKENIZER_ENABLED
     }
 
@@ -279,12 +293,13 @@ Expected<std::unique_ptr<LLM::Impl>> LLM::Impl::create_unique(std::shared_ptr<VD
     TRY_V(auto get_generator_default_params, session_wrapper->execute(MemoryView(get_generator_default_params_request)));
     TRY(auto default_generator_params, LLMGetGeneratorParamsSerializer::deserialize_reply(MemoryView(*get_generator_default_params)));
 
-    TRY(auto prompt_template_handler, PromptTemplateHandler::create(prompt_template));
+    TRY(auto prompt_template_handler, PromptTemplateHandler::create(prompt_template,
+        create_llm_reply_info.bos_token, create_llm_reply_info.eos_token));
     auto prompt_template_handler_ptr = make_shared_nothrow<PromptTemplateHandler>(std::move(prompt_template_handler));
     CHECK_NOT_NULL_AS_EXPECTED(prompt_template_handler_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     auto llm_ptr = make_unique_nothrow<Impl>(session_wrapper, llm_params, default_generator_params, prompt_template_handler_ptr,
-        tokenizer, token_embedder);
+        tokenizer, token_embedder, per_layer_inputs_embedder);
     CHECK_NOT_NULL_AS_EXPECTED(llm_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     return llm_ptr;
@@ -292,11 +307,13 @@ Expected<std::unique_ptr<LLM::Impl>> LLM::Impl::create_unique(std::shared_ptr<VD
 
 LLM::Impl::Impl(std::shared_ptr<SessionWrapper> session, const LLMParams &llm_params,
     const LLMGeneratorParams &default_generator_params, std::shared_ptr<PromptTemplateHandler> prompt_template_handler,
-    std::shared_ptr<HailoTokenizer> tokenizer, std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder) :
+    std::shared_ptr<HailoTokenizer> tokenizer, std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder,
+    std::shared_ptr<TokenEmbedder<uint16_t>> per_layer_inputs_embedder) :
         m_session(session), m_llm_params(llm_params), m_default_generator_params(default_generator_params),
         m_prompt_template_handler(prompt_template_handler),
         m_tokenizer(tokenizer),
-        m_token_embedder(token_embedder)
+        m_token_embedder(token_embedder),
+        m_per_layer_inputs_embedder(per_layer_inputs_embedder)
 {}
 
 LLM::Impl::~Impl()
@@ -402,6 +419,9 @@ hailo_status LLM::Impl::load_context(const MemoryView &context)
     CHECK_SUCCESS(m_session->write(context), "Failed to write context");
     TRY(auto reply, m_session->read());
     CHECK_SUCCESS(LLMSetContextSerializer::deserialize_reply(MemoryView(*reply)), "Failed to set context");
+    m_prompt_template_handler->mark_context_used();
+    TRY(const auto context_usage, get_context_usage_size(), "Failed to get context usage after load");
+    m_prompt_template_handler->on_context_loaded(context_usage);
     return HAILO_SUCCESS;
 }
 
@@ -511,6 +531,26 @@ Expected<std::vector<std::string>> LLM::Impl::get_stop_tokens()
     return stop_tokens_results;
 }
 
+hailo_status LLM::set_chat_template_kwargs(const std::string &chat_template_kwargs)
+{
+    return m_pimpl->set_chat_template_kwargs(chat_template_kwargs);
+}
+
+hailo_status LLM::Impl::set_chat_template_kwargs(const std::string &chat_template_kwargs)
+{
+    return m_prompt_template_handler->set_chat_template_kwargs(chat_template_kwargs);
+}
+
+Expected<std::string> LLM::get_chat_template_kwargs()
+{
+    return m_pimpl->get_chat_template_kwargs();
+}
+
+Expected<std::string> LLM::Impl::get_chat_template_kwargs()
+{
+    return m_prompt_template_handler->chat_template_kwargs();
+}
+
 Expected<LLMGenerator> LLM::create_generator(const LLMGeneratorParams &params)
 {
     return m_pimpl->create_generator(params);
@@ -543,7 +583,7 @@ Expected<LLMGenerator> LLM::Impl::create_generator(const LLMGeneratorParams &par
     CHECK_SUCCESS(LLMGeneratorCreateSerializer::deserialize_reply(MemoryView(*create_generator_reply)), "Failed to create LLM generator");
 
     auto pimpl = make_shared_nothrow<LLMGenerator::Impl>(m_session, m_prompt_template_handler,
-        m_tokenizer, m_token_embedder, params.max_generated_tokens());
+        m_tokenizer, m_token_embedder, m_per_layer_inputs_embedder, params.max_generated_tokens());
     CHECK_NOT_NULL_AS_EXPECTED(pimpl, HAILO_OUT_OF_HOST_MEMORY);
     return LLMGenerator(pimpl);
 }
@@ -590,10 +630,12 @@ LLMGenerator::LLMGenerator(std::shared_ptr<Impl> pimpl) :
 {}
 
 LLMGenerator::Impl::Impl(std::shared_ptr<SessionWrapper> session, std::shared_ptr<PromptTemplateHandler> prompt_template_handler,
-    std::shared_ptr<HailoTokenizer> tokenizer, std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder, uint32_t max_generated_tokens) :
+    std::shared_ptr<HailoTokenizer> tokenizer, std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder,
+    std::shared_ptr<TokenEmbedder<uint16_t>> per_layer_inputs_embedder, uint32_t max_generated_tokens) :
         m_session(session), m_prompt_template_handler(prompt_template_handler),
         m_tokenizer(tokenizer),
         m_token_embedder(token_embedder),
+        m_per_layer_inputs_embedder(per_layer_inputs_embedder),
         m_max_generated_tokens(max_generated_tokens)
 {}
 
@@ -663,7 +705,7 @@ Expected<LLMGeneratorCompletion> LLMGenerator::Impl::generate()
         TOKENS_BACKLOG, shutdown_event, HAILO_INFINITE_TIMEOUT));
 
     auto pimpl = make_unique_nothrow<LLMGeneratorCompletion::Impl>(m_session, shared_from_this(),
-        std::move(client_token_queue), shutdown_event, m_tokenizer, m_token_embedder,
+        std::move(client_token_queue), shutdown_event, m_tokenizer, m_token_embedder, m_per_layer_inputs_embedder,
         m_aggregated_prompt, initial_prefix_tokens);
     CHECK_NOT_NULL_AS_EXPECTED(pimpl, HAILO_OUT_OF_HOST_MEMORY);
 
@@ -688,6 +730,7 @@ LLMGeneratorCompletion::LLMGeneratorCompletion(std::unique_ptr<Impl> pimpl) :
 LLMGeneratorCompletion::Impl::Impl(std::shared_ptr<SessionWrapper> session, std::shared_ptr<TextGeneratorBase> generator,
     SpscQueue<LLMTokenPair> &&client_token_queue, EventPtr shutdown_event,
     std::shared_ptr<HailoTokenizer> tokenizer, std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder,
+    std::shared_ptr<TokenEmbedder<uint16_t>> per_layer_inputs_embedder,
     const std::string &aggregated_prompt, const std::vector<int> &initial_prefix_tokens) :
         m_generator_scope_guard(generator),
         m_session(session),
@@ -696,7 +739,8 @@ LLMGeneratorCompletion::Impl::Impl(std::shared_ptr<SessionWrapper> session, std:
         m_shutdown_event(shutdown_event),
         m_context_full_warning_issued(false),
         m_tokenizer(tokenizer),
-        m_token_embedder(token_embedder)
+        m_token_embedder(token_embedder),
+        m_per_layer_inputs_embedder(per_layer_inputs_embedder)
 {
     m_token_reader_thread = std::thread(&LLMGeneratorCompletion::Impl::token_reader_thread, this, aggregated_prompt, initial_prefix_tokens);
 }
@@ -818,11 +862,9 @@ hailo_status LLMGeneratorCompletion::Impl::prepare_client_side_embeddings(LLMGen
     }
 
     // Convert tokens to embeddings
-    input.embeddings.clear();
-    TRY(auto embeddings, m_token_embedder->tokens_to_embeddings(tokens_to_embed));
-    for (auto &embedding : embeddings) {
-        TRY(auto buffer, Buffer::create_shared(embedding.data(), embedding.size(), BufferStorageParams::create_dma()));
-        input.embeddings.emplace_back(buffer, static_cast<EmbeddingViewWrapper::EmbeddingType>(embedding.type()));
+    TRY(input.embeddings, m_token_embedder->tokens_to_embeddings(tokens_to_embed));
+    if (m_per_layer_inputs_embedder) {
+        TRY(input.per_layer_inputs, gather_per_layer_inputs(*m_per_layer_inputs_embedder, tokens_to_embed));
     }
 
     return HAILO_SUCCESS;
@@ -844,6 +886,7 @@ void LLMGeneratorCompletion::Impl::prepare_next_iteration(LLMGeneratorReadSerial
     input.tokens = { next_token_id };
     input.initial_prompt.clear();
     input.embeddings.clear();
+    input.per_layer_inputs.clear();
 }
 
 Expected<size_t> LLMGeneratorCompletion::read(char *output, size_t output_size, std::chrono::milliseconds timeout)

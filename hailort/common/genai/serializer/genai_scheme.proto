@@ -93,6 +93,9 @@ message LLM_Create_Reply {
     uint32 status = 1;
     string prompt_template = 2;
     uint32 embedding_features = 3;
+    string bos_token = 4;
+    string eos_token = 5;
+    uint32 per_layer_inputs_features = 6;  // Zero for a model declaring no per-layer inputs table
 }
 
 message LLM_Get_Generator_Params_Request {
@@ -144,10 +147,11 @@ message Embedding {
 }
 
 message TextGenerationInput {
-    string initial_prompt = 1;          // Client-side tokenizer: empty | Server-side tokenizer: valid on first iter
-    repeated uint32 tokens = 2;         // * first iter - Client-side tokenizer: combined prefix+input tokens | Server-side tokenizer: prefix tokens_history_before_reasoning
-                                        // * Subsequent iters - single token
-    repeated Embedding embeddings = 3;  // Client-side tokenizer: valid | Server-side tokenizer: empty
+    string initial_prompt = 1;                // Client-side tokenizer: empty | Server-side tokenizer: valid on first iter
+    repeated uint32 tokens = 2;               // * first iter - Client-side tokenizer: combined prefix+input tokens | Server-side tokenizer: prefix tokens_history_before_reasoning
+                                              // * Subsequent iters - single token
+    repeated Embedding embeddings = 3;        // Client-side tokenizer: valid | Server-side tokenizer: empty
+    repeated Embedding per_layer_inputs = 4;  // Client-side tokenizer: a row per token if a per-layer table exists
 }
 
 message TextGenerationOutput {
@@ -301,6 +305,8 @@ message VLM_Create_Reply {
     uint32 image_pad_token_id = 6;
     uint32 video_pad_token_id = 7;
     uint32 embeddings_per_frame = 8;
+    string bos_token = 9;
+    string eos_token = 10;
 }
 
 message VLM_Generator_Generate_Request {

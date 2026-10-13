@@ -12,6 +12,8 @@
 namespace hailort
 {
 
+static constexpr size_t TRANSFER_QUEUE_SIZE_FACTOR = 8;
+
 Expected<PcieSession> PcieSession::connect(std::shared_ptr<HailoRTDriver> driver, pcie_connection_port_t port)
 {
     TRY(auto input_desc_list, create_desc_list(*driver));
@@ -41,8 +43,8 @@ Expected<PcieSession> PcieSession::create(std::shared_ptr<HailoRTDriver> driver,
     TRY(auto interrupts_dispatcher, vdma::InterruptsDispatcher::create(*driver));
 
     auto create_channel = [&](vdma::ChannelId id, vdma::BoundaryChannel::Direction dir, vdma::DescriptorList &&desc_list) {
-        // TODO: HRT-15701 : remove 4
-        return vdma::BoundaryChannel::create(*driver, id, dir, std::move(desc_list), 4 * MAX_ONGOING_TRANSFERS, true);
+        return vdma::BoundaryChannel::create(*driver, id, dir, std::move(desc_list),
+            TRANSFER_QUEUE_SIZE_FACTOR * MAX_ONGOING_TRANSFERS, true);
     };
 
     TRY(auto input_channel, create_channel(input_channel_id, vdma::BoundaryChannel::Direction::H2D, std::move(input_desc_list)));

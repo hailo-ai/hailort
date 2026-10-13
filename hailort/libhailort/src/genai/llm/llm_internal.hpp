@@ -58,6 +58,7 @@ public:
     Impl(std::shared_ptr<SessionWrapper> session, std::shared_ptr<TextGeneratorBase> generator,
          SpscQueue<LLMTokenPair> &&client_token_queue, EventPtr shutdown_event,
          std::shared_ptr<HailoTokenizer> tokenizer, std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder,
+         std::shared_ptr<TokenEmbedder<uint16_t>> per_layer_inputs_embedder,
          const std::string &aggregated_prompt, const std::vector<int> &initial_prefix_tokens = {});
     ~Impl();
 
@@ -91,6 +92,7 @@ private:
     // Optionals, only used if optimize_memory_on_device is true
     std::shared_ptr<HailoTokenizer> m_tokenizer;
     std::shared_ptr<TokenEmbedder<uint16_t>> m_token_embedder;
+    std::shared_ptr<TokenEmbedder<uint16_t>> m_per_layer_inputs_embedder;
 };
 
 
@@ -99,7 +101,7 @@ class LLMGenerator::Impl final : public TextGeneratorBase
 public:
     Impl(std::shared_ptr<SessionWrapper> session, std::shared_ptr<PromptTemplateHandler> prompt_template_handler,
         std::shared_ptr<HailoTokenizer> tokenizer, std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder,
-        uint32_t max_generated_tokens);
+        std::shared_ptr<TokenEmbedder<uint16_t>> per_layer_inputs_embedder, uint32_t max_generated_tokens);
     ~Impl();
 
     hailo_status write(const std::vector<std::string> &prompt_json_strings, const std::vector<std::string> &tools_json_strings);
@@ -117,6 +119,7 @@ private:
     // Optionals, only used if optimize_memory_on_device is true
     std::shared_ptr<HailoTokenizer> m_tokenizer;
     std::shared_ptr<TokenEmbedder<uint16_t>> m_token_embedder;
+    std::shared_ptr<TokenEmbedder<uint16_t>> m_per_layer_inputs_embedder;
     uint32_t m_max_generated_tokens;
 };
 
@@ -140,6 +143,8 @@ public:
     Expected<std::string> get_generation_recovery_sequence();
     hailo_status set_stop_tokens(const std::vector<std::string> &stop_tokens);
     Expected<std::vector<std::string>> get_stop_tokens();
+    hailo_status set_chat_template_kwargs(const std::string &chat_template_kwargs);
+    Expected<std::string> get_chat_template_kwargs();
 
     // Direct generation method for JSON structured prompts
     Expected<LLMGeneratorCompletion> generate(const LLMGeneratorParams &params, const std::vector<std::string> &prompt_json_strings, const std::vector<std::string> &tools_json_strings);
@@ -148,7 +153,8 @@ public:
 
     Impl(std::shared_ptr<SessionWrapper> session, const LLMParams &llm_params,
         const LLMGeneratorParams &default_generator_params, std::shared_ptr<PromptTemplateHandler> prompt_template_handler,
-        std::shared_ptr<HailoTokenizer> tokenizer, std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder);
+        std::shared_ptr<HailoTokenizer> tokenizer, std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder,
+        std::shared_ptr<TokenEmbedder<uint16_t>> per_layer_inputs_embedder);
 
 private:
     hailo_status validate_generator_params(const LLMGeneratorParams &params);
@@ -161,6 +167,7 @@ private:
     // Optionals, only used if optimize_memory_on_device is true
     std::shared_ptr<HailoTokenizer> m_tokenizer;
     std::shared_ptr<TokenEmbedder<uint16_t>> m_token_embedder;
+    std::shared_ptr<TokenEmbedder<uint16_t>> m_per_layer_inputs_embedder;
 };
 
 } /* namespace genai */

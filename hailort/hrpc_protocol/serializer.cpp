@@ -12,6 +12,7 @@
 #include "hailo/hailort.h"
 #include "hailo/hailort_common.hpp"
 #include "common/utils.hpp"
+#include "utils/clock_frequency_config.hpp"
 #include <cstdint>
 #include <tuple>
 
@@ -1692,6 +1693,199 @@ Expected<uint32_t> GetCurrentLimitSerializer::deserialize_reply(const MemoryView
     CHECK_AS_EXPECTED(reply.ParseFromArray(serialized_reply.data(), static_cast<int>(serialized_reply.size())),
         HAILO_RPC_FAILED, "Failed to de-serialize '{}'", "GetCurrentLimit");
     return reply.current_limit_ma();
+}
+
+static Expected<hailo_clock_domain_t> to_clock_domain(uint32_t serialized_clock_domain)
+{
+    // A value outside ::hailo_clock_domain_t cannot be converted to it, so the range is checked on the wire value
+    CHECK(static_cast<uint32_t>(HAILO_CLOCK_DOMAIN_COUNT) > serialized_clock_domain, HAILO_INVALID_ARGUMENT,
+        "Invalid clock domain {}", serialized_clock_domain);
+
+    return Expected<hailo_clock_domain_t>(static_cast<hailo_clock_domain_t>(serialized_clock_domain));
+}
+
+template<typename T>
+static Expected<size_t> get_serialized_clock_domain_request(rpc_object_handle_t device_handle,
+    hailo_clock_domain_t domain, const std::string &name, MemoryView buffer)
+{
+    CHECK_SUCCESS(validate_clock_domain(domain));
+
+    T request;
+    auto proto_device_handle = request.mutable_device_handle();
+    proto_device_handle->set_id(device_handle);
+    request.set_domain(static_cast<uint32_t>(domain));
+
+    return get_serialized_request<T>(request, name, buffer);
+}
+
+template<typename T>
+static Expected<std::tuple<rpc_object_handle_t, hailo_clock_domain_t>> get_deserialized_clock_domain_request(
+    const MemoryView &serialized_request, const std::string &name)
+{
+    T request;
+    CHECK(request.ParseFromArray(serialized_request.data(), static_cast<int>(serialized_request.size())),
+        HAILO_RPC_FAILED, "Failed to de-serialize '{}'", name);
+
+    TRY(const auto domain, to_clock_domain(request.domain()));
+    return std::make_tuple(request.device_handle().id(), domain);
+}
+
+template<typename T>
+static Expected<Buffer> get_serialized_clock_frequency_reply(uint32_t frequency_mhz, const std::string &name)
+{
+    T reply;
+    reply.set_frequency_mhz(frequency_mhz);
+    return get_serialized_reply<T>(reply, name);
+}
+
+template<typename T>
+static Expected<uint32_t> get_deserialized_clock_frequency_reply(const MemoryView &serialized_reply,
+    const std::string &name)
+{
+    T reply;
+    CHECK(reply.ParseFromArray(serialized_reply.data(), static_cast<int>(serialized_reply.size())),
+        HAILO_RPC_FAILED, "Failed to de-serialize '{}'", name);
+    return reply.frequency_mhz();
+}
+
+Expected<size_t> GetSupportedClockFrequenciesSerializer::serialize_request(rpc_object_handle_t device_handle,
+    hailo_clock_domain_t domain, MemoryView buffer)
+{
+    return get_serialized_clock_domain_request<Device_GetSupportedClockFrequencies_Request>(device_handle, domain,
+        "GetSupportedClockFrequencies", buffer);
+}
+
+Expected<std::tuple<rpc_object_handle_t, hailo_clock_domain_t>> GetSupportedClockFrequenciesSerializer::deserialize_request(
+    const MemoryView &serialized_request)
+{
+    return get_deserialized_clock_domain_request<Device_GetSupportedClockFrequencies_Request>(serialized_request,
+        "GetSupportedClockFrequencies");
+}
+
+Expected<Buffer> GetSupportedClockFrequenciesSerializer::serialize_reply(const std::vector<uint32_t> &clocks_mhz)
+{
+    Device_GetSupportedClockFrequencies_Reply reply;
+    for (const auto clock_mhz : clocks_mhz) {
+        reply.add_clocks_mhz(clock_mhz);
+    }
+    return get_serialized_reply<Device_GetSupportedClockFrequencies_Reply>(reply, "GetSupportedClockFrequencies");
+}
+
+Expected<std::vector<uint32_t>> GetSupportedClockFrequenciesSerializer::deserialize_reply(
+    const MemoryView &serialized_reply)
+{
+    Device_GetSupportedClockFrequencies_Reply reply;
+    CHECK(reply.ParseFromArray(serialized_reply.data(), static_cast<int>(serialized_reply.size())),
+        HAILO_RPC_FAILED, "Failed to de-serialize '{}'", "GetSupportedClockFrequencies");
+    return std::vector<uint32_t>(reply.clocks_mhz().begin(), reply.clocks_mhz().end());
+}
+
+Expected<size_t> SetNominalClockFrequencySerializer::serialize_request(rpc_object_handle_t device_handle,
+    hailo_clock_domain_t domain, uint32_t frequency_mhz, MemoryView buffer)
+{
+    CHECK_SUCCESS(validate_clock_domain(domain));
+
+    Device_SetNominalClockFrequency_Request request;
+    auto proto_device_handle = request.mutable_device_handle();
+    proto_device_handle->set_id(device_handle);
+    request.set_domain(static_cast<uint32_t>(domain));
+    request.set_frequency_mhz(frequency_mhz);
+
+    return get_serialized_request<Device_SetNominalClockFrequency_Request>(request, "SetNominalClockFrequency", buffer);
+}
+
+Expected<std::tuple<rpc_object_handle_t, hailo_clock_domain_t, uint32_t>> SetNominalClockFrequencySerializer::deserialize_request(
+    const MemoryView &serialized_request)
+{
+    Device_SetNominalClockFrequency_Request request;
+    CHECK(request.ParseFromArray(serialized_request.data(), static_cast<int>(serialized_request.size())),
+        HAILO_RPC_FAILED, "Failed to de-serialize 'SetNominalClockFrequency'");
+
+    TRY(const auto domain, to_clock_domain(request.domain()));
+    return std::make_tuple(request.device_handle().id(), domain, request.frequency_mhz());
+}
+
+Expected<Buffer> SetNominalClockFrequencySerializer::serialize_reply()
+{
+    return Buffer();
+}
+
+Expected<size_t> GetDefaultNominalClockFrequencySerializer::serialize_request(rpc_object_handle_t device_handle,
+    hailo_clock_domain_t domain, MemoryView buffer)
+{
+    return get_serialized_clock_domain_request<Device_GetDefaultNominalClockFrequency_Request>(device_handle, domain,
+        "GetDefaultNominalClockFrequency", buffer);
+}
+
+Expected<std::tuple<rpc_object_handle_t, hailo_clock_domain_t>> GetDefaultNominalClockFrequencySerializer::deserialize_request(
+    const MemoryView &serialized_request)
+{
+    return get_deserialized_clock_domain_request<Device_GetDefaultNominalClockFrequency_Request>(serialized_request,
+        "GetDefaultNominalClockFrequency");
+}
+
+Expected<Buffer> GetDefaultNominalClockFrequencySerializer::serialize_reply(uint32_t frequency_mhz)
+{
+    return get_serialized_clock_frequency_reply<Device_GetDefaultNominalClockFrequency_Reply>(frequency_mhz,
+        "GetDefaultNominalClockFrequency");
+}
+
+Expected<uint32_t> GetDefaultNominalClockFrequencySerializer::deserialize_reply(const MemoryView &serialized_reply)
+{
+    return get_deserialized_clock_frequency_reply<Device_GetDefaultNominalClockFrequency_Reply>(serialized_reply,
+        "GetDefaultNominalClockFrequency");
+}
+
+Expected<size_t> GetNominalClockFrequencySerializer::serialize_request(rpc_object_handle_t device_handle,
+    hailo_clock_domain_t domain, MemoryView buffer)
+{
+    return get_serialized_clock_domain_request<Device_GetNominalClockFrequency_Request>(device_handle, domain,
+        "GetNominalClockFrequency", buffer);
+}
+
+Expected<std::tuple<rpc_object_handle_t, hailo_clock_domain_t>> GetNominalClockFrequencySerializer::deserialize_request(
+    const MemoryView &serialized_request)
+{
+    return get_deserialized_clock_domain_request<Device_GetNominalClockFrequency_Request>(serialized_request,
+        "GetNominalClockFrequency");
+}
+
+Expected<Buffer> GetNominalClockFrequencySerializer::serialize_reply(uint32_t frequency_mhz)
+{
+    return get_serialized_clock_frequency_reply<Device_GetNominalClockFrequency_Reply>(frequency_mhz,
+        "GetNominalClockFrequency");
+}
+
+Expected<uint32_t> GetNominalClockFrequencySerializer::deserialize_reply(const MemoryView &serialized_reply)
+{
+    return get_deserialized_clock_frequency_reply<Device_GetNominalClockFrequency_Reply>(serialized_reply,
+        "GetNominalClockFrequency");
+}
+
+Expected<size_t> GetCurrentClockFrequencySerializer::serialize_request(rpc_object_handle_t device_handle,
+    hailo_clock_domain_t domain, MemoryView buffer)
+{
+    return get_serialized_clock_domain_request<Device_GetCurrentClockFrequency_Request>(device_handle, domain,
+        "GetCurrentClockFrequency", buffer);
+}
+
+Expected<std::tuple<rpc_object_handle_t, hailo_clock_domain_t>> GetCurrentClockFrequencySerializer::deserialize_request(
+    const MemoryView &serialized_request)
+{
+    return get_deserialized_clock_domain_request<Device_GetCurrentClockFrequency_Request>(serialized_request,
+        "GetCurrentClockFrequency");
+}
+
+Expected<Buffer> GetCurrentClockFrequencySerializer::serialize_reply(uint32_t frequency_mhz)
+{
+    return get_serialized_clock_frequency_reply<Device_GetCurrentClockFrequency_Reply>(frequency_mhz,
+        "GetCurrentClockFrequency");
+}
+
+Expected<uint32_t> GetCurrentClockFrequencySerializer::deserialize_reply(const MemoryView &serialized_reply)
+{
+    return get_deserialized_clock_frequency_reply<Device_GetCurrentClockFrequency_Reply>(serialized_reply,
+        "GetCurrentClockFrequency");
 }
 
 } /* namespace hailort */

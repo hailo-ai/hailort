@@ -236,6 +236,7 @@ static const std::vector<ProtoHEFExtensionType> SUPPORTED_EXTENSIONS = {
     CSM_CRC,                        // Extension added in platform 5.1.0 release
     ENABLE_CONFIG_CHANNELS,         // Extension added in platform 5.1.0 release
     STRICT_RUNTIME_VERSIONING,      // Extension added in platform 5.1.0 release
+    HAILO_NET_FLOW_DAMOYOLO_NMS     // DAMO-YOLO post process (net-flow on host)
 };
 
 static inline bool is_h2d_boundary_info_layer(const ProtoHEFEdgeLayer& layer)

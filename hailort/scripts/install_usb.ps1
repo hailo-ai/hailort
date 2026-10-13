@@ -250,7 +250,7 @@ foreach ($binary in $BuiltBinaries) {
 }
 
 # libusb is built from source via FetchContent as a SHARED library. A POST_BUILD
-# step in hailort/tools/usb/usb_image_scripts/CMakeLists.txt places libusb-1.0.dll
+# step in hailort/tools/usb/usb_loader/CMakeLists.txt places libusb-1.0.dll
 # next to hailo_usb_loader.exe in $BinDir.
 $LibusbDll = Join-Path $BinDir "libusb-1.0.dll"
 Copy-Item -Path $LibusbDll -Destination $InstallDir -Force

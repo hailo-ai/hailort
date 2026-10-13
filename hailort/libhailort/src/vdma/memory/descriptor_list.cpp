@@ -49,7 +49,7 @@ DescriptorList::DescriptorList(uint32_t desc_count, uint16_t desc_page_size, boo
         return;
     }
 
-    auto desc_list_info = m_driver.descriptors_list_create(desc_count, m_desc_page_size, m_is_circular);
+    auto desc_list_info = m_driver.descriptors_list_create(desc_count, m_desc_page_size);
     if (!desc_list_info) {
         status = desc_list_info.status();
         return;
@@ -106,7 +106,7 @@ uint32_t DescriptorList::descriptors_in_buffer(size_t buffer_size, uint16_t desc
 
 size_t DescriptorList::descriptors_buffer_allocation_size(uint32_t desc_count)
 {
-    // based on hailo_desc_list_create from linux driver
+    // Must match the driver's allocation: the list size is rounded up to DESCRIPTOR_LIST_ALIGN.
     auto ALIGN = [](size_t size, size_t alignment) {
         const auto mask = alignment - 1;
         return (size + mask) & ~mask;

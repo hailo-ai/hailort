@@ -20,12 +20,13 @@ set(HAILORT_COMMON_CPP_SOURCES
 )
 
 add_subdirectory(genai/serializer)
+add_subdirectory(genai/config)
 set(GENAI_SCHEME_CPP_SOURCES ${GENAI_SCHEME_CPP_SOURCES} PARENT_SCOPE)
 
 if(WIN32)
     add_subdirectory(os/windows)
 elseif(UNIX)
-    add_subdirectory(os/posix)
+    add_subdirectory(os/linux)
 else()
     message(FATAL_ERROR "Unexpeced host, stopping build")
 endif()
@@ -45,11 +46,6 @@ target_link_libraries(hailort_common
     readerwriterqueue
     xxhash
 )
-
-if(CMAKE_SYSTEM_NAME STREQUAL QNX)
-    include(${HAILO_EXTERNALS_CMAKE_SCRIPTS}/pevents.cmake)
-    target_link_libraries(hailort_common PRIVATE pevents pci)
-endif()
 
 set_target_properties(hailort_common PROPERTIES
     CXX_STANDARD              17

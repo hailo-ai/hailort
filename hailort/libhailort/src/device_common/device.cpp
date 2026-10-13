@@ -22,6 +22,7 @@
 #include "vdma/legacy_pcie/legacy_pcie_device.hpp"
 #include "vdma/integrated/integrated_device.hpp"
 #include "device/device_hrpc_client.hpp"
+#include "utils/clock_frequency_config.hpp"
 #include "utils/query_stats_utils.hpp"
 #include "utils/logger_fetcher.hpp"
 #include "device_common/pcie_utils.hpp"
@@ -726,6 +727,47 @@ Expected<Device::Capabilities> Device::get_capabilities()
 
 Expected<uint32_t> Device::get_current_limit() {
     return HAILO_CURRENT_LIMIT_NA; // Not applicable, but not an error
+}
+
+hailo_status Device::get_supported_clock_frequencies(hailo_clock_domain_t domain, uint32_t *count, uint32_t *)
+{
+    CHECK_SUCCESS(validate_clock_domain(domain));
+    CHECK_ARG_NOT_NULL(count);
+
+    LOGGER__WARNING("get_supported_clock_frequencies is not supported on this device type");
+    return HAILO_NOT_SUPPORTED;
+}
+
+hailo_status Device::set_nominal_clock_frequency(hailo_clock_domain_t domain, uint32_t)
+{
+    CHECK_SUCCESS(validate_clock_domain(domain));
+
+    LOGGER__WARNING("set_nominal_clock_frequency is not supported on this device type");
+    return HAILO_NOT_SUPPORTED;
+}
+
+Expected<uint32_t> Device::get_default_nominal_clock_frequency(hailo_clock_domain_t domain)
+{
+    CHECK_SUCCESS(validate_clock_domain(domain));
+
+    LOGGER__WARNING("get_default_nominal_clock_frequency is not supported on this device type");
+    return make_unexpected(HAILO_NOT_SUPPORTED);
+}
+
+Expected<uint32_t> Device::get_nominal_clock_frequency(hailo_clock_domain_t domain)
+{
+    CHECK_SUCCESS(validate_clock_domain(domain));
+
+    LOGGER__WARNING("get_nominal_clock_frequency is not supported on this device type");
+    return make_unexpected(HAILO_NOT_SUPPORTED);
+}
+
+Expected<uint32_t> Device::get_current_clock_frequency(hailo_clock_domain_t domain)
+{
+    CHECK_SUCCESS(validate_clock_domain(domain));
+
+    LOGGER__WARNING("get_current_clock_frequency is not supported on this device type");
+    return make_unexpected(HAILO_NOT_SUPPORTED);
 }
 
 } /* namespace hailort */

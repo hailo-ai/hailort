@@ -38,6 +38,43 @@ constexpr int LANGUAGE_TOKEN_ID_OFFSET = 1;
 // Support backward compatibility, TODO: HRT-19298
 static const std::string OLD_HEF_CONFIG_JSON_PARSING_KEY = "embeddings_output_layers_names";
 
+static constexpr hailo_format_order_t ENCODER_INPUT_USER_ORDER = HAILO_FORMAT_ORDER_NHWC;
+static const std::vector<hailo_format_order_t> ENCODER_INPUT_SUPPORTED_HW_ORDERS = {HAILO_FORMAT_ORDER_NHCW,
+    HAILO_FORMAT_ORDER_NHWC, HAILO_FORMAT_ORDER_FCR, HAILO_FORMAT_ORDER_F8CR};
+
+static hailo_status validate_encoder_input_hw_order(const Hef &hef, const std::string &encoder_model_name)
+{
+    TRY(const auto input_stream_infos, hef.get_input_stream_infos(encoder_model_name));
+    CHECK(1 == input_stream_infos.size(), HAILO_INVALID_ARGUMENT, "Expected 1 encoder input stream, got {}",
+        input_stream_infos.size());
+
+    const auto hw_order = input_stream_infos[0].format.order;
+    CHECK(contains(ENCODER_INPUT_SUPPORTED_HW_ORDERS, hw_order), HAILO_NOT_SUPPORTED,
+        "Unsupported encoder input hw order {}", HailoRTCommon::get_format_order_str(hw_order));
+
+    return HAILO_SUCCESS;
+}
+
+static int frames_per_chunk(int chunk_size_seconds)
+{
+    return static_cast<int>((chunk_size_seconds * SAMPLE_RATE) / HOP_LENGTH);
+}
+
+static hailo_status validate_encoder_input_shape(const hailo_3d_image_shape_t &shape, int num_mel_bins,
+    int chunk_size_seconds)
+{
+    CHECK(static_cast<uint32_t>(num_mel_bins) == shape.features, HAILO_INVALID_ARGUMENT,
+        "Encoder input has {} features, expected {} mel bins", shape.features, num_mel_bins);
+
+    const auto frames_count = shape.height * shape.width;
+    const auto expected_frames_count = frames_per_chunk(chunk_size_seconds);
+    CHECK(static_cast<uint32_t>(expected_frames_count) == frames_count, HAILO_INVALID_ARGUMENT,
+        "Encoder input has {} frames, expected {} for a {}s chunk", frames_count, expected_frames_count,
+        chunk_size_seconds);
+
+    return HAILO_SUCCESS;
+}
+
 Speech2TextServer::Speech2TextServer(std::shared_ptr<Session> session, std::shared_ptr<VDeviceManager> vdevice_manager, Speech2TextGeneratorParams &&generator_params) :
     m_session(session),
     m_vdevice_manager(vdevice_manager),
@@ -188,6 +225,9 @@ Expected<Buffer> Speech2TextServer::handle_create_speech2text_request(const Memo
     }
     LOGGER__GENAI_STATS_END("[create] parse GenAI config json");
 
+    CHECK_SUCCESS_AS_HRPC_STATUS(validate_encoder_input_hw_order(hef, m_encoder_model_name),
+        Speech2TextCreateSerializer);
+
     LOGGER__GENAI_STATS_START("[create] create speech2text encoder model");
     TRY_AS_HRPC_STATUS(m_inference_manager_encoder, InferenceManager::create(vdevice, hef, m_encoder_model_name), Speech2TextCreateSerializer);
     LOGGER__GENAI_STATS_END("[create] create speech2text encoder model");
@@ -196,7 +236,9 @@ Expected<Buffer> Speech2TextServer::handle_create_speech2text_request(const Memo
 
     TRY_AS_HRPC_STATUS(auto encoder_input, m_inference_manager_encoder->get_model()->input(), Speech2TextCreateSerializer);
     encoder_input.set_format_type(HAILO_FORMAT_TYPE_FLOAT32);
-    encoder_input.set_format_order(HAILO_FORMAT_ORDER_NCHW); // TODO: HRT-18868 - Remove
+    encoder_input.set_format_order(ENCODER_INPUT_USER_ORDER);
+    CHECK_SUCCESS_AS_HRPC_STATUS(validate_encoder_input_shape(encoder_input.shape(), m_num_mel_bins,
+        m_chunk_size_seconds), Speech2TextCreateSerializer);
     TRY_AS_HRPC_STATUS(auto encoder_output, m_inference_manager_encoder->get_model()->output(), Speech2TextCreateSerializer);
     auto encoder_output_shape = encoder_output.shape();
     encoder_output.set_format_order(HAILO_FORMAT_ORDER_NHCW);
@@ -332,12 +374,13 @@ Expected<std::vector<Speech2Text::SegmentInfo>> Speech2TextServer::process_input
     LOGGER__GENAI_STATS_END("[generate] pre-process - convert to mel spectrogram");
 
     int seek = 0;
-    static const int n_frames = static_cast<int>((m_chunk_size_seconds * SAMPLE_RATE) / HOP_LENGTH);
+    const int n_frames = frames_per_chunk(m_chunk_size_seconds);
     int content_frames = static_cast<int>(mel_spectrogram.rows()) - n_frames;
     int input_stride = n_frames / m_n_audio_ctx;
 
     CHECK(n_frames * mel_spectrogram.cols() * sizeof(float32_t) == m_encoder_input_buffer->size(), HAILO_INTERNAL_FAILURE, "Encoder input buffer size mismatch");
-    Eigen::Map<Eigen::MatrixXf> encoder_input(reinterpret_cast<float32_t*>(m_encoder_input_buffer->data()), n_frames, mel_spectrogram.cols());
+    Speech2TextPreProcess::FrameMajorMelMap encoder_input(reinterpret_cast<float32_t*>(m_encoder_input_buffer->data()),
+        n_frames, mel_spectrogram.cols());
 
     // Prepare context tokens
     // Task token

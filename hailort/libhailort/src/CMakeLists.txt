@@ -60,12 +60,8 @@ set(COMMON_C_SOURCES
 relative_to_absolute_paths(HAILORT_CPP_SOURCES ${HAILORT_CPP_SOURCES})
 relative_to_absolute_paths(C_OS_SOURCES ${C_OS_SOURCES})
 relative_to_absolute_paths(COMMON_C_SOURCES ${COMMON_C_SOURCES})
-relative_to_absolute_paths(HAILO_OS_DIR ${HAILO_OS_DIR})
-relative_to_absolute_paths(HAILO_FULL_OS_DIR ${HAILO_FULL_OS_DIR})
 relative_to_absolute_paths(DRIVER_OS_DIR ${DRIVER_OS_DIR})
 relative_to_absolute_paths(HAILO_DRIVER_SRC_FILES ${HAILO_DRIVER_SRC_FILES})
-set(HAILO_OS_DIR ${HAILO_OS_DIR} CACHE INTERNAL "Absolute path of os-dir")
-set(HAILO_FULL_OS_DIR ${HAILO_FULL_OS_DIR} CACHE INTERNAL "Absolute Full path of os-dir")
 set(DRIVER_OS_DIR ${DRIVER_OS_DIR} CACHE INTERNAL "Absolute Full path of driver os-dir")
 set(HAILO_DRIVER_SRC_FILES ${HAILO_DRIVER_SRC_FILES} CACHE INTERNAL "Absolute Full path of driver src files")
 set(HAILORT_CPP_SOURCES ${HAILORT_CPP_SOURCES} CACHE INTERNAL "Absolute paths of hailort's cpp source files")
@@ -118,14 +114,11 @@ endif()
 # Link tokenizers when client tokenizer is enabled
 if(HAILO_BUILD_CLIENT_TOKENIZER)
     target_link_libraries(libhailort PRIVATE tokenizers_cpp)
+    target_link_libraries(libhailort PRIVATE genai_config)
 endif()
 
 if(ENABLE_PERFETTO)
     target_link_libraries(libhailort PRIVATE perfetto)
-endif()
-
-if(CMAKE_SYSTEM_NAME STREQUAL QNX)
-    target_link_libraries(libhailort PRIVATE pci)
 endif()
 
 set(HAILORT_PUBLIC_HEADERS

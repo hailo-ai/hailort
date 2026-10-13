@@ -14,7 +14,7 @@ readonly FUNCTIONAL_RFS_FILE="${SCRIPT_DIR}/core-image-hailo-hailo10-usb-dongle.
 readonly SWU_RFS_FILE="${SCRIPT_DIR}/core-image-hailo-hailo10-usb-dongle-swu.ext4"
 readonly FW_UPDATE_IMAGE_FILE="${SCRIPT_DIR}/hailo-update-image-hailo10-usb-dongle.swu"
 readonly UPLOAD_TOOL="${SCRIPT_DIR}/hailo_usb_loader"
-readonly LOAD_IMAGE_SCRIPT="${SCRIPT_DIR}/load_image.sh"
+readonly LOAD_IMAGE_SCRIPT="${SCRIPT_DIR}/load_usb_image.sh"
 readonly LOAD_IMAGE_LOCK_DIR="/run/lock/hailo"
 
 readonly UDEV_RULES_FILE="${SCRIPT_DIR}/51-hailo-usb-udev.rules"

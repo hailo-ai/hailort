@@ -314,6 +314,8 @@ public:
      * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
      * @note The context is unique for a specific VLM model. It is retrieved using save_context().
      *       Trying to set a context from a different VLM (e.g. QWEN2.5-VL context on a QWEN2-VL model) will result in an error.
+     * @note After loading a non-empty context, the context is not fresh: system role messages and
+     *       set_chat_template_kwargs() changes are rejected until clear_context().
      */
     hailo_status load_context(const MemoryView &context);
 
@@ -367,6 +369,32 @@ public:
      * @note This returns only the custom stop tokens set by the user, not the built-in model stop tokens.
      */
     Expected<std::vector<std::string>> get_stop_tokens();
+
+    /**
+     * Sets extra chat template variables, e.g. R"({"date_string": "26 Jul 2024"})".
+     *
+     * @param[in] chat_template_kwargs  A JSON object. "" or "{}" clears all variables.
+     *
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error:
+     *         ::HAILO_INVALID_ARGUMENT for invalid JSON, a non-object, or if the template fails to render
+     *         its system prompt; ::HAILO_INVALID_OPERATION for a new value on a used context;
+     *         ::HAILO_NOT_AVAILABLE for a non-empty value if the model has no chat template.
+     * @note A new value is accepted only on a fresh context (after creation or clear_context(), before the first
+     *       structured prompt or loading a non-empty context). The value stays in effect across clear_context()
+     *       and is not saved by save_context().
+     * @note Overriding variables the renderer sets (e.g. messages, tools, bos_token) or built-in filters and
+     *       functions is undefined behavior.
+     * @note Raw prompts are not affected.
+     */
+    hailo_status set_chat_template_kwargs(const std::string &chat_template_kwargs);
+
+    /**
+     * Gets the current chat template variables.
+     *
+     * @return Upon success, returns Expected of std::string with the variables as a compact JSON object
+     *         with sorted keys ("{}" if none are set). Otherwise, returns Unexpected of ::hailo_status error.
+     */
+    Expected<std::string> get_chat_template_kwargs();
 
     /**
      * @return The size of the input frame.

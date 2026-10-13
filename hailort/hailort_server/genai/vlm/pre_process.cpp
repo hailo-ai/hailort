@@ -14,24 +14,35 @@ namespace hailort
 namespace genai
 {
 
+static constexpr uint32_t NO_PER_LAYER_INPUTS_FEATURES = 0;
+
 Expected<std::unique_ptr<LLMPreProcess>> VLMPreProcess::create(const std::map<std::string, size_t> &prefill_inputs_frame_size,
-    const std::map<std::string, size_t> &tbt_inputs_frame_size, Eigen::VectorXf &&theta, uint32_t text_embeddings_layer_features,
-    const hailo_3d_image_shape_t &input_encoder_shape, uint8_t scaled_mask_value, const InputLayersNamesSuffixes &input_layers_names_suffixes,
-    const PreProcessParams &pre_process_params, bool has_deepstack_layers,
+    const std::map<std::string, size_t> &tbt_inputs_frame_size, const std::vector<Eigen::VectorXf> &group_thetas,
+    uint32_t text_embeddings_layer_features, hailo_format_type_t text_embeddings_layer_type,
+    const EmbeddingTables &embedding_tables, const hailo_3d_image_shape_t &input_encoder_shape,
+    const std::vector<AttentionGroupMaskValues> &group_mask_values,
+    const InputLayersNamesSuffixes &input_layers_names_suffixes, const PreProcessParams &pre_process_params,
+    const std::vector<AttentionGroupParams> &attention_groups, bool has_deepstack_layers,
     const std::unordered_map<std::string, size_t> &deepstack_suffix_to_tokens_per_frame)
 {
-    CHECK_SUCCESS(validate_inputs_names(prefill_inputs_frame_size, input_layers_names_suffixes));
-    CHECK_SUCCESS(validate_inputs_names(tbt_inputs_frame_size, input_layers_names_suffixes));
+    // TODO: HRT-21092 - write the per-layer inputs layer in VLM pre-process
+    CHECK(!embedding_tables.per_layer_inputs, HAILO_NOT_IMPLEMENTED,
+        "A per-layer inputs table is not supported in VLM yet");
+    CHECK_SUCCESS(validate_inputs_layout(prefill_inputs_frame_size, tbt_inputs_frame_size,
+        embedding_tables, NO_PER_LAYER_INPUTS_FEATURES, pre_process_params, attention_groups,
+        text_embeddings_layer_features, text_embeddings_layer_type, group_thetas, group_mask_values));
+    TRY(auto groups, discover_layer_groups(group_thetas, prefill_inputs_frame_size, tbt_inputs_frame_size,
+        group_mask_values, attention_groups));
 
     auto cols = text_embeddings_layer_features;
 
     Eigen::Matrix<uint16_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> local_cached_embeddings =
         Eigen::Matrix<uint16_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>(pre_process_params.prefill_input_tokens_count, cols);
 
-    auto ptr = make_unique_nothrow<VLMPreProcess>(std::move(theta),
-        std::move(local_cached_embeddings),
-        prefill_inputs_frame_size, tbt_inputs_frame_size, input_encoder_shape, scaled_mask_value, input_layers_names_suffixes,
-        pre_process_params, has_deepstack_layers, deepstack_suffix_to_tokens_per_frame);
+    auto ptr = make_unique_nothrow<VLMPreProcess>(std::move(local_cached_embeddings),
+        prefill_inputs_frame_size, tbt_inputs_frame_size, input_encoder_shape, embedding_tables,
+        input_layers_names_suffixes, pre_process_params, std::move(groups), has_deepstack_layers,
+        deepstack_suffix_to_tokens_per_frame);
     CHECK_NOT_NULL_AS_EXPECTED(ptr, HAILO_OUT_OF_HOST_MEMORY); // Consider returning different status
 
     return std::unique_ptr<LLMPreProcess>(std::move(ptr));
@@ -44,14 +55,15 @@ void VLMPreProcess::reset_local_cache()
     m_temporal_pos_w = 0;
 }
 
-VLMPreProcess::VLMPreProcess(Eigen::VectorXf &&theta,
-    Eigen::Matrix<uint16_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> &&local_cached_embeddings,
+VLMPreProcess::VLMPreProcess(Eigen::Matrix<uint16_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> &&local_cached_embeddings,
     const std::map<std::string, size_t> &prefill_inputs_frame_size, const std::map<std::string, size_t> &tbt_inputs_frame_size,
-    const hailo_3d_image_shape_t &input_encoder_shape, uint8_t scaled_mask_value, const InputLayersNamesSuffixes &input_layers_names_suffixes,
-    const PreProcessParams &pre_process_params, bool has_deepstack_layers,
+    const hailo_3d_image_shape_t &input_encoder_shape, const EmbeddingTables &embedding_tables,
+    const InputLayersNamesSuffixes &input_layers_names_suffixes, const PreProcessParams &pre_process_params,
+    std::vector<AttentionGroupContext> &&groups, bool has_deepstack_layers,
     const std::unordered_map<std::string, size_t> &deepstack_suffix_to_tokens_per_frame) :
-        LLMPreProcess(std::move(theta), std::move(local_cached_embeddings), prefill_inputs_frame_size,
-            tbt_inputs_frame_size, scaled_mask_value, input_layers_names_suffixes, pre_process_params),
+        LLMPreProcess(std::move(local_cached_embeddings), prefill_inputs_frame_size, tbt_inputs_frame_size,
+            embedding_tables, NO_PER_LAYER_INPUTS_FEATURES, input_layers_names_suffixes, pre_process_params,
+            std::move(groups)),
         m_input_encoder_shape(input_encoder_shape),
         m_temporal_pos_h(0),
         m_temporal_pos_w(0),
@@ -80,8 +92,8 @@ void VLMPreProcess::fill_temporal_positional_embed(int pos_ids_start_index, int 
     m_temporal_pos_h = 0;
 }
 
-hailo_status VLMPreProcess::prepare_positional_embed_inputs(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer, 
-    int layer_input_tokens_size, const std::vector<std::pair<uint32_t, uint32_t>> &frames_tokens_indices, int input_tokens_count)
+hailo_status VLMPreProcess::prepare_positional_embed_inputs_mrope(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer,
+    InferencePhase phase, const std::vector<std::pair<uint32_t, uint32_t>> &frames_tokens_indices, int input_tokens_count)
 {
     shift_local_cached_positional_embeds(input_tokens_count);
 
@@ -133,9 +145,7 @@ hailo_status VLMPreProcess::prepare_positional_embed_inputs(std::map<layer_name_
         incremental_positional_embed(pos_ids_start_index, input_tokens_count);
     }
 
-    auto rope_pair = angular_positional_embed(layer_input_tokens_size);
-
-    return fill_positional_embed(layer_name_to_input_buffer, rope_pair.first, rope_pair.second);
+    return fill_positional_embed_inputs(layer_name_to_input_buffer, phase);
 }
 
 hailo_status VLMPreProcess::prepare_deepstack_inputs(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer,
@@ -156,25 +166,29 @@ hailo_status VLMPreProcess::prepare_deepstack_inputs(std::map<layer_name_t, Memo
     EmbeddingsVectorState standalone_ds_state(standalone_frame_embeddings_state);
     EmbeddingsVectorState video_ds_state(video_embeddings_state);
 
-    for (size_t i = 0; i < m_params.prefill_input_tokens_count; i++) {
-        bool is_vision_token = (i < input_embeddings.size()) &&
-            (input_embeddings[i].type() == EmbeddingViewWrapper::EmbeddingType::IMAGE ||
-             input_embeddings[i].type() == EmbeddingViewWrapper::EmbeddingType::VIDEO);
+    // A chunk shorter than the prefill input fills its last slots: the embeddings, position ids and mask are all
+    // bottom-aligned, so the deepstack rows have to be as well or each token adds another token's vision features
+    const auto first_token_slot = m_params.prefill_input_tokens_count - input_embeddings.size();
+    for (size_t slot = 0; slot < m_params.prefill_input_tokens_count; slot++) {
+        const auto *embedding = (slot >= first_token_slot) ? &input_embeddings[slot - first_token_slot] : nullptr;
+        bool is_vision_token = (embedding != nullptr) &&
+            (embedding->type() == EmbeddingViewWrapper::EmbeddingType::IMAGE ||
+             embedding->type() == EmbeddingViewWrapper::EmbeddingType::VIDEO);
 
         if (!is_vision_token) {
-            zero_deepstack_token(layer_name_to_input_buffer, deepstack_suffixes, suffix_to_layer_info, i);
+            zero_deepstack_token(layer_name_to_input_buffer, deepstack_suffixes, suffix_to_layer_info, slot);
             continue;
         }
 
         EmbeddingsVectorState *ds_state = nullptr;
-        if (input_embeddings[i].type() == EmbeddingViewWrapper::EmbeddingType::IMAGE) {
+        if (embedding->type() == EmbeddingViewWrapper::EmbeddingType::IMAGE) {
             ds_state = &standalone_ds_state;
-        } else if (input_embeddings[i].type() == EmbeddingViewWrapper::EmbeddingType::VIDEO) {
+        } else if (embedding->type() == EmbeddingViewWrapper::EmbeddingType::VIDEO) {
             ds_state = &video_ds_state;
         }
         CHECK(ds_state != nullptr, HAILO_INVALID_OPERATION, "Invalid embedding type for deepstack");
 
-        CHECK_SUCCESS(copy_deepstack_vision_token(layer_name_to_input_buffer, deepstack_suffixes, suffix_to_layer_info, i, *ds_state));
+        CHECK_SUCCESS(copy_deepstack_vision_token(layer_name_to_input_buffer, deepstack_suffixes, suffix_to_layer_info, slot, *ds_state));
     }
 
     return HAILO_SUCCESS;
@@ -210,6 +224,7 @@ hailo_status VLMPreProcess::copy_deepstack_vision_token(std::map<layer_name_t, M
         size_t src_bytes_per_token = src_buffer->size() / src_tokens_per_frame->second;
         auto *dst_ptr = dst_buffer.data() + (token_index * dst_bytes_per_token);
         auto *src_ptr = src_buffer->data() + (emb_index_in_frame * src_bytes_per_token);
+        // TODO: HRT-20947 - check the copy length against the destination slot size
         std::memcpy(dst_ptr, src_ptr, src_bytes_per_token);
     }
 
@@ -217,7 +232,7 @@ hailo_status VLMPreProcess::copy_deepstack_vision_token(std::map<layer_name_t, M
 }
 
 // 'input_embeddings' already have placeholders for the vision tokens inside
-hailo_status VLMPreProcess::prepare_inputs_prefill(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer,
+hailo_status VLMPreProcess::prepare_inputs_prefill_multimodal(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer,
     std::vector<EmbeddingViewWrapper> input_embeddings, EmbeddingsVectorState &standalone_frame_embeddings_state,
     EmbeddingsVectorState &video_embeddings_state)
 {
@@ -269,12 +284,12 @@ hailo_status VLMPreProcess::prepare_inputs_prefill(std::map<layer_name_t, Memory
     }
     update_cache_from_embeddings(input_embeddings);
 
-    TRY(auto embeddings_layer_name, get_layer_name_from_suffix<MemoryView>(m_input_layers_names_suffixes.embeddings, layer_name_to_input_buffer));
+    TRY(auto embeddings_layer_name, get_layer_name_from_suffix<MemoryView>(
+        m_embedding_tables.token_embeddings.input_layer_suffix, layer_name_to_input_buffer));
     prepare_embeddings_input(layer_name_to_input_buffer[embeddings_layer_name], m_params.prefill_input_tokens_count);
 
-    TRY(auto attention_mask_layer_name, get_layer_name_from_suffix<MemoryView>(m_input_layers_names_suffixes.attention_mask, layer_name_to_input_buffer));
-    prepare_attention_mask_input(layer_name_to_input_buffer[attention_mask_layer_name], m_params.prefill_input_tokens_count);
-    CHECK_SUCCESS(prepare_positional_embed_inputs(layer_name_to_input_buffer, m_params.prefill_input_tokens_count,
+    CHECK_SUCCESS(prepare_attention_mask_inputs(layer_name_to_input_buffer, InferencePhase::Prefill));
+    CHECK_SUCCESS(prepare_positional_embed_inputs_mrope(layer_name_to_input_buffer, InferencePhase::Prefill,
         relative_frames_tokens_indices, static_cast<int>(input_embeddings.size())));
 
     return HAILO_SUCCESS;

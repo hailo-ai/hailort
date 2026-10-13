@@ -55,6 +55,12 @@ public:
     static constexpr const char *DEVICE_ID = HailoRTDriver::INTEGRATED_NNC_DEVICE_ID;
     virtual Expected<bool> has_power_sensor() override;
     virtual Expected<uint32_t> get_current_limit() override;
+    virtual hailo_status get_supported_clock_frequencies(hailo_clock_domain_t domain, uint32_t *count,
+        uint32_t *clocks_mhz) override;
+    virtual hailo_status set_nominal_clock_frequency(hailo_clock_domain_t domain, uint32_t frequency_mhz) override;
+    virtual Expected<uint32_t> get_default_nominal_clock_frequency(hailo_clock_domain_t domain) override;
+    virtual Expected<uint32_t> get_nominal_clock_frequency(hailo_clock_domain_t domain) override;
+    virtual Expected<uint32_t> get_current_clock_frequency(hailo_clock_domain_t domain) override;
 
 protected:
     virtual hailo_status reset_impl(CONTROL_PROTOCOL__reset_type_t reset_type) override;

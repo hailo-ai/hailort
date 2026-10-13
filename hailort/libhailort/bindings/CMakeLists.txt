@@ -1,7 +1,6 @@
 cmake_minimum_required(VERSION 3.5.0)
 
-# QNX currently doesnt support GStreamer
-if(HAILO_BUILD_GSTREAMER AND NOT CMAKE_SYSTEM_NAME STREQUAL QNX)
+if(HAILO_BUILD_GSTREAMER)
     add_subdirectory(gstreamer)
 endif()
 

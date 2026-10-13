@@ -72,24 +72,19 @@ void ChannelsGroup::process_interrupts(IrqData &&irq_data)
 }
 
 // Function that based off the irq data returns the status to be sent to the callbak functions
-static hailo_status get_callback_status(vdma::ChannelId channel_id, const ChannelIrqData &irq_data)
+static hailo_status get_callback_status(const ChannelIrqData &irq_data)
 {
-    hailo_status status = HAILO_UNINITIALIZED;
     if (!irq_data.is_active) {
-        status = HAILO_STREAM_ABORT;
-    } else if (!irq_data.validation_success) {
-        LOGGER__WARNING("Channel {} validation failed", channel_id);
-        status = HAILO_INTERNAL_FAILURE;
-    } else {
-        status = HAILO_SUCCESS;
+        return HAILO_STREAM_ABORT;
     }
-    return status;
+
+    return HAILO_SUCCESS;
 }
 
 hailo_status ChannelsGroup::process_channel_interrupt(const ChannelIrqData &channel_irq_data)
 {
     TRY(auto channel, get_by_id(channel_irq_data.channel_id), "Channel {} not found", channel_irq_data.channel_id);
-    auto callback_status = get_callback_status(channel_irq_data.channel_id, channel_irq_data);
+    auto callback_status = get_callback_status(channel_irq_data);
     return channel->complete_transfers(callback_status, channel_irq_data.transfers_completed);
 }
 

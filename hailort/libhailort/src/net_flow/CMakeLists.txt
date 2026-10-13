@@ -11,6 +11,7 @@ set(SRC_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/ops/yolov5_seg_post_process.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ops/yolov8_post_process.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ops/yolov8_bbox_only_post_process.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ops/damoyolo_post_process.cpp
 
     ${CMAKE_CURRENT_SOURCE_DIR}/pipeline/pipeline.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pipeline/pipeline_internal.cpp
