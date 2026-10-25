@@ -61,7 +61,14 @@ struct AsyncInferCompletionInfo;
 
 static const auto ASYNC_INFER_EMPTY_CALLBACK = [](const AsyncInferCompletionInfo&) {};
 
-/*! Configured infer_model that can be used to perform an asynchronous inference */
+/**
+ * Configured infer_model that can be used to perform an asynchronous inference.
+ * @note Releasing the last instance blocks until all in-flight run_async() callbacks have returned (bounded by a
+ *  timeout). On Hailo-10H, over Ethernet, or when using the multi-process service, this wait starts after the
+ *  release request completes or times out. In that case, the release also does not wait again if an earlier wait
+ *  in shutdown() timed out.
+ *  Do not release the last instance from within any async callback of a model on the same VDevice.
+ */
 class HAILORTAPI ConfiguredInferModel
 {
 public:
@@ -300,6 +307,7 @@ public:
      * @note @a callback should execute as quickly as possible.
      * @note The bindings' buffers should be kept intact until the async job is completed.
      * @note To ensure the inference pipeline can handle new buffers, it is recommended to first call \ref wait_for_async_ready
+     * @note If this method fails when called from within an async callback, it can block until a timeout expires.
      */
     Expected<AsyncInferJob> run_async(const Bindings &bindings,
         std::function<void(const AsyncInferCompletionInfo &)> callback = ASYNC_INFER_EMPTY_CALLBACK);
@@ -317,6 +325,7 @@ public:
      * @note @a callback should execute as quickly as possible.
      * @note The bindings' buffers should be kept intact until the async job is completed.
      * @note To ensure the inference pipeline can handle new buffers, it is recommended to first call \ref wait_for_async_ready
+     * @note If this method fails when called from within an async callback, it can block until a timeout expires.
      */
     Expected<AsyncInferJob> run_async(const std::vector<Bindings> &bindings,
         std::function<void(const AsyncInferCompletionInfo &)> callback = ASYNC_INFER_EMPTY_CALLBACK);
@@ -375,7 +384,13 @@ public:
 
     /**
      * Shuts the inference down. After calling this method, the model is no longer usable.
-     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     *  An error is also returned if in-flight run_async() callbacks do not return within the timeout; they may
+     *  still run after this method returns.
+     * @note Blocks until all in-flight run_async() callbacks have returned (bounded by a timeout). On Hailo-10H,
+     *  over Ethernet, or when using the multi-process service, this wait starts after the shutdown request completes
+     *  or times out. In that case, this method also does not wait again if an earlier wait timed out.
+     * @note Do not call this method from within any async callback of a model on the same VDevice.
      */
     hailo_status shutdown();
 

@@ -9,12 +9,172 @@
 
 #include "pre_process.hpp"
 
+#include <algorithm>
+#include <cmath>
+#include <vector>
+
 namespace hailort
 {
 namespace genai
 {
 
 static constexpr uint32_t NO_PER_LAYER_INPUTS_FEATURES = 0;
+
+static constexpr size_t UINT16_CODES_COUNT = static_cast<size_t>(UINT16_MAX) + 1;
+
+static bool does_patch_tile_frame(const hailo_3d_image_shape_t &encoder_input_shape, uint32_t patch_size,
+    size_t embeddings_per_frame)
+{
+    if (0 == patch_size) {
+        return false;
+    }
+    const auto merged_patch_h = patch_size * MERGE_SIZE_H;
+    const auto merged_patch_w = patch_size * MERGE_SIZE_W;
+    const bool is_tiled = (0 == encoder_input_shape.height % merged_patch_h) &&
+        (0 == encoder_input_shape.width % merged_patch_w);
+    const auto merged_patches_count = static_cast<size_t>(encoder_input_shape.height / merged_patch_h) *
+        (encoder_input_shape.width / merged_patch_w);
+    return is_tiled && (embeddings_per_frame == merged_patches_count);
+}
+
+// Patches are square, so the frame area per embedding fixes the patch side
+Expected<uint32_t> resolve_vision_patch_size(const hailo_3d_image_shape_t &encoder_input_shape,
+    size_t encoder_embeddings_per_frame)
+{
+    CHECK(0 != encoder_embeddings_per_frame, HAILO_INVALID_HEF, "The vision encoder outputs no embeddings per frame");
+    const auto pixels_per_patch = static_cast<double>(encoder_input_shape.height) * encoder_input_shape.width /
+        static_cast<double>(encoder_embeddings_per_frame * MERGE_SIZE_H * MERGE_SIZE_W);
+    const auto patch_size = static_cast<uint32_t>(std::lround(std::sqrt(pixels_per_patch)));
+    CHECK(does_patch_tile_frame(encoder_input_shape, patch_size, encoder_embeddings_per_frame), HAILO_INVALID_HEF,
+        "No vision patch size tiles the encoder frame {}x{} into {} embeddings", encoder_input_shape.height,
+        encoder_input_shape.width, encoder_embeddings_per_frame);
+    return Expected<uint32_t>(patch_size);
+}
+
+EmbeddingsRequantization::EmbeddingsRequantization(BufferPtr decoder_code_by_encoder_code) :
+    m_decoder_code_by_encoder_code(std::move(decoder_code_by_encoder_code))
+{}
+
+Expected<EmbeddingsRequantization> EmbeddingsRequantization::create(const hailo_quant_info_t &encoder_quant,
+    const hailo_quant_info_t &decoder_quant)
+{
+    const float32_t scale = encoder_quant.qp_scale / decoder_quant.qp_scale;
+    const float32_t offset = decoder_quant.qp_zp - (encoder_quant.qp_zp * scale);
+    if ((1.0f == scale) && (0.0f == offset)) {
+        return EmbeddingsRequantization();
+    }
+
+    TRY(auto decoder_code_by_encoder_code, Buffer::create_shared(UINT16_CODES_COUNT * sizeof(uint16_t)));
+    auto *decoder_codes = decoder_code_by_encoder_code->as_pointer<uint16_t>();
+    for (size_t code = 0; code < UINT16_CODES_COUNT; code++) {
+        const auto decoder_code = std::round((scale * static_cast<float32_t>(code)) + offset);
+        decoder_codes[code] = static_cast<uint16_t>(std::clamp(decoder_code, 0.0f, static_cast<float32_t>(UINT16_MAX)));
+    }
+    return EmbeddingsRequantization(std::move(decoder_code_by_encoder_code));
+}
+
+bool EmbeddingsRequantization::is_needed() const
+{
+    return nullptr != m_decoder_code_by_encoder_code;
+}
+
+void EmbeddingsRequantization::apply(MemoryView codes) const
+{
+    if (!is_needed()) {
+        return;
+    }
+    const auto *decoder_codes = m_decoder_code_by_encoder_code->as_pointer<uint16_t>();
+    auto *code_values = reinterpret_cast<uint16_t*>(codes.data());
+    const auto codes_count = codes.size() / sizeof(uint16_t);
+    for (size_t i = 0; i < codes_count; i++) {
+        code_values[i] = decoder_codes[code_values[i]];
+    }
+}
+
+static size_t vision_rows_per_frame(size_t frame_size, size_t features)
+{
+    return frame_size / (features * sizeof(uint16_t));
+}
+
+static hailo_status validate_deepstack_layer(const std::string &suffix,
+    const std::map<std::string, size_t> &prefill_inputs_frame_size, uint32_t prefill_input_tokens_count,
+    const VisionEncoderLayout &vision_encoder_layout)
+{
+    TRY(const auto layer_name, get_layer_name_from_suffix<size_t>(suffix, prefill_inputs_frame_size),
+        "No prefill input carries deepstack suffix '{}'", suffix);
+    const auto encoder_output = vision_encoder_layout.deepstack.find(suffix);
+    CHECK(encoder_output != vision_encoder_layout.deepstack.end(), HAILO_INVALID_ARGUMENT,
+        "Deepstack input layer '{}' (suffix '{}') has no vision encoder output feeding it", layer_name, suffix);
+
+    const auto &[encoder_frame_size, tokens_per_frame] = encoder_output->second;
+    CHECK(0 != tokens_per_frame, HAILO_INVALID_ARGUMENT,
+        "The vision encoder deepstack output feeding decoder input suffix '{}' holds 0 tokens per frame", suffix);
+    CHECK(0 == (encoder_frame_size % tokens_per_frame), HAILO_INVALID_ARGUMENT,
+        "The vision encoder deepstack output feeding decoder input suffix '{}' has a frame size of {} bytes, which "
+        "does not divide evenly into its {} tokens", suffix, encoder_frame_size, tokens_per_frame);
+
+    const auto decoder_frame_size = prefill_inputs_frame_size.at(layer_name);
+    CHECK(0 == (decoder_frame_size % prefill_input_tokens_count), HAILO_INVALID_ARGUMENT,
+        "Deepstack input layer '{}' has a frame size of {} bytes, which does not divide evenly into its {} prefill "
+        "tokens", layer_name, decoder_frame_size, prefill_input_tokens_count);
+
+    const auto encoder_bytes_per_token = encoder_frame_size / tokens_per_frame;
+    const auto decoder_bytes_per_token = decoder_frame_size / prefill_input_tokens_count;
+    CHECK(encoder_bytes_per_token == decoder_bytes_per_token, HAILO_INVALID_ARGUMENT,
+        "Deepstack input layer '{}' (suffix '{}') takes {} bytes per token, but the vision encoder deepstack output "
+        "feeding it holds {} bytes per token", layer_name, suffix, decoder_bytes_per_token, encoder_bytes_per_token);
+    CHECK(tokens_per_frame == vision_encoder_layout.embeddings_per_frame, HAILO_INVALID_ARGUMENT,
+        "The vision encoder deepstack output feeding decoder input suffix '{}' holds {} tokens per frame, but the "
+        "vision embeddings output holds {} tokens per frame", suffix, tokens_per_frame,
+        vision_encoder_layout.embeddings_per_frame);
+
+    return HAILO_SUCCESS;
+}
+
+// Each vision token copies one encoder deepstack row into its own decoder slot, so a row must be exactly one slot
+// wide and the encoder must hold one deepstack row per vision embedding of the frame
+static hailo_status validate_deepstack_layout(const std::map<std::string, size_t> &prefill_inputs_frame_size,
+    const InputLayersNamesSuffixes &input_layers_names_suffixes, uint32_t prefill_input_tokens_count,
+    uint32_t text_embeddings_layer_features, const VisionEncoderLayout &vision_encoder_layout)
+{
+    CHECK(0 != prefill_input_tokens_count, HAILO_INVALID_ARGUMENT, "The prefill input holds 0 tokens");
+    CHECK(0 != text_embeddings_layer_features, HAILO_INVALID_ARGUMENT, "The embeddings input holds 0 features");
+    const auto deepstack_suffixes = input_layers_names_suffixes.deepstack_as_vector();
+    CHECK(!deepstack_suffixes.empty(), HAILO_INVALID_ARGUMENT,
+        "The model has deepstack layers, but no deepstack input suffixes were provided");
+    const auto vision_row_size = text_embeddings_layer_features * sizeof(uint16_t);
+    CHECK(0 == (vision_encoder_layout.embeddings_frame_size % vision_row_size), HAILO_INVALID_ARGUMENT,
+        "The vision encoder embeddings output has a frame size of {} bytes, which does not divide evenly into rows "
+        "of {} bytes", vision_encoder_layout.embeddings_frame_size, vision_row_size);
+
+    for (const auto &suffix : deepstack_suffixes) {
+        CHECK_SUCCESS(validate_deepstack_layer(suffix, prefill_inputs_frame_size, prefill_input_tokens_count,
+            vision_encoder_layout));
+    }
+
+    return HAILO_SUCCESS;
+}
+
+Expected<size_t> find_start_of_reasoning_row(const std::vector<int> &tokens,
+    const std::vector<EmbeddingViewWrapper> &embeddings, size_t start_of_reasoning_token_index)
+{
+    CHECK(start_of_reasoning_token_index < tokens.size(), HAILO_INVALID_ARGUMENT,
+        "The reasoning start index {} is past the prompt's {} tokens", start_of_reasoning_token_index, tokens.size());
+    const auto rows_from_reasoning_start = tokens.size() - start_of_reasoning_token_index;
+    CHECK(rows_from_reasoning_start <= embeddings.size(), HAILO_INVALID_ARGUMENT,
+        "Got {} embedding rows, expected at least {}: one for the reasoning start and one per token after it",
+        embeddings.size(), rows_from_reasoning_start);
+
+    size_t start_of_reasoning_row = embeddings.size() - rows_from_reasoning_start;
+    const auto is_vision_row = [](const EmbeddingViewWrapper &embedding) {
+        return (EmbeddingViewWrapper::EmbeddingType::IMAGE == embedding.type()) ||
+            (EmbeddingViewWrapper::EmbeddingType::VIDEO == embedding.type());
+    };
+    CHECK(std::none_of(embeddings.begin() + static_cast<std::ptrdiff_t>(start_of_reasoning_row), embeddings.end(),
+        is_vision_row), HAILO_INVALID_ARGUMENT, "An image or video follows the prompt's reasoning start");
+
+    return start_of_reasoning_row;
+}
 
 Expected<std::unique_ptr<LLMPreProcess>> VLMPreProcess::create(const std::map<std::string, size_t> &prefill_inputs_frame_size,
     const std::map<std::string, size_t> &tbt_inputs_frame_size, const std::vector<Eigen::VectorXf> &group_thetas,
@@ -23,7 +183,7 @@ Expected<std::unique_ptr<LLMPreProcess>> VLMPreProcess::create(const std::map<st
     const std::vector<AttentionGroupMaskValues> &group_mask_values,
     const InputLayersNamesSuffixes &input_layers_names_suffixes, const PreProcessParams &pre_process_params,
     const std::vector<AttentionGroupParams> &attention_groups, bool has_deepstack_layers,
-    const std::unordered_map<std::string, size_t> &deepstack_suffix_to_tokens_per_frame)
+    const VisionEncoderLayout &vision_encoder_layout)
 {
     // TODO: HRT-21092 - write the per-layer inputs layer in VLM pre-process
     CHECK(!embedding_tables.per_layer_inputs, HAILO_NOT_IMPLEMENTED,
@@ -31,6 +191,10 @@ Expected<std::unique_ptr<LLMPreProcess>> VLMPreProcess::create(const std::map<st
     CHECK_SUCCESS(validate_inputs_layout(prefill_inputs_frame_size, tbt_inputs_frame_size,
         embedding_tables, NO_PER_LAYER_INPUTS_FEATURES, pre_process_params, attention_groups,
         text_embeddings_layer_features, text_embeddings_layer_type, group_thetas, group_mask_values));
+    if (has_deepstack_layers) {
+        CHECK_SUCCESS(validate_deepstack_layout(prefill_inputs_frame_size, input_layers_names_suffixes,
+            pre_process_params.prefill_input_tokens_count, text_embeddings_layer_features, vision_encoder_layout));
+    }
     TRY(auto groups, discover_layer_groups(group_thetas, prefill_inputs_frame_size, tbt_inputs_frame_size,
         group_mask_values, attention_groups));
 
@@ -39,10 +203,11 @@ Expected<std::unique_ptr<LLMPreProcess>> VLMPreProcess::create(const std::map<st
     Eigen::Matrix<uint16_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> local_cached_embeddings =
         Eigen::Matrix<uint16_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>(pre_process_params.prefill_input_tokens_count, cols);
 
+    TRY(const auto vision_patch_size, resolve_vision_patch_size(input_encoder_shape,
+        vision_encoder_layout.embeddings_per_frame));
     auto ptr = make_unique_nothrow<VLMPreProcess>(std::move(local_cached_embeddings),
         prefill_inputs_frame_size, tbt_inputs_frame_size, input_encoder_shape, embedding_tables,
-        input_layers_names_suffixes, pre_process_params, std::move(groups), has_deepstack_layers,
-        deepstack_suffix_to_tokens_per_frame);
+        input_layers_names_suffixes, pre_process_params, std::move(groups), has_deepstack_layers, vision_patch_size);
     CHECK_NOT_NULL_AS_EXPECTED(ptr, HAILO_OUT_OF_HOST_MEMORY); // Consider returning different status
 
     return std::unique_ptr<LLMPreProcess>(std::move(ptr));
@@ -59,16 +224,15 @@ VLMPreProcess::VLMPreProcess(Eigen::Matrix<uint16_t, Eigen::Dynamic, Eigen::Dyna
     const std::map<std::string, size_t> &prefill_inputs_frame_size, const std::map<std::string, size_t> &tbt_inputs_frame_size,
     const hailo_3d_image_shape_t &input_encoder_shape, const EmbeddingTables &embedding_tables,
     const InputLayersNamesSuffixes &input_layers_names_suffixes, const PreProcessParams &pre_process_params,
-    std::vector<AttentionGroupContext> &&groups, bool has_deepstack_layers,
-    const std::unordered_map<std::string, size_t> &deepstack_suffix_to_tokens_per_frame) :
+    std::vector<AttentionGroupContext> &&groups, bool has_deepstack_layers, uint32_t vision_patch_size) :
         LLMPreProcess(std::move(local_cached_embeddings), prefill_inputs_frame_size, tbt_inputs_frame_size,
             embedding_tables, NO_PER_LAYER_INPUTS_FEATURES, input_layers_names_suffixes, pre_process_params,
             std::move(groups)),
         m_input_encoder_shape(input_encoder_shape),
+        m_vision_patch_size(vision_patch_size),
         m_temporal_pos_h(0),
         m_temporal_pos_w(0),
-        m_has_deepstack_layers(has_deepstack_layers),
-        m_deepstack_suffix_to_tokens_per_frame(deepstack_suffix_to_tokens_per_frame)
+        m_has_deepstack_layers(has_deepstack_layers)
 {}
 
 void VLMPreProcess::fill_temporal_positional_embed(int pos_ids_start_index, int relative_st_image_index,
@@ -102,8 +266,8 @@ hailo_status VLMPreProcess::prepare_positional_embed_inputs_mrope(std::map<layer
 
     auto pos_ids_start_index = static_cast<int>(position_ids_features - input_tokens_count);
 
-    int merged_patch_size_h = m_input_encoder_shape.height / (VISION_PATH_SIZE * MERGE_SIZE_H);
-    int merged_patch_size_w = m_input_encoder_shape.width / (VISION_PATH_SIZE * MERGE_SIZE_W);
+    int merged_patch_size_h = m_input_encoder_shape.height / (m_vision_patch_size * MERGE_SIZE_H);
+    int merged_patch_size_w = m_input_encoder_shape.width / (m_vision_patch_size * MERGE_SIZE_W);
 
     // TODO (HRT-17264): Optimize this code, utilize Eigen functionality and reduce memcpy
 
@@ -214,18 +378,16 @@ hailo_status VLMPreProcess::copy_deepstack_vision_token(std::map<layer_name_t, M
     TRY(auto frame_deepstack_embeddings, ds_state.get_frame_deepstack_embeddings(frame_index));
     for (const auto &suffix : deepstack_suffixes) {
         const auto &src_buffer = frame_deepstack_embeddings.get().at(suffix);
-        const auto &[layer_name, dst_bytes_per_token] = suffix_to_layer_info.at(suffix);
+        const auto &[layer_name, bytes_per_token] = suffix_to_layer_info.at(suffix);
         auto &dst_buffer = layer_name_to_input_buffer[layer_name];
 
-        auto src_tokens_per_frame = m_deepstack_suffix_to_tokens_per_frame.find(suffix);
-        CHECK(src_tokens_per_frame != m_deepstack_suffix_to_tokens_per_frame.end(), HAILO_INVALID_OPERATION,
-            "Missing tokens_per_frame for deepstack suffix '{}'", suffix);
+        const auto src_offset = emb_index_in_frame * bytes_per_token;
+        CHECK((src_offset + bytes_per_token) <= src_buffer->size(), HAILO_INVALID_ARGUMENT,
+            "Deepstack row {} of suffix '{}' ends at byte {}, past the {} bytes of its vision encoder buffer",
+            emb_index_in_frame, suffix, src_offset + bytes_per_token, src_buffer->size());
 
-        size_t src_bytes_per_token = src_buffer->size() / src_tokens_per_frame->second;
-        auto *dst_ptr = dst_buffer.data() + (token_index * dst_bytes_per_token);
-        auto *src_ptr = src_buffer->data() + (emb_index_in_frame * src_bytes_per_token);
-        // TODO: HRT-20947 - check the copy length against the destination slot size
-        std::memcpy(dst_ptr, src_ptr, src_bytes_per_token);
+        auto *dst_ptr = dst_buffer.data() + (token_index * bytes_per_token);
+        std::memcpy(dst_ptr, src_buffer->data() + src_offset, bytes_per_token);
     }
 
     return HAILO_SUCCESS;
@@ -266,7 +428,8 @@ hailo_status VLMPreProcess::prepare_inputs_prefill_multimodal(std::map<layer_nam
                 CHECK(false, HAILO_INVALID_OPERATION, "Invalid embedding type");
             }
             // View the frame data as a matrix to fetch the appropriate row
-            const auto embeddings_per_frame = current_frame.size() / (m_local_cached_embeddings.cols() * sizeof(uint16_t));
+            const auto embeddings_per_frame = vision_rows_per_frame(current_frame.size(),
+                static_cast<size_t>(m_local_cached_embeddings.cols()));
             Eigen::Map<const Eigen::Matrix<uint16_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> frame_matrix(
                 reinterpret_cast<const uint16_t*>(current_frame.data()), embeddings_per_frame, m_local_cached_embeddings.cols());
 
@@ -282,7 +445,7 @@ hailo_status VLMPreProcess::prepare_inputs_prefill_multimodal(std::map<layer_nam
             during_frame = false;
         }
     }
-    update_cache_from_embeddings(input_embeddings);
+    CHECK_SUCCESS(update_cache_from_embeddings(input_embeddings));
 
     TRY(auto embeddings_layer_name, get_layer_name_from_suffix<MemoryView>(
         m_embedding_tables.token_embeddings.input_layer_suffix, layer_name_to_input_buffer));

@@ -134,6 +134,15 @@ private:
 
 using TransferBuffers = std::vector<TransferBuffer>;
 
+inline size_t get_total_size(const TransferBuffers &buffers)
+{
+    size_t total_size = 0;
+    for (const auto &buffer : buffers) {
+        total_size += buffer.size();
+    }
+    return total_size;
+}
+
 // Internal function, wrapper to the user callbacks, accepts the callback status as an argument.
 using TransferDoneCallback = std::function<void(hailo_status)>;
 
@@ -152,11 +161,7 @@ struct TransferRequest {
     {}
 
     size_t get_total_transfer_size() const {
-        size_t total_transfer_size = 0;
-        for (const auto &buffer : transfer_buffers) {
-            total_transfer_size += buffer.size();
-        }
-        return total_transfer_size;
+        return get_total_size(transfer_buffers);
     }
 };
 

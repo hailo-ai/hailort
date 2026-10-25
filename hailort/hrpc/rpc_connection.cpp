@@ -10,13 +10,24 @@
 #include "rpc_connection.hpp"
 #include "vdma/pcie_session.hpp"
 
-#include <numeric>
+#include <condition_variable>
+#include <mutex>
 
 namespace hailort
 {
 
 constexpr size_t MAX_BODY_SIZE(2048);
 constexpr size_t MAX_READ_TRANSFERS(2);
+
+namespace
+{
+struct ReadTransferState
+{
+    std::mutex mutex;
+    std::condition_variable cv;
+    hailo_status status = HAILO_UNINITIALIZED;
+};
+} /* namespace */
 
 Expected<RpcConnection::Params> RpcConnection::Params::create(std::shared_ptr<Session> raw)
 {
@@ -83,36 +94,41 @@ hailo_status RpcConnection::read_buffer(MemoryView buffer, std::chrono::millisec
 
 hailo_status RpcConnection::read_buffers(std::vector<TransferBuffer> &&buffers, std::chrono::milliseconds timeout)
 {
-    hailo_status transfer_status = HAILO_UNINITIALIZED;
-
-    const size_t total_size = std::accumulate(buffers.begin(), buffers.end(), size_t{0},
-        [] (size_t acc, const TransferBuffer &buffer) { return acc + buffer.size(); });
-
-    auto status = wait_for_read_buffer_async_ready(total_size, timeout);
+    auto status = wait_for_read_buffer_async_ready(get_total_size(buffers), timeout);
     CHECK_SUCCESS(status);
+
+    return read_buffers_without_ready_wait(std::move(buffers), timeout);
+}
+
+hailo_status RpcConnection::read_buffers_without_ready_wait(std::vector<TransferBuffer> &&buffers,
+    std::chrono::milliseconds timeout)
+{
+    // The transfer can complete after this method returned HAILO_TIMEOUT.
+    auto read_state = make_shared_nothrow<ReadTransferState>();
+    CHECK_NOT_NULL(read_state, HAILO_OUT_OF_HOST_MEMORY);
 
     TransferRequest transfer_request;
     transfer_request.transfer_buffers = std::move(buffers);
-    transfer_request.callback = [&] (hailo_status status) {
+    transfer_request.callback = [read_state] (hailo_status status) {
         {
-            std::unique_lock<std::mutex> lock(m_read_mutex);
-            assert(status != HAILO_UNINITIALIZED);
-            transfer_status = status;
+            std::unique_lock<std::mutex> lock(read_state->mutex);
+            assert(HAILO_UNINITIALIZED != status);
+            read_state->status = status;
         }
-        m_read_cv.notify_one();
+        read_state->cv.notify_one();
     };
 
-    status = m_session->read_async(std::move(transfer_request));
+    auto status = m_session->read_async(std::move(transfer_request));
     if (HAILO_COMMUNICATION_CLOSED == status) {
         return status;
     }
     CHECK_SUCCESS(status);
 
-    std::unique_lock<std::mutex> lock(m_read_mutex);
-    CHECK(m_read_cv.wait_for(lock, timeout, [&] { return transfer_status != HAILO_UNINITIALIZED; }),
+    std::unique_lock<std::mutex> lock(read_state->mutex);
+    CHECK(read_state->cv.wait_for(lock, timeout, [&read_state] { return HAILO_UNINITIALIZED != read_state->status; }),
         HAILO_TIMEOUT, "Timeout waiting for transfer completion");
 
-    return transfer_status;
+    return read_state->status;
 }
 
 #ifdef __linux__

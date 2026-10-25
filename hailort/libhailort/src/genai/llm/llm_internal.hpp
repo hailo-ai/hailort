@@ -56,6 +56,7 @@ class LLMGeneratorCompletion::Impl final
 {
 public:
     Impl(std::shared_ptr<SessionWrapper> session, std::shared_ptr<TextGeneratorBase> generator,
+         std::shared_ptr<PromptTemplateHandler> prompt_template_handler,
          SpscQueue<LLMTokenPair> &&client_token_queue, EventPtr shutdown_event,
          std::shared_ptr<HailoTokenizer> tokenizer, std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder,
          std::shared_ptr<TokenEmbedder<uint16_t>> per_layer_inputs_embedder,
@@ -77,9 +78,12 @@ private:
     Expected<std::pair<LLMGeneratorReadSerializer::TextGenerationOutput, Status>> send_read_request(
         const LLMGeneratorReadSerializer::TextGenerationInput &input);
     void prepare_next_iteration(LLMGeneratorReadSerializer::TextGenerationInput &input, int next_token_id);
+    // A failed generation may leave the server conversation cleared
+    void resync_prompt_template_after_failed_read();
 
     std::shared_ptr<TextGeneratorBase> m_generator_scope_guard;
     std::shared_ptr<SessionWrapper> m_session;
+    std::shared_ptr<PromptTemplateHandler> m_prompt_template_handler;
 
     mutable std::mutex m_status_mutex;
     Status m_generation_status;

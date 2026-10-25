@@ -13,6 +13,7 @@
 
 constexpr auto INVALID_LCS = 0;
 constexpr auto INVALID_CLOCK_RATE = 0;
+constexpr auto NO_SUPPORTED_FEATURES_STR = "None";
 #define MHz (1000 * 1000)
 
 
@@ -94,10 +95,10 @@ static void print_extended_device_information(const hailo_extended_device_inform
     std::cout << extended_device_information_boot_string(device_info.boot_source);
     std::cout << valid_attr_str("Neural Network Core Clock Rate", device_info.neural_network_core_clock_rate / MHz, INVALID_CLOCK_RATE, "MHz");
 
-    std::string supported_features_str = extended_device_information_supported_features(device_info.supported_features, is_accelerator);
-    if(supported_features_str.length() > 0) {
-        std::cout << "Device supported features: " << supported_features_str << std::endl;
-    }
+    const auto supported_features_str = extended_device_information_supported_features(device_info.supported_features,
+        is_accelerator);
+    std::cout << "Device supported features: " <<
+        (supported_features_str.empty() ? NO_SUPPORTED_FEATURES_STR : supported_features_str.c_str()) << std::endl;
 
     std::cout << valid_attr_str("LCS", device_info.lcs, INVALID_LCS);
 

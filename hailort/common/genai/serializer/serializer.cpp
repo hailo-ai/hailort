@@ -347,15 +347,19 @@ Expected<std::vector<int>> LLMGeneratorGenerateSerializer::deserialize_reply(con
     return initial_prefix_tokens;
 }
 
-static void write_embedding_rows(const std::vector<EmbeddingViewWrapper> &rows,
+static hailo_status write_embedding_rows(const std::vector<EmbeddingViewWrapper> &rows,
     google::protobuf::RepeatedPtrField<::Embedding> &rows_proto)
 {
     rows_proto.Reserve(static_cast<int>(rows.size()));
     for (const auto &row : rows) {
         auto *row_proto = rows_proto.Add();
-        row_proto->set_data(reinterpret_cast<const char*>(row.data()), row.size());
+        auto &row_bytes = *row_proto->mutable_data();
+        row_bytes.resize(row.size());
+        CHECK_SUCCESS(row.copy_to(MemoryView(row_bytes.data(), row_bytes.size())));
         row_proto->set_type(static_cast<uint32_t>(row.type()));
     }
+
+    return HAILO_SUCCESS;
 }
 
 static Expected<std::vector<EmbeddingViewWrapper>> read_embedding_rows(
@@ -382,8 +386,8 @@ Expected<Buffer> LLMGeneratorReadSerializer::serialize_request(const TextGenerat
         generation_input_proto->add_tokens(token);
     }
 
-    write_embedding_rows(request.embeddings, *generation_input_proto->mutable_embeddings());
-    write_embedding_rows(request.per_layer_inputs, *generation_input_proto->mutable_per_layer_inputs());
+    CHECK_SUCCESS(write_embedding_rows(request.embeddings, *generation_input_proto->mutable_embeddings()));
+    CHECK_SUCCESS(write_embedding_rows(request.per_layer_inputs, *generation_input_proto->mutable_per_layer_inputs()));
 
     return get_serialized_message<LLM_Generator_Read_Request>(llm_generator_read,
         static_cast<uint32_t>(HailoGenAIActionID::LLM__GENERATOR_READ), "LLM_Generator_Read_Request");

@@ -180,7 +180,7 @@ Expected<std::unique_ptr<VLM::Impl>> VLM::Impl::create_unique(std::shared_ptr<ha
         auto video_pad_token_id = vlm_create_reply_info.video_pad_token_id;
 
         TRY(token_embedder, GenAICommon::create_kept_table_embedder(kept_resources,
-            embedding_tables.token_embeddings.resource, embedding_features, TOKEN_EMBEDDINGS_TABLE_DESCRIPTION,
+            embedding_tables.token_embeddings, embedding_features, TOKEN_EMBEDDINGS_TABLE_DESCRIPTION,
             image_pad_token_id, video_pad_token_id));
 #endif // HAILO_CLIENT_TOKENIZER_ENABLED
     }
@@ -289,10 +289,7 @@ Expected<size_t> VLM::get_context_usage_size()
 
 Expected<size_t> VLM::Impl::get_context_usage_size()
 {
-    TRY(auto request, LLMGetContextUsageSizeSerializer::serialize_request());
-    TRY(auto reply, m_session->execute(MemoryView(request)));
-    TRY(auto context_usage, LLMGetContextUsageSizeSerializer::deserialize_reply(MemoryView(*reply)));
-    return context_usage;
+    return GenAICommon::get_context_usage_size(*m_session);
 }
 
 Expected<size_t> VLM::max_context_capacity()
@@ -349,7 +346,12 @@ hailo_status VLM::Impl::load_context(const MemoryView &context)
     CHECK_SUCCESS(m_session->write(MemoryView(request)), "Failed to write request");
     CHECK_SUCCESS(m_session->write(context), "Failed to write context");
     TRY(auto reply, m_session->read());
-    CHECK_SUCCESS(LLMSetContextSerializer::deserialize_reply(MemoryView(*reply)), "Failed to set context");
+    const auto set_context_status = LLMSetContextSerializer::deserialize_reply(MemoryView(*reply));
+    if (HAILO_SUCCESS != set_context_status) {
+        GenAICommon::resync_prompt_template_after_failed_load(set_context_status, get_context_usage_size(),
+            *m_prompt_template_handler);
+        return set_context_status;
+    }
     m_prompt_template_handler->mark_context_used();
     TRY(const auto context_usage, get_context_usage_size(), "Failed to get context usage after load");
     m_prompt_template_handler->on_context_loaded(context_usage);
@@ -721,8 +723,8 @@ Expected<LLMGeneratorCompletion> VLMGenerator::Impl::generate_impl(const std::st
 
     const std::shared_ptr<TokenEmbedder<uint16_t>> NO_PER_LAYER_INPUTS_EMBEDDER;
     auto pimpl = make_unique_nothrow<LLMGeneratorCompletion::Impl>(m_session, shared_from_this(),
-        std::move(client_token_queue), shutdown_event, m_tokenizer, m_token_embedder, NO_PER_LAYER_INPUTS_EMBEDDER,
-        prompt);
+        m_prompt_template_handler, std::move(client_token_queue), shutdown_event, m_tokenizer, m_token_embedder,
+        NO_PER_LAYER_INPUTS_EMBEDDER, prompt);
     CHECK_NOT_NULL_AS_EXPECTED(pimpl, HAILO_OUT_OF_HOST_MEMORY);
 
     LLMGeneratorCompletion obj(std::move(pimpl));

@@ -97,13 +97,14 @@ Expected<std::string> PromptTemplateHandler::render(const std::vector<std::strin
 
 Expected<std::string> PromptTemplateHandler::Impl::render(const std::vector<std::string> &prompt_json_strings, const std::vector<std::string> &tools_json_strings)
 {
-    const auto start_time = m_is_first ? std::chrono::system_clock::now() : m_context_start_time;
+    const bool is_first = m_is_first;
+    const auto start_time = is_first ? std::chrono::system_clock::now() : m_context_start_time;
     auto inputs = make_inputs(true, m_extra_context, start_time);
     for (const auto &tools_json_string : tools_json_strings) {
         auto parsed_json = json::parse(tools_json_string);
         inputs.tools.push_back(parsed_json);
     }
-    if (m_is_first) {
+    if (is_first) {
         // Messages array for the first prompt
         for (const auto &json_string : prompt_json_strings) {
             auto parsed_json = json::parse(json_string);

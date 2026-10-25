@@ -85,6 +85,8 @@ private:
         const std::vector<EmbeddingViewWrapper> &input_embeddings, EmbeddingsVectorState &standalone_frame_embeddings_state,
         EmbeddingsVectorState &video_embeddings_state);
 
+    void clear_current_vision_inputs();
+
     // Helper to compute embedding counts from buffer sizes
     std::vector<size_t> get_embeddings_count_per_item(const std::vector<BufferPtr> &embeddings_buffers) const;
 
@@ -111,6 +113,9 @@ private:
 
     hailo_status build_deepstack_outputs_info();
 
+    hailo_status resolve_embeddings_requantization(const InferModel::InferStream &embeddings_input);
+    EmbeddingsRequantization m_embeddings_requantization;
+
     std::unique_ptr<InferenceManager> m_inference_manager_frame_encoder;
 
     int m_image_pad_token_id;
@@ -124,6 +129,9 @@ private:
     std::vector<size_t> m_embeddings_count_per_video; // Per-video embedding counts (one entry per video)
     std::string m_encoder_embeddings_output_suffix; // From config JSON, used to resolve the full output name
     std::string m_encoder_embeddings_output_name;   // Full resolved output name
+    size_t m_encoder_embeddings_per_frame;
+    hailo_format_type_t m_encoder_embeddings_format_type;
+    hailo_quant_info_t m_encoder_embeddings_quant_info;
 
     // Encoder-output-suffix → decoder-input-suffix mapping, parsed from config JSON
     std::unordered_map<std::string, std::string> m_deepstack_encoder_to_decoder_suffix_map;

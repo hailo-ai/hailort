@@ -10,6 +10,8 @@
 #include <iostream>
 #include <fstream>
 
+static constexpr float32_t FREQUENCY_PENALTY = 1.05f;
+
 bool get_user_prompt(std::string &prompt)
 {
     std::cout << ">>> ";
@@ -46,6 +48,11 @@ int main(int argc, char **argv)
         auto vlm_params = hailort::genai::VLMParams(vlm_hef_path);
         vlm_params.set_optimize_memory_on_device(true);
         auto vlm = hailort::genai::VLM::create(vdevice, vlm_params).expect("Failed to create VLM");
+        auto generator_params = vlm.create_generator_params().expect("Failed to create generator params");
+        const auto status = generator_params.set_frequency_penalty(FREQUENCY_PENALTY);
+        if (HAILO_SUCCESS != status) {
+            throw hailort::hailort_error(status, "Failed to set frequency penalty");
+        }
 
         while (true) {
             std::vector<hailort::MemoryView> input_frames;
@@ -89,7 +96,8 @@ int main(int argc, char **argv)
             }
             messages.push_back(user_message);
 
-            auto generator_completion = vlm.generate(messages, input_frames).expect("Failed to generate");
+            auto generator_completion =
+                vlm.generate(generator_params, messages, input_frames).expect("Failed to generate");
 
             while (hailort::genai::LLMGeneratorCompletion::Status::GENERATING == generator_completion.generation_status()) {
                 auto output = generator_completion.read().expect("read failed!");

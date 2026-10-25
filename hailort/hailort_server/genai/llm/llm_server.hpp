@@ -23,6 +23,7 @@
 #include "hailo_tokenizer.hpp"
 #include "pre_process.hpp"
 #include "pre_process_config.hpp"
+#include "reasoning.hpp"
 #include "llm_inference_manager.hpp"
 #include "post_process.hpp"
 #include "genai_server.hpp"
@@ -42,7 +43,6 @@ namespace hailort
 {
 namespace genai
 {
-
 
 class LLMServer
 {
@@ -82,6 +82,14 @@ public:
     Expected<Buffer> handle_check_hef_exists_request(const MemoryView &request);
 
 protected:
+    enum class ReasoningOpener { Prompt, Generation };
+    using GenerationEndBeforeWrite = std::optional<std::pair<int, LLMGeneratorCompletion::Status>>;
+
+    struct GenerationEnd {
+        LLMGeneratorCompletion::Status status;
+        std::optional<size_t> matched_stop_sequence_length;
+    };
+
     Expected<std::pair<int, LLMGeneratorCompletion::Status>> generate_next_token_on_demand(const std::vector<int> &tokens,
         const std::vector<EmbeddingViewWrapper> &embeddings, const std::vector<EmbeddingViewWrapper> &per_layer_inputs);
 
@@ -90,8 +98,10 @@ protected:
     virtual Expected<std::pair<int, LLMGeneratorCompletion::Status>> handle_tbt_phase(
         const std::vector<EmbeddingViewWrapper> &embeddings, const std::vector<EmbeddingViewWrapper> &per_layer_inputs);
 
+    static hailo_status wait_for_table(ResourceArrivals &resource_arrivals, const EmbeddingTableParams &table,
+        const std::string &table_description, EventPtr shutdown_event);
     static Expected<std::unique_ptr<TokenEmbedder<uint16_t>>> read_table_embedder(const Hef &hef,
-        const std::string &resource, uint32_t features, const std::string &table_description,
+        const EmbeddingTableParams &table, uint32_t features, const std::string &table_description,
         int image_pad_token_id = INVALID_TOKEN_VALUE, int video_pad_token_id = INVALID_TOKEN_VALUE);
 
     // Empty when the model declares no per-layer inputs table
@@ -99,16 +109,36 @@ protected:
 
     std::string handle_next_token(int next_token);
 
-    LLMGeneratorCompletion::Status get_current_generation_status(int next_token);
+    GenerationEnd get_current_generation_end(int next_token);
+
+    // Returns GENERATING while recovery tokens of an ungraceful ending still need delivery
+    Expected<LLMGeneratorCompletion::Status> resolve_generation_status(int next_token);
+    void record_token_fed_back(int next_token);
+    // Ends the generation without running this step's inference: aborted, or max tokens when none are expected back
+    Expected<std::pair<int, LLMGeneratorCompletion::Status>> end_generation_without_new_token();
+    std::pair<int, LLMGeneratorCompletion::Status> pop_recovery_token(
+        LLMGeneratorCompletion::Status termination_status);
 
     // Handle generation completion and recovery sequence for ungraceful endings - returns GENERATING if recovery tokens need delivery
-    Expected<LLMGeneratorCompletion::Status> handle_generation_completion(LLMGeneratorCompletion::Status completion_status, int next_token);
+    Expected<LLMGeneratorCompletion::Status> handle_generation_completion(const GenerationEnd &generation_end,
+        int next_token);
 
     void append_tokens_to_next_generation_prefix(const std::vector<int> &tokens_to_prepend);
     hailo_status apply_recovery_sequence(LLMGeneratorCompletion::Status termination_status);
 
     // Reasoning model helper functions
-    void handle_reasoning_token_tracking(int next_token);
+    void save_reasoning_rewind_point(ReasoningOpener opener);
+    // Saves the device cache before a write that overwrites entries the rollback needs. If saving fails, drops the
+    // thought and yields the generation's end, and the write must not run.
+    Expected<GenerationEndBeforeWrite> prepare_device_cache_for_write(size_t written_tokens_count);
+    std::optional<CacheRollbackLimit> find_reasoning_rollback_limit(size_t rollback_tokens_count) const;
+    hailo_status rewind_device_cache_before_reasoning(const DeviceCacheRewindPlan &rewind_plan,
+        size_t rollback_tokens_count);
+    std::vector<int> last_tokens_kept_in_context(std::optional<size_t> matched_stop_sequence_length,
+        int last_token) const;
+    void handle_generated_reasoning_token(int next_token);
+    void collect_token_if_outside_reasoning(int next_token);
+    size_t reasoning_rollback_tokens_count() const;
     hailo_status handle_reasoning_generation_completion();
 
     virtual hailo_status parse_config_json(const MemoryView &config_json);
@@ -133,11 +163,14 @@ protected:
     void prepare_for_new_generation();
 
     hailo_status reset_conversation_context();
+    void clear_host_conversation();
+    // A partly updated device cache no longer matches the host state, so the conversation starts over
+    void reset_conversation_after_device_cache_failure(hailo_status failure_status);
 
-    // Check if current-generation generated-tokens matches any custom stop sequence
-    bool check_stop_sequences(int latest_token);
+    // Records the latest token and yields the length of the stop sequence it completes, if any
+    std::optional<size_t> check_stop_sequences(int latest_token);
+    std::optional<size_t> find_matched_stop_sequence_length() const;
 
-    hailo_status validate_context_transfer_supported() const;
     Expected<Buffer> get_context() const;
     hailo_status set_context(const MemoryView &context_buffer);
 
@@ -190,7 +223,11 @@ protected:
     std::unordered_set<int> m_tokens_history;
 
     // For ordered sequence matching (needed for multi-token stop sequences)
-    std::deque<int> m_recent_tokens_sequence;
+    struct RecentToken {
+        int token_id;
+        bool is_inside_reasoning;
+    };
+    std::deque<RecentToken> m_recent_tokens_sequence;
     static constexpr size_t MAX_STOP_SEQUENCE_LENGTH = 50; // Reasonable limit for stop sequences
 
     int m_end_of_sentence_token_id = INVALID_TOKEN_VALUE;
@@ -200,27 +237,39 @@ protected:
     // Relevant for reasoning models only
     // Reasoning model configuration and state
     struct ReasoningState {
-        bool generation_with_reasoning;
+        bool has_rewind_point;
+        // A tool call outside every thought keeps the generation's thoughts, so the turn has no rewind point
+        bool is_tool_call_turn;
 
         int start_token_id;
         int end_token_id;
-        bool past_end_of_reasoning;  // True once we've seen the end-of-reasoning token
+        int tool_call_start_token_id;
+        bool is_inside_reasoning;
+        bool is_opened_by_prompt;
         std::unordered_set<int> tokens_history_before_reasoning;
-        std::tuple<size_t, eigen_matrix_2d_u16_t, eigen_tensor_4d_u32_t, int> pre_process_cache_before_reasoning;
-        std::vector<int> after_reasoning_tokens;
+        PreProcessCache pre_process_cache_before_reasoning;
+        // Taken right before the first write that overwrites device cache entries the next prompt still reads
+        std::optional<std::unordered_map<uint32_t, BufferPtr>> device_cache_snapshot;
+        std::vector<int> tokens_outside_reasoning;
 
-        // Track tokens processed during reasoning section for accurate cache rollback
-        size_t reasoning_section_token_count;
+        ReasoningState() : has_rewind_point(false), is_tool_call_turn(false),
+            start_token_id(INVALID_TOKEN_VALUE), end_token_id(INVALID_TOKEN_VALUE),
+            tool_call_start_token_id(INVALID_TOKEN_VALUE), is_inside_reasoning(false), is_opened_by_prompt(false),
+            pre_process_cache_before_reasoning() {}
 
-        ReasoningState() : generation_with_reasoning(false), start_token_id(INVALID_TOKEN_VALUE),
-            end_token_id(INVALID_TOKEN_VALUE), past_end_of_reasoning(false), reasoning_section_token_count(0) {}
+        void release_rewind_point() {
+            has_rewind_point = false;
+            is_inside_reasoning = false;
+            is_opened_by_prompt = false;
+            tokens_history_before_reasoning.clear();
+            pre_process_cache_before_reasoning = PreProcessCache();
+            device_cache_snapshot.reset();
+            tokens_outside_reasoning.clear();
+        }
 
         void clear() {
-            generation_with_reasoning = false;
-            past_end_of_reasoning = false;
-            tokens_history_before_reasoning.clear();
-            after_reasoning_tokens.clear();
-            reasoning_section_token_count = 0;
+            release_rewind_point();
+            is_tool_call_turn = false;
         }
     } m_reasoning;
 

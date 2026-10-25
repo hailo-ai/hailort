@@ -537,7 +537,8 @@ Eigen::Map<Eigen::VectorXf> Speech2TextServer::get_next_token_scores(int next_to
 Expected<int> Speech2TextServer::detect_language()
 {
     std::vector<int> tokens = {m_decoder_start_token_id};
-    m_token_embedder->tokens_to_embeddings(MemoryView(m_decoder_inputs[m_decoder_input_name__input_tokens_layer]), tokens);
+    CHECK_SUCCESS(m_token_embedder->tokens_to_embeddings(
+        MemoryView(m_decoder_inputs[m_decoder_input_name__input_tokens_layer]), tokens));
     CHECK_SUCCESS(m_inference_manager_decoder->generate(m_decoder_inputs, m_decoder_outputs));
     Eigen::Map<Eigen::VectorXf> token_scores = get_next_token_scores(LANGUAGE_TOKEN_ID_OFFSET);
 
@@ -570,7 +571,8 @@ Expected<std::pair<std::vector<int>, float32_t>> Speech2TextServer::decoder_loop
     for (int i = 0; i < sample_len; i++) {
 
         LOGGER__GENAI_STATS_START("[generate] decoder - tokens to embeddings");
-        m_token_embedder->tokens_to_embeddings(MemoryView(m_decoder_inputs[m_decoder_input_name__input_tokens_layer]), padded_input_tokens);
+        CHECK_SUCCESS(m_token_embedder->tokens_to_embeddings(
+            MemoryView(m_decoder_inputs[m_decoder_input_name__input_tokens_layer]), padded_input_tokens));
         LOGGER__GENAI_STATS_END("[generate] decoder - tokens to embeddings");
 
         LOGGER__GENAI_STATS_START("[generate] hw-inference decoder model");

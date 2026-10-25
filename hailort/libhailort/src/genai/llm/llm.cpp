@@ -278,12 +278,12 @@ Expected<std::unique_ptr<LLM::Impl>> LLM::Impl::create_unique(std::shared_ptr<VD
         return make_unexpected(HAILO_NOT_IMPLEMENTED);
 #else
         TRY(token_embedder, GenAICommon::create_kept_table_embedder(kept_resources,
-            embedding_tables.token_embeddings.resource, embedding_features, TOKEN_EMBEDDINGS_TABLE_DESCRIPTION));
+            embedding_tables.token_embeddings, embedding_features, TOKEN_EMBEDDINGS_TABLE_DESCRIPTION));
         if (embedding_tables.per_layer_inputs) {
             CHECK(0 < create_llm_reply_info.per_layer_inputs_features, HAILO_NOT_SUPPORTED,
                 "The HEF declares a per-layer inputs table, but the server didn't report a per-layer row width");
             TRY(per_layer_inputs_embedder, GenAICommon::create_kept_table_embedder(kept_resources,
-                embedding_tables.per_layer_inputs->resource, create_llm_reply_info.per_layer_inputs_features,
+                *embedding_tables.per_layer_inputs, create_llm_reply_info.per_layer_inputs_features,
                 PER_LAYER_INPUTS_TABLE_DESCRIPTION));
         }
 #endif // HAILO_CLIENT_TOKENIZER_ENABLED
@@ -357,10 +357,7 @@ Expected<size_t> LLM::get_context_usage_size()
 
 Expected<size_t> LLM::Impl::get_context_usage_size()
 {
-    TRY(auto request, LLMGetContextUsageSizeSerializer::serialize_request());
-    TRY(auto reply, m_session->execute(MemoryView(request)));
-    TRY(auto context_usage, LLMGetContextUsageSizeSerializer::deserialize_reply(MemoryView(*reply)));
-    return context_usage;
+    return GenAICommon::get_context_usage_size(*m_session);
 }
 
 Expected<size_t> LLM::max_context_capacity()
@@ -418,7 +415,12 @@ hailo_status LLM::Impl::load_context(const MemoryView &context)
     CHECK_SUCCESS(m_session->write(MemoryView(request)), "Failed to write request");
     CHECK_SUCCESS(m_session->write(context), "Failed to write context");
     TRY(auto reply, m_session->read());
-    CHECK_SUCCESS(LLMSetContextSerializer::deserialize_reply(MemoryView(*reply)), "Failed to set context");
+    const auto set_context_status = LLMSetContextSerializer::deserialize_reply(MemoryView(*reply));
+    if (HAILO_SUCCESS != set_context_status) {
+        GenAICommon::resync_prompt_template_after_failed_load(set_context_status, get_context_usage_size(),
+            *m_prompt_template_handler);
+        return set_context_status;
+    }
     m_prompt_template_handler->mark_context_used();
     TRY(const auto context_usage, get_context_usage_size(), "Failed to get context usage after load");
     m_prompt_template_handler->on_context_loaded(context_usage);
@@ -705,8 +707,8 @@ Expected<LLMGeneratorCompletion> LLMGenerator::Impl::generate()
         TOKENS_BACKLOG, shutdown_event, HAILO_INFINITE_TIMEOUT));
 
     auto pimpl = make_unique_nothrow<LLMGeneratorCompletion::Impl>(m_session, shared_from_this(),
-        std::move(client_token_queue), shutdown_event, m_tokenizer, m_token_embedder, m_per_layer_inputs_embedder,
-        m_aggregated_prompt, initial_prefix_tokens);
+        m_prompt_template_handler, std::move(client_token_queue), shutdown_event, m_tokenizer, m_token_embedder,
+        m_per_layer_inputs_embedder, m_aggregated_prompt, initial_prefix_tokens);
     CHECK_NOT_NULL_AS_EXPECTED(pimpl, HAILO_OUT_OF_HOST_MEMORY);
 
     m_aggregated_prompt.clear();
@@ -728,12 +730,14 @@ LLMGeneratorCompletion::LLMGeneratorCompletion(std::unique_ptr<Impl> pimpl) :
 
 
 LLMGeneratorCompletion::Impl::Impl(std::shared_ptr<SessionWrapper> session, std::shared_ptr<TextGeneratorBase> generator,
+    std::shared_ptr<PromptTemplateHandler> prompt_template_handler,
     SpscQueue<LLMTokenPair> &&client_token_queue, EventPtr shutdown_event,
     std::shared_ptr<HailoTokenizer> tokenizer, std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder,
     std::shared_ptr<TokenEmbedder<uint16_t>> per_layer_inputs_embedder,
     const std::string &aggregated_prompt, const std::vector<int> &initial_prefix_tokens) :
         m_generator_scope_guard(generator),
         m_session(session),
+        m_prompt_template_handler(prompt_template_handler),
         m_generation_status(Status::GENERATING),
         m_client_token_queue(std::move(client_token_queue)),
         m_shutdown_event(shutdown_event),
@@ -789,6 +793,7 @@ void LLMGeneratorCompletion::Impl::token_reader_thread(const std::string &aggreg
         auto response_exp = send_read_request(input);
         if (!response_exp) {
             LOGGER__ERROR("Failed to send read request: {}", response_exp.status());
+            resync_prompt_template_after_failed_read();
             break;
         }
 
@@ -879,6 +884,11 @@ LLMGeneratorCompletion::Impl::send_read_request(const LLMGeneratorReadSerializer
     TRY(auto response_pair, LLMGeneratorReadSerializer::deserialize_reply(MemoryView(*read_reply)));
     
     return response_pair;
+}
+
+void LLMGeneratorCompletion::Impl::resync_prompt_template_after_failed_read()
+{
+    GenAICommon::resync_prompt_template(GenAICommon::get_context_usage_size(*m_session), *m_prompt_template_handler);
 }
 
 void LLMGeneratorCompletion::Impl::prepare_next_iteration(LLMGeneratorReadSerializer::TextGenerationInput &input, int next_token_id)

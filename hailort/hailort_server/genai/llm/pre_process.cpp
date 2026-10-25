@@ -325,15 +325,15 @@ std::optional<CacheRollbackLimit> find_exceeded_cache_rollback_limit(
 {
     for (size_t group_index = 0; group_index < attention_groups.size(); group_index++) {
         const auto &group = attention_groups[group_index];
-        if (is_global_group(group)) {
-            continue;
+        uint64_t read_tokens_limit = group.kv_cache_size;
+        if (!is_global_group(group)) {
+            // The next prefill re-feeds up to prefill_input_tokens_count - 1 retained tokens ahead of the new one, and
+            // the first re-fed row attends sliding_window - 1 tokens behind itself
+            const auto next_prefill_reach =
+                static_cast<uint64_t>(group.sliding_window) + prefill_input_tokens_count - 2;
+            read_tokens_limit = next_prefill_reach;
         }
-
-        // The next prefill re-feeds up to prefill_input_tokens_count - 1 retained tokens ahead of the new one, and
-        // the first re-fed row attends sliding_window - 1 tokens behind itself
-        const auto next_prefill_reach = static_cast<uint64_t>(group.sliding_window) + prefill_input_tokens_count - 2;
-        const auto retained_tokens_count =
-            std::min(static_cast<uint64_t>(cache_usage_after_rollback), next_prefill_reach);
+        const auto retained_tokens_count = std::min<uint64_t>(cache_usage_after_rollback, read_tokens_limit);
         if ((static_cast<uint64_t>(rollback_tokens_count) + retained_tokens_count) > group.kv_cache_size) {
             const auto absorbable_rollback_tokens_count =
                 (retained_tokens_count < group.kv_cache_size) ? (group.kv_cache_size - retained_tokens_count) : 0;
@@ -495,18 +495,21 @@ static void write_cache_bottom_rows(const eigen_matrix_2d_u16_t &local_cache, Me
     mapped_matrix.bottomRows(number_of_tokens) = local_cache.bottomRows(number_of_tokens);
 }
 
-static void append_rows_to_cache(eigen_matrix_2d_u16_t &local_cache, const std::vector<EmbeddingViewWrapper> &row_views)
+static hailo_status append_rows_to_cache(eigen_matrix_2d_u16_t &local_cache,
+    const std::vector<EmbeddingViewWrapper> &row_views)
 {
-    const auto single_row_bytes = static_cast<size_t>(local_cache.cols() * sizeof(uint16_t));
     const auto rows_count = static_cast<int>(row_views.size());
 
     const auto head_size = local_cache.rows() - rows_count;
     local_cache.topRows(head_size) = local_cache.bottomRows(head_size);
 
     for (int row_index = 0; row_index < rows_count; ++row_index) {
-        assert(row_views[row_index].size() == single_row_bytes);
-        std::memcpy(local_cache.row(head_size + row_index).data(), row_views[row_index].data(), single_row_bytes);
+        auto cache_row = local_cache.row(head_size + row_index);
+        const auto cache_row_bytes = static_cast<size_t>(cache_row.size()) * sizeof(uint16_t);
+        CHECK_SUCCESS(row_views[row_index].copy_to(MemoryView(cache_row.data(), cache_row_bytes)));
     }
+
+    return HAILO_SUCCESS;
 }
 
 static hailo_status validate_rows_width(const std::vector<EmbeddingViewWrapper> &row_views,
@@ -700,10 +703,11 @@ hailo_status LLMPreProcess::prepare_positional_embed_inputs(std::map<layer_name_
     return fill_positional_embed_inputs(layer_name_to_input_buffer, phase);
 }
 
-void LLMPreProcess::update_cache_from_embeddings(const std::vector<EmbeddingViewWrapper> &embedding_rows_views)
+hailo_status LLMPreProcess::update_cache_from_embeddings(const std::vector<EmbeddingViewWrapper> &embedding_rows_views)
 {
+    CHECK_SUCCESS(append_rows_to_cache(m_local_cached_embeddings, embedding_rows_views));
     m_cache_usage_size += embedding_rows_views.size();
-    append_rows_to_cache(m_local_cached_embeddings, embedding_rows_views);
+    return HAILO_SUCCESS;
 }
 
 hailo_status LLMPreProcess::validate_input_rows(const std::vector<EmbeddingViewWrapper> &token_rows,
@@ -740,16 +744,18 @@ Expected<MemoryView> LLMPreProcess::per_layer_inputs_buffer(
     return embedding_table_layer_buffer(layer_name_to_input_buffer, *m_embedding_tables.per_layer_inputs);
 }
 
-void LLMPreProcess::prepare_per_layer_inputs(MemoryView &layer_buffer,
+hailo_status LLMPreProcess::prepare_per_layer_inputs(MemoryView &layer_buffer,
     const std::vector<EmbeddingViewWrapper> &per_layer_inputs_rows, InferencePhase phase)
 {
     if (!m_embedding_tables.per_layer_inputs) {
-        return;
+        return HAILO_SUCCESS;
     }
 
-    append_rows_to_cache(m_local_cached_per_layer_inputs, per_layer_inputs_rows);
+    CHECK_SUCCESS(append_rows_to_cache(m_local_cached_per_layer_inputs, per_layer_inputs_rows));
     write_cache_bottom_rows(m_local_cached_per_layer_inputs, layer_buffer,
         static_cast<uint32_t>(layer_input_tokens_count(phase)));
+
+    return HAILO_SUCCESS;
 }
 
 hailo_status LLMPreProcess::validate_inputs(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer, const std::map<std::string, size_t> &expected_sizes)
@@ -789,9 +795,9 @@ hailo_status LLMPreProcess::prepare_inputs_prefill(std::map<layer_name_t, Memory
         m_embedding_tables.token_embeddings));
     TRY(auto per_layer_buffer, per_layer_inputs_buffer(layer_name_to_input_buffer));
 
-    update_cache_from_embeddings(input_tokens_embeddings);
+    CHECK_SUCCESS(update_cache_from_embeddings(input_tokens_embeddings));
     prepare_embeddings_input(embeddings_buffer, m_params.prefill_input_tokens_count);
-    prepare_per_layer_inputs(per_layer_buffer, input_tokens_per_layer_inputs, InferencePhase::Prefill);
+    CHECK_SUCCESS(prepare_per_layer_inputs(per_layer_buffer, input_tokens_per_layer_inputs, InferencePhase::Prefill));
 
     CHECK_SUCCESS(prepare_attention_mask_inputs(layer_name_to_input_buffer, InferencePhase::Prefill));
     CHECK_SUCCESS(prepare_positional_embed_inputs(layer_name_to_input_buffer, InferencePhase::Prefill, num_rows));
@@ -810,9 +816,10 @@ hailo_status LLMPreProcess::prepare_inputs_tbt(std::map<layer_name_t, MemoryView
     TRY(auto per_layer_buffer, per_layer_inputs_buffer(layer_name_to_input_buffer));
 
     assert(input_token_embedding.size() == 1);
-    update_cache_from_embeddings(input_token_embedding);
+    CHECK_SUCCESS(update_cache_from_embeddings(input_token_embedding));
     prepare_embeddings_input(embeddings_buffer, TBT_INPUT_TOKENS_SIZE);
-    prepare_per_layer_inputs(per_layer_buffer, input_token_per_layer_inputs, InferencePhase::TokenByToken);
+    CHECK_SUCCESS(prepare_per_layer_inputs(per_layer_buffer, input_token_per_layer_inputs,
+        InferencePhase::TokenByToken));
 
     CHECK_SUCCESS(prepare_attention_mask_inputs(layer_name_to_input_buffer, InferencePhase::TokenByToken));
     CHECK_SUCCESS(prepare_positional_embed_inputs(layer_name_to_input_buffer, InferencePhase::TokenByToken, 1));
@@ -856,17 +863,19 @@ bool LLMPreProcess::is_deepstack_layer(const std::string &name, const InputLayer
     return false;
 }
 
-std::tuple<size_t, eigen_matrix_2d_u16_t, eigen_tensor_4d_u32_t, int> LLMPreProcess::get_local_cache() const
+PreProcessCache LLMPreProcess::get_local_cache() const
 {
-    return {m_cache_usage_size, m_local_cached_embeddings, m_local_cached_pos_ids, m_current_timestamp_value};
+    return {m_cache_usage_size, m_local_cached_embeddings, m_local_cached_per_layer_inputs, m_local_cached_pos_ids,
+        m_current_timestamp_value};
 }
 
-void LLMPreProcess::set_local_cache(size_t cache_size, const eigen_matrix_2d_u16_t &embeddings, const eigen_tensor_4d_u32_t &pos_ids, int timestamp_value)
+void LLMPreProcess::set_local_cache(const PreProcessCache &cache)
 {
-    m_cache_usage_size = cache_size;
-    m_local_cached_embeddings = embeddings;
-    m_local_cached_pos_ids = pos_ids;
-    m_current_timestamp_value = timestamp_value;
+    m_cache_usage_size = cache.usage_size;
+    m_local_cached_embeddings = cache.embeddings;
+    m_local_cached_per_layer_inputs = cache.per_layer_inputs;
+    m_local_cached_pos_ids = cache.pos_ids;
+    m_current_timestamp_value = cache.timestamp_value;
 }
 
 

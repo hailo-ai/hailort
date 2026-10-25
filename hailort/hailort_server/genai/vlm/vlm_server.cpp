@@ -17,6 +17,7 @@
 #include "common/genai/constants.hpp"
 
 #include "utils.hpp"
+#include "llm/reasoning.hpp"
 
 #include <nlohmann/json.hpp>
 #include <future>
@@ -137,14 +138,21 @@ std::future<hailo_status> VLMServer::create_pre_process_future(const Hef &hef,
         TRY(const auto group_mask_values, resolve_group_mask_values(prefill_inputs_frame_size, tbt_inputs_frame_size));
 
         // Create VLMPreProcess (different from LLM - needs encoder_input_shape)
-        std::unordered_map<std::string, size_t> deepstack_suffix_to_tokens_per_frame;
+        CHECK(nullptr != m_inference_manager_frame_encoder, HAILO_INVALID_OPERATION,
+            "The VLM pre-process needs the vision encoder, which only a VLM create request builds");
+        CHECK_SUCCESS(resolve_embeddings_requantization(embeddings_input));
+        TRY(const auto encoder_embeddings_output,
+            m_inference_manager_frame_encoder->get_model()->output(m_encoder_embeddings_output_name));
+        VisionEncoderLayout vision_encoder_layout;
+        vision_encoder_layout.embeddings_frame_size = encoder_embeddings_output.get_frame_size();
+        vision_encoder_layout.embeddings_per_frame = m_encoder_embeddings_per_frame;
         for (const auto &info : m_deepstack_layers_info) {
-            deepstack_suffix_to_tokens_per_frame[info.decoder_input_suffix] = info.tokens_per_frame;
+            vision_encoder_layout.deepstack[info.decoder_input_suffix] = {info.frame_size, info.tokens_per_frame};
         }
         TRY(m_pre_process, VLMPreProcess::create(prefill_inputs_frame_size, tbt_inputs_frame_size,
             group_thetas, m_embeddings_features, embeddings_dtype, m_embedding_tables, m_encoder_input_shape,
             group_mask_values, m_input_layers_names_suffixes, m_pre_process_params, m_attention_groups,
-            m_has_deepstack_layers, deepstack_suffix_to_tokens_per_frame));
+            m_has_deepstack_layers, vision_encoder_layout));
         LOGGER__GENAI_STATS_END("[create] create PreProcess");
         pre_process_created_event->signal();
 
@@ -158,12 +166,12 @@ std::future<hailo_status> VLMServer::create_token_embedder_future(const Hef &hef
     return std::async(std::launch::async, [this, hef, resource_arrivals, pre_process_created_event,
         shutdown_event]() -> hailo_status {
         CHECK_SUCCESS(WaitOrShutdown(pre_process_created_event, shutdown_event).wait(WAIT_FOR_OPERATION_TIMEOUT));
-        const auto &token_embeddings_resource = m_embedding_tables.token_embeddings.resource;
-        CHECK_SUCCESS(resource_arrivals->wait_for(token_embeddings_resource, LONG_TIMEOUT, shutdown_event),
-            "The {} resource '{}' did not arrive", TOKEN_EMBEDDINGS_TABLE_DESCRIPTION, token_embeddings_resource);
+        const auto &token_embeddings = m_embedding_tables.token_embeddings;
+        CHECK_SUCCESS(wait_for_table(*resource_arrivals, token_embeddings, TOKEN_EMBEDDINGS_TABLE_DESCRIPTION,
+            shutdown_event));
 
         LOGGER__GENAI_STATS_START("[create] create token embedder");
-        TRY(m_token_embedder, read_table_embedder(hef, token_embeddings_resource, m_embeddings_features,
+        TRY(m_token_embedder, read_table_embedder(hef, token_embeddings, m_embeddings_features,
             TOKEN_EMBEDDINGS_TABLE_DESCRIPTION, m_image_pad_token_id, m_video_pad_token_id));
         LOGGER__GENAI_STATS_END("[create] create token embedder");
 
@@ -210,6 +218,12 @@ std::future<hailo_status> VLMServer::create_frame_encoder_future(std::shared_ptr
             CHECK(!m_encoder_embeddings_output_name.empty(), HAILO_INVALID_ARGUMENT,
                 "Could not find encoder output with suffix '{}'", m_encoder_embeddings_output_suffix);
         }
+        TRY(const auto encoder_main_output, model_encoder->output(m_encoder_embeddings_output_name));
+        const auto encoder_main_output_shape = encoder_main_output.shape();
+        m_encoder_embeddings_per_frame =
+            static_cast<size_t>(encoder_main_output_shape.height) * encoder_main_output_shape.width;
+        m_encoder_embeddings_format_type = encoder_main_output.format().type;
+        m_encoder_embeddings_quant_info = encoder_main_output.get_quant_infos().front();
 
         if (m_has_deepstack_layers) {
             for (auto output : model_encoder->outputs()) {
@@ -222,8 +236,8 @@ std::future<hailo_status> VLMServer::create_frame_encoder_future(std::shared_ptr
             }
             CHECK_SUCCESS(build_deepstack_outputs_info());
         }
-        // Signal only after m_has_deepstack_layers, m_encoder_embeddings_output_name, and
-        // m_deepstack_layers_info are all fully set — create_pre_process_future reads them.
+        // Signal only after m_has_deepstack_layers, m_encoder_embeddings_* and m_deepstack_layers_info
+        // are all fully set - create_pre_process_future reads them.
         frame_encoder_created_event->signal();
 
         // Configure vision encoder
@@ -401,10 +415,6 @@ Expected<Buffer> VLMServer::handle_create_vlm_request(const MemoryView &request)
     hailo_format_t input_frame_format = encoder_input_config.format();
     hailo_3d_image_shape_t input_frame_shape = encoder_input_config.shape();
 
-    TRY_AS_HRPC_STATUS(auto encoder_main_output, model_encoder->output(m_encoder_embeddings_output_name), VLMCreateSerializer);
-    const auto embeddings_per_frame = static_cast<uint32_t>(
-        encoder_main_output.get_frame_size() / (m_embeddings_features * sizeof(uint16_t)));
-
     VLMCreateSerializer::ReplyInfo reply_info {};
     reply_info.input_frame_shape = input_frame_shape;
     reply_info.input_frame_format = input_frame_format;
@@ -412,7 +422,7 @@ Expected<Buffer> VLMServer::handle_create_vlm_request(const MemoryView &request)
     reply_info.embedding_features = m_embeddings_features;
     reply_info.image_pad_token_id = m_image_pad_token_id;
     reply_info.video_pad_token_id = m_video_pad_token_id;
-    reply_info.embeddings_per_frame = embeddings_per_frame;
+    reply_info.embeddings_per_frame = static_cast<uint32_t>(m_encoder_embeddings_per_frame);
     reply_info.bos_token = m_bos_token;
     reply_info.eos_token = m_eos_token;
 
@@ -506,6 +516,29 @@ hailo_status VLMServer::build_deepstack_outputs_info()
     return HAILO_SUCCESS;
 }
 
+hailo_status VLMServer::resolve_embeddings_requantization(const InferModel::InferStream &embeddings_input)
+{
+    const auto encoder_format_type = m_encoder_embeddings_format_type;
+    const auto decoder_format_type = embeddings_input.format().type;
+    const bool is_requantizable =
+        (HAILO_FORMAT_TYPE_UINT16 == encoder_format_type) && (HAILO_FORMAT_TYPE_UINT16 == decoder_format_type);
+    if (!is_requantizable) {
+        LOGGER__WARNING("Encoder embeddings are copied to the decoder unconverted (encoder {}, decoder {})",
+            HailoRTCommon::get_format_type_str(encoder_format_type),
+            HailoRTCommon::get_format_type_str(decoder_format_type));
+        return HAILO_SUCCESS;
+    }
+
+    const auto &encoder_quant = m_encoder_embeddings_quant_info;
+    const auto decoder_quant = embeddings_input.get_quant_infos().front();
+    TRY(m_embeddings_requantization, EmbeddingsRequantization::create(encoder_quant, decoder_quant));
+    if (m_embeddings_requantization.is_needed()) {
+        LOGGER__INFO("Requantizing encoder embeddings (zp {}, scale {}) to the decoder input (zp {}, scale {})",
+            encoder_quant.qp_zp, encoder_quant.qp_scale, decoder_quant.qp_zp, decoder_quant.qp_scale);
+    }
+    return HAILO_SUCCESS;
+}
+
 Expected<std::unordered_map<std::string, BufferPtr>> VLMServer::allocate_deepstack_buffers_for_frame()
 {
     std::unordered_map<std::string, BufferPtr> deepstack_buffers;
@@ -572,6 +605,7 @@ hailo_status VLMServer::encode_standalone_frames(uint32_t number_of_standalone_f
         LOGGER__GENAI_STATS_START("[generate-prefill] encode frame");
         CHECK_SUCCESS(m_inference_manager_frame_encoder->generate(inputs, outputs));
         LOGGER__GENAI_STATS_END("[generate-prefill] encode frame");
+        m_embeddings_requantization.apply(MemoryView(m_current_standalone_frames_embeddings[i]));
     }
 
     return HAILO_SUCCESS;
@@ -592,13 +626,11 @@ hailo_status VLMServer::encode_video_frames(uint32_t number_of_video_frames,
     }
 
     // Encoder outputs half the input frames (rounded up); accumulate per-video embedding counts
-    const auto embeddings_per_frame = static_cast<uint32_t>(
-        encoder_output_frame_size / (m_embeddings_features * sizeof(uint16_t)));
     uint32_t number_of_video_frames_to_process = 0;
     for (auto raw_count : raw_video_frames_count_per_video) {
         uint32_t processed_count = (raw_count + 1) / 2;
         number_of_video_frames_to_process += processed_count;
-        m_embeddings_count_per_video.push_back(static_cast<size_t>(processed_count) * embeddings_per_frame);
+        m_embeddings_count_per_video.push_back(static_cast<size_t>(processed_count) * m_encoder_embeddings_per_frame);
     }
 
     m_current_videos_embeddings.reserve(number_of_video_frames_to_process);
@@ -634,6 +666,7 @@ hailo_status VLMServer::encode_video_frames(uint32_t number_of_video_frames,
         LOGGER__GENAI_STATS_START("[generate-prefill] encode frames");
         CHECK_SUCCESS(m_inference_manager_frame_encoder->generate(inputs, outputs));
         LOGGER__GENAI_STATS_END("[generate-prefill] encode frames");
+        m_embeddings_requantization.apply(MemoryView(output_frame));
     }
 
     return HAILO_SUCCESS;
@@ -708,6 +741,15 @@ std::vector<size_t> VLMServer::get_embeddings_count_per_item(const std::vector<B
     return counts;
 }
 
+void VLMServer::clear_current_vision_inputs()
+{
+    m_current_standalone_frames_embeddings.clear();
+    m_current_videos_embeddings.clear();
+    m_embeddings_count_per_video.clear();
+    m_current_standalone_frame_deepstack_embeddings.clear();
+    m_current_video_deepstack_embeddings.clear();
+}
+
 Expected<std::pair<int, LLMGeneratorCompletion::Status>> VLMServer::handle_prefill_phase(const std::vector<int> &tokens,
     const std::vector<EmbeddingViewWrapper> &embeddings, const std::vector<EmbeddingViewWrapper> &per_layer_inputs)
 {
@@ -717,8 +759,8 @@ Expected<std::pair<int, LLMGeneratorCompletion::Status>> VLMServer::handle_prefi
     // Use provided embeddings if available (client-side tokenizer), otherwise tokenize on server
     // find the number of image pad tokens and video-pad tokens in the embeddings-vector,
     // and check that they match the number of frames and video embeddings
-    (void)tokens;
     (void)per_layer_inputs;
+    DEFER(clear_current_vision_inputs());
 
     const auto number_of_image_embeddings = std::count_if(embeddings.begin(), embeddings.end(), [](auto embedding) {
         return embedding.type() == EmbeddingViewWrapper::EmbeddingType::IMAGE;
@@ -743,22 +785,45 @@ Expected<std::pair<int, LLMGeneratorCompletion::Status>> VLMServer::handle_prefi
         "Number of video-pad embeddings from prompt ({}) does not match the expected total video embeddings ({})",
             number_of_video_embeddings, expected_video_embeddings);
 
-    TRY(auto next_token, get_next_token_prefill(m_prefill_inputs, m_prefill_outputs,
-        embeddings, m_current_standalone_frames_embeddings, m_current_videos_embeddings, m_current_generation_params,
-        m_current_standalone_frame_deepstack_embeddings, m_current_video_deepstack_embeddings));
+    int next_token = INVALID_TOKEN_VALUE;
 
-    m_current_standalone_frames_embeddings.clear();
-    m_current_videos_embeddings.clear();
-    m_embeddings_count_per_video.clear();
-    m_current_standalone_frame_deepstack_embeddings.clear();
-    m_current_video_deepstack_embeddings.clear();
-    m_generated_token_count++;
+    const auto unclosed_reasoning_start = find_unclosed_reasoning_start(tokens, m_reasoning.start_token_id,
+        m_reasoning.end_token_id);
+    if (unclosed_reasoning_start) {
+        TRY(const auto start_of_reasoning_row, find_start_of_reasoning_row(tokens, embeddings,
+            *unclosed_reasoning_start));
+        const auto start_of_reasoning_row_index = static_cast<std::ptrdiff_t>(start_of_reasoning_row);
+        const std::vector<EmbeddingViewWrapper> before_reasoning_embeddings(embeddings.begin(),
+            embeddings.begin() + start_of_reasoning_row_index);
+        const std::vector<EmbeddingViewWrapper> after_reasoning_embeddings(
+            embeddings.begin() + start_of_reasoning_row_index + 1, embeddings.end());
 
-    auto generation_status = get_current_generation_status(next_token);
-    if (generation_status != LLMGeneratorCompletion::Status::GENERATING) {
-        // Handle end of generation - may return GENERATING if recovery tokens need delivery
-        TRY(generation_status, handle_generation_completion(generation_status, next_token));
+        // Every image and video precedes the reasoning start, so the first prefill consumes all of them
+        TRY(auto ignored_next_token, get_next_token_prefill(m_prefill_inputs, m_prefill_outputs,
+            before_reasoning_embeddings, m_current_standalone_frames_embeddings, m_current_videos_embeddings,
+            m_current_generation_params, m_current_standalone_frame_deepstack_embeddings,
+            m_current_video_deepstack_embeddings));
+        (void)ignored_next_token;
+
+        save_reasoning_rewind_point(ReasoningOpener::Prompt);
+        TRY(const auto generation_end_before_write, prepare_device_cache_for_write(after_reasoning_embeddings.size()));
+        if (generation_end_before_write.has_value()) {
+            return GenerationEndBeforeWrite::value_type(*generation_end_before_write);
+        }
+
+        const std::vector<BufferPtr> NO_FRAMES;
+        TRY(next_token, get_next_token_prefill(m_prefill_inputs, m_prefill_outputs, after_reasoning_embeddings,
+            NO_FRAMES, NO_FRAMES, m_current_generation_params));
+    } else {
+        TRY(next_token, get_next_token_prefill(m_prefill_inputs, m_prefill_outputs, embeddings,
+            m_current_standalone_frames_embeddings, m_current_videos_embeddings, m_current_generation_params,
+            m_current_standalone_frame_deepstack_embeddings, m_current_video_deepstack_embeddings));
     }
+
+    m_generated_token_count++;
+    handle_generated_reasoning_token(next_token);
+
+    TRY(const auto generation_status, resolve_generation_status(next_token));
 
     // If no tokens are expected back, override the generated token with 'INVALID_TOKEN_VALUE' - which will be ignored along the way
     if (0 == m_current_generation_params.max_generated_tokens()) {

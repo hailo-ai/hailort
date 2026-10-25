@@ -16,10 +16,12 @@
 #include "common/genai/constants.hpp"
 
 #include "pre_process_config.hpp"
+#include "reasoning.hpp"
 #include "utils.hpp"
 
 #include <nlohmann/json.hpp>
 #include <future>
+#include <utility>
 
 
 using namespace hailort::genai;
@@ -135,6 +137,11 @@ hailo_status LLMServer::parse_config_json(const nlohmann::json &hailo_config_jso
     } else {
         m_reasoning.end_token_id = INVALID_TOKEN_VALUE;
     }
+    if (hailo_config_json.contains("tool_call_start_token_id")) {
+        m_reasoning.tool_call_start_token_id = hailo_config_json["tool_call_start_token_id"].get<int>();
+    } else {
+        m_reasoning.tool_call_start_token_id = INVALID_TOKEN_VALUE;
+    }
 
     if (hailo_config_json.contains("default_generation_params")) {
         if (hailo_config_json["default_generation_params"].contains("max_new_tokens")) {
@@ -160,9 +167,6 @@ hailo_status LLMServer::parse_config_json(const nlohmann::json &hailo_config_jso
     TRY(auto pre_process_config, parse_pre_process_config(hailo_config_json, rope_layout));
     m_input_layers_names_suffixes = std::move(pre_process_config.suffixes);
     m_embedding_tables = std::move(pre_process_config.embedding_tables);
-    // TODO: HRT-21082 - roll the per-layer inputs cache back with the reasoning section
-    CHECK(!m_embedding_tables.per_layer_inputs || (INVALID_TOKEN_VALUE == m_reasoning.start_token_id),
-        HAILO_NOT_IMPLEMENTED, "Reasoning is not supported yet for a model with a per-layer inputs table");
     m_pre_process_params = std::move(pre_process_config.params);
     m_attention_groups = build_attention_groups(m_input_layers_names_suffixes, m_pre_process_params);
     TRY(m_context_capacity, context_capacity(m_attention_groups));
@@ -373,15 +377,34 @@ std::future<hailo_status> LLMServer::create_pre_process_future(const Hef &hef,
     });
 }
 
-Expected<std::unique_ptr<TokenEmbedder<uint16_t>>> LLMServer::read_table_embedder(const Hef &hef,
-    const std::string &resource, uint32_t features, const std::string &table_description, int image_pad_token_id,
-    int video_pad_token_id)
+hailo_status LLMServer::wait_for_table(ResourceArrivals &resource_arrivals, const EmbeddingTableParams &table,
+    const std::string &table_description, EventPtr shutdown_event)
 {
-    TRY(const auto table_view, hef.get_external_resources(resource),
-        "Failed to read {} resource '{}'", table_description, resource);
-    TRY(const auto rows_count, embedding_table_rows_count(table_view.size(), features, resource));
+    CHECK_SUCCESS(resource_arrivals.wait_for(table.resource, LONG_TIMEOUT, shutdown_event),
+        "The {} resource '{}' did not arrive", table_description, table.resource);
+    if (table.codebook) {
+        CHECK_SUCCESS(resource_arrivals.wait_for(table.codebook->resource, LONG_TIMEOUT, shutdown_event),
+            "The codebook '{}' of the {} resource '{}' did not arrive", table.codebook->resource, table_description,
+            table.resource);
+    }
 
-    return TokenEmbedder<uint16_t>::create(table_view, rows_count, features, image_pad_token_id, video_pad_token_id);
+    return HAILO_SUCCESS;
+}
+
+Expected<std::unique_ptr<TokenEmbedder<uint16_t>>> LLMServer::read_table_embedder(const Hef &hef,
+    const EmbeddingTableParams &table, uint32_t features, const std::string &table_description,
+    int image_pad_token_id, int video_pad_token_id)
+{
+    TRY(const auto table_view, hef.get_external_resources(table.resource),
+        "Failed to read {} resource '{}'", table_description, table.resource);
+    MemoryView codebook_view;
+    if (table.codebook) {
+        TRY(codebook_view, hef.get_external_resources(table.codebook->resource),
+            "Failed to read the codebook '{}' of the {} resource '{}'", table.codebook->resource, table_description,
+            table.resource);
+    }
+
+    return create_table_embedder(table, table_view, codebook_view, features, image_pad_token_id, video_pad_token_id);
 }
 
 std::future<hailo_status> LLMServer::create_token_embedder_future(const Hef &hef, ResourceArrivalsPtr resource_arrivals,
@@ -390,20 +413,20 @@ std::future<hailo_status> LLMServer::create_token_embedder_future(const Hef &hef
     return std::async(std::launch::async, [this, hef, resource_arrivals, pre_process_created_event,
         shutdown_event]() -> hailo_status {
         CHECK_SUCCESS(WaitOrShutdown(pre_process_created_event, shutdown_event).wait(WAIT_FOR_OPERATION_TIMEOUT));
-        const auto &token_embeddings_resource = m_embedding_tables.token_embeddings.resource;
-        CHECK_SUCCESS(resource_arrivals->wait_for(token_embeddings_resource, LONG_TIMEOUT, shutdown_event),
-            "The {} resource '{}' did not arrive", TOKEN_EMBEDDINGS_TABLE_DESCRIPTION, token_embeddings_resource);
+        const auto &token_embeddings = m_embedding_tables.token_embeddings;
+        CHECK_SUCCESS(wait_for_table(*resource_arrivals, token_embeddings, TOKEN_EMBEDDINGS_TABLE_DESCRIPTION,
+            shutdown_event));
         LOGGER__GENAI_STATS_START("[create] create token embedder");
-        TRY(m_token_embedder, read_table_embedder(hef, token_embeddings_resource, m_embeddings_features,
+        TRY(m_token_embedder, read_table_embedder(hef, token_embeddings, m_embeddings_features,
             TOKEN_EMBEDDINGS_TABLE_DESCRIPTION));
         LOGGER__GENAI_STATS_END("[create] create token embedder");
 
         if (m_embedding_tables.per_layer_inputs) {
-            const auto &per_layer_inputs_resource = m_embedding_tables.per_layer_inputs->resource;
-            CHECK_SUCCESS(resource_arrivals->wait_for(per_layer_inputs_resource, LONG_TIMEOUT, shutdown_event),
-                "The {} resource '{}' did not arrive", PER_LAYER_INPUTS_TABLE_DESCRIPTION, per_layer_inputs_resource);
+            const auto &per_layer_inputs = *m_embedding_tables.per_layer_inputs;
+            CHECK_SUCCESS(wait_for_table(*resource_arrivals, per_layer_inputs, PER_LAYER_INPUTS_TABLE_DESCRIPTION,
+                shutdown_event));
             LOGGER__GENAI_STATS_START("[create] create per-layer inputs embedder");
-            TRY(m_per_layer_inputs_embedder, read_table_embedder(hef, per_layer_inputs_resource,
+            TRY(m_per_layer_inputs_embedder, read_table_embedder(hef, per_layer_inputs,
                 m_per_layer_inputs_features, PER_LAYER_INPUTS_TABLE_DESCRIPTION));
             LOGGER__GENAI_STATS_END("[create] create per-layer inputs embedder");
         }
@@ -649,13 +672,7 @@ Expected<Buffer> LLMServer::handle_read_request(const MemoryView &request)
 
     // Check if there are recovery tokens to deliver one by one
     if (m_recovery.has_pending_tokens()) {
-        next_token_id = m_recovery.delivery_queue.front();
-        m_recovery.delivery_queue.pop();
-
-        if (!m_recovery.has_pending_tokens()) {
-            // Last recovery token - deliver the actual termination status
-            gen_status = m_recovery.termination_status;
-        }
+        std::tie(next_token_id, gen_status) = pop_recovery_token(m_recovery.termination_status);
     } else {
         std::vector<EmbeddingViewWrapper> embeddings_views;
         std::vector<EmbeddingViewWrapper> per_layer_inputs_views;
@@ -757,8 +774,6 @@ Expected<Buffer> LLMServer::handle_set_context_request(const MemoryView &request
     TRY_AS_HRPC_STATUS(auto context_buffer, m_session.read(), LLMSetContextSerializer);
     // Wait on a lock to make sure that no generation is in progress
     std::unique_lock<std::mutex> lock(m_generation_mutex);
-    CHECK_SUCCESS_AS_HRPC_STATUS(validate_context_transfer_supported(), LLMSetContextSerializer);
-    prepare_for_new_generation();
     CHECK_SUCCESS_AS_HRPC_STATUS(set_context(MemoryView(context_buffer)), LLMSetContextSerializer);
     TRY_AS_HRPC_STATUS(auto reply, LLMSetContextSerializer::serialize_reply(HAILO_SUCCESS),
         LLMSetContextSerializer);
@@ -962,28 +977,52 @@ hailo_status LLMServer::reset_conversation_context()
 
     // Nothing is cleared unless the device cache can be reset too, so a failure leaves the conversation intact
     CHECK_SUCCESS(m_inference_manager_prefill->init_cache(0));
-
-    m_tokens_history.clear();
-    m_pre_process->reset_local_cache();
-    m_post_process.reset_random_generator();
-    prepare_for_new_generation();
+    clear_host_conversation();
 
     return HAILO_SUCCESS;
 }
 
-bool LLMServer::check_stop_sequences(int latest_token)
+void LLMServer::clear_host_conversation()
+{
+    m_tokens_history.clear();
+    m_pre_process->reset_local_cache();
+    m_post_process.reset_random_generator();
+    prepare_for_new_generation();
+}
+
+void LLMServer::reset_conversation_after_device_cache_failure(hailo_status failure_status)
+{
+    LOGGER__ERROR("Resetting the conversation, as updating the device cache failed with status {}", failure_status);
+    clear_host_conversation();
+    const auto reset_status = m_inference_manager_prefill->init_cache(0);
+    if (HAILO_SUCCESS != reset_status) {
+        LOGGER__ERROR("Resetting the device cache failed with status {}", reset_status);
+    }
+}
+
+std::optional<size_t> LLMServer::check_stop_sequences(int latest_token)
 {
     if (m_tokenized_stop_sequences.empty()) {
-        return false;
+        return std::nullopt;
     }
 
     // Add the latest token to our ordered sequence
-    m_recent_tokens_sequence.push_back(latest_token);
+    m_recent_tokens_sequence.push_back({latest_token, m_reasoning.is_inside_reasoning});
 
     // Keep the sequence size manageable
     if (m_recent_tokens_sequence.size() > MAX_STOP_SEQUENCE_LENGTH) {
         m_recent_tokens_sequence.pop_front();
     }
+
+    const auto matched_length = find_matched_stop_sequence_length();
+    if (matched_length) {
+        LOGGER__INFO("Custom stop sequence matched: {} tokens ending with {}", *matched_length, latest_token);
+    }
+    return matched_length;
+}
+
+std::optional<size_t> LLMServer::find_matched_stop_sequence_length() const
+{
     // Check each stop sequence against the end of our recent tokens
     for (const auto &stop_sequence : m_tokenized_stop_sequences) {
         if (stop_sequence.empty() || stop_sequence.size() > m_recent_tokens_sequence.size()) {
@@ -994,17 +1033,16 @@ bool LLMServer::check_stop_sequences(int latest_token)
         size_t seq_len = stop_sequence.size();
         size_t recent_len = m_recent_tokens_sequence.size();
         for (size_t i = 0; i < seq_len; ++i) {
-            if (m_recent_tokens_sequence[recent_len - seq_len + i] != stop_sequence[i]) {
+            if (m_recent_tokens_sequence[recent_len - seq_len + i].token_id != stop_sequence[i]) {
                 matches = false;
                 break;
             }
         }
         if (matches) {
-            LOGGER__INFO("Custom stop sequence matched: {} tokens ending with {}", seq_len, latest_token);
-            return true;
+            return seq_len;
         }
     }
-    return false;
+    return std::nullopt;
 }
 
 Expected<std::pair<int, LLMGeneratorCompletion::Status>> LLMServer::generate_next_token_on_demand(const std::vector<int> &tokens,
@@ -1013,13 +1051,14 @@ Expected<std::pair<int, LLMGeneratorCompletion::Status>> LLMServer::generate_nex
     // This method assumes m_generation_mutex is already held by the caller
 
     assert(!tokens.empty());
-    assert(tokens.size() == embeddings.size());
-    CHECK(per_layer_inputs.empty() || (per_layer_inputs.size() == embeddings.size()), HAILO_INVALID_ARGUMENT,
-        "Got {} per-layer input rows for {} token rows, expected none or one per token row", per_layer_inputs.size(),
-        embeddings.size());
     if ((tokens.size() == 1) && m_inference_manager_tbt) {
+        CHECK(1 == embeddings.size(), HAILO_INVALID_ARGUMENT,
+            "Got {} embedding rows for a token-by-token step, expected one", embeddings.size());
         return handle_tbt_phase(embeddings, per_layer_inputs);
     } else {
+        CHECK(0 == m_generated_token_count, HAILO_INVALID_OPERATION,
+            "Got a prompt after {} generated tokens; a generation's prompt must be its first read",
+            m_generated_token_count);
         return handle_prefill_phase(tokens, embeddings, per_layer_inputs);
     }
 }
@@ -1040,13 +1079,6 @@ std::string LLMServer::handle_next_token(int next_token)
         return "";
     }
 
-    m_tokens_history.insert(next_token);
-
-    // For reasoning models, track tokens generated after reasoning (not including reasoning tokens)
-    if (m_reasoning.generation_with_reasoning) {
-        handle_reasoning_token_tracking(next_token);
-    }
-
     if (m_tokenizer) {
         auto next_tokn_str = m_tokenizer->tokens_to_text({next_token}, true);
         if (next_tokn_str) {
@@ -1061,6 +1093,9 @@ std::string LLMServer::handle_next_token(int next_token)
 Expected<std::pair<int, LLMGeneratorCompletion::Status>> LLMServer::handle_prefill_phase(const std::vector<int> &tokens,
     const std::vector<EmbeddingViewWrapper> &embeddings, const std::vector<EmbeddingViewWrapper> &per_layer_inputs)
 {
+    // The reasoning split indexes the embedding and per-layer rows by token position
+    CHECK(tokens.size() == embeddings.size(), HAILO_INVALID_ARGUMENT,
+        "Got {} embedding rows for {} tokens, expected one per token", embeddings.size(), tokens.size());
     // Each prefill chunk enters the cache before the next one is prepared, so a bad row must fail before the first
     CHECK_SUCCESS(m_pre_process->validate_input_rows(embeddings, per_layer_inputs));
 
@@ -1068,16 +1103,10 @@ Expected<std::pair<int, LLMGeneratorCompletion::Status>> LLMServer::handle_prefi
 
     // Perform prefill phase - process all input embeddings
 
-    // Check if this is a reasoining generation only on first token generation
-    if (0 == m_generated_token_count) {
-        m_reasoning.generation_with_reasoning = contains(tokens, m_reasoning.start_token_id);
-    }
-
-    if (m_reasoning.generation_with_reasoning) {
-        // Handle reasoning model prefill
-        auto start_of_reasoning_token_iter = std::find(tokens.begin(),
-            tokens.end(), m_reasoning.start_token_id);
-        auto start_of_reasoning_token_index = std::distance(tokens.begin(), start_of_reasoning_token_iter);
+    const auto unclosed_reasoning_start = find_unclosed_reasoning_start(tokens, m_reasoning.start_token_id,
+        m_reasoning.end_token_id);
+    if (unclosed_reasoning_start) {
+        const auto start_of_reasoning_token_index = static_cast<std::ptrdiff_t>(*unclosed_reasoning_start);
         std::vector<EmbeddingViewWrapper> before_reasoning_embeddings(embeddings.begin(),
             embeddings.begin() + start_of_reasoning_token_index);
         std::vector<EmbeddingViewWrapper> after_reasoning_embeddings(embeddings.begin() + start_of_reasoning_token_index + 1,
@@ -1092,34 +1121,24 @@ Expected<std::pair<int, LLMGeneratorCompletion::Status>> LLMServer::handle_prefi
             before_reasoning_embeddings, before_reasoning_per_layer_inputs, m_current_generation_params));
         (void)ignored_next_token;
 
-        // Save cache context before reasoning for later recovery
-        LOGGER__GENAI_STATS_START("[generate-reasoning] get local cache for reasoning");
-        m_reasoning.tokens_history_before_reasoning = m_tokens_history;
-        m_reasoning.pre_process_cache_before_reasoning = m_pre_process->get_local_cache();
-        // Track how many tokens we'll process in reasoning section for accurate rollback
-        m_reasoning.reasoning_section_token_count = after_reasoning_embeddings.size();
-        LOGGER__GENAI_STATS_END("[generate-reasoning] get local cache for reasoning");
+        save_reasoning_rewind_point(ReasoningOpener::Prompt);
+        TRY(const auto generation_end_before_write, prepare_device_cache_for_write(after_reasoning_embeddings.size()));
+        if (generation_end_before_write.has_value()) {
+            return GenerationEndBeforeWrite::value_type(*generation_end_before_write);
+        }
 
         // Generate tokens after reasoning
         TRY(next_token, get_next_token_prefill(m_prefill_inputs, m_prefill_outputs,
             after_reasoning_embeddings, after_reasoning_per_layer_inputs, m_current_generation_params));
-
-        // Initialize after_reasoning_tokens collection and state
-        m_reasoning.after_reasoning_tokens.clear();
-        m_reasoning.past_end_of_reasoning = false;  // Reset for this generation
     } else {
-        // Non-reasoning model prefill
         TRY(next_token, get_next_token_prefill(m_prefill_inputs, m_prefill_outputs,
             embeddings, per_layer_inputs, m_current_generation_params));
     }
 
     m_generated_token_count++;
+    handle_generated_reasoning_token(next_token);
 
-    auto generation_status = get_current_generation_status(next_token);
-    if (generation_status != LLMGeneratorCompletion::Status::GENERATING) {
-        // Handle end of generation - may return GENERATING if recovery tokens need delivery
-        TRY(generation_status, handle_generation_completion(generation_status, next_token));
-    }
+    TRY(const auto generation_status, resolve_generation_status(next_token));
 
     // If no tokens are expected back, override the generated token with 'INVALID_TOKEN_VALUE' - which will be ignored along the way
     if (0 == m_current_generation_params.max_generated_tokens()) {
@@ -1128,16 +1147,59 @@ Expected<std::pair<int, LLMGeneratorCompletion::Status>> LLMServer::handle_prefi
     return std::make_pair(next_token, generation_status);
 }
 
-LLMGeneratorCompletion::Status LLMServer::get_current_generation_status(int next_token)
+Expected<LLMGeneratorCompletion::Status> LLMServer::resolve_generation_status(int next_token)
+{
+    const auto generation_end = get_current_generation_end(next_token);
+    if (LLMGeneratorCompletion::Status::GENERATING == generation_end.status) {
+        record_token_fed_back(next_token);
+        return LLMGeneratorCompletion::Status::GENERATING;
+    }
+    return handle_generation_completion(generation_end, next_token);
+}
+
+void LLMServer::record_token_fed_back(int next_token)
+{
+    m_tokens_history.insert(next_token);
+    if (m_reasoning.has_rewind_point) {
+        collect_token_if_outside_reasoning(next_token);
+    }
+}
+
+Expected<std::pair<int, LLMGeneratorCompletion::Status>> LLMServer::end_generation_without_new_token()
+{
+    if (m_tokenizer) {
+        m_tokenizer->clear_buffered_tokens();
+    }
+    m_recent_tokens_sequence.clear();
+
+    if (0 == m_current_generation_params.max_generated_tokens()) {
+        return std::make_pair(INVALID_TOKEN_VALUE, LLMGeneratorCompletion::Status::MAX_TOKENS_REACHED);
+    }
+    CHECK_SUCCESS(apply_recovery_sequence(LLMGeneratorCompletion::Status::ABORTED));
+    return pop_recovery_token(LLMGeneratorCompletion::Status::ABORTED);
+}
+
+std::pair<int, LLMGeneratorCompletion::Status> LLMServer::pop_recovery_token(
+    LLMGeneratorCompletion::Status termination_status)
+{
+    auto delivery = deliver_next_recovery_token(std::move(m_recovery.delivery_queue), termination_status);
+    m_recovery.delivery_queue = std::move(delivery.remaining_recovery_tokens);
+    return std::make_pair(delivery.token, delivery.status);
+}
+
+LLMServer::GenerationEnd LLMServer::get_current_generation_end(int next_token)
 {
     if (m_generated_token_count >= m_current_generation_params.max_generated_tokens()) {
-        return LLMGeneratorCompletion::Status::MAX_TOKENS_REACHED;
-    } else if (check_stop_sequences(next_token)) {
-        return LLMGeneratorCompletion::Status::LOGICAL_END_OF_GENERATION;
-    } else if (m_abort_requested) {
-        return LLMGeneratorCompletion::Status::ABORTED;
+        return {LLMGeneratorCompletion::Status::MAX_TOKENS_REACHED, std::nullopt};
     }
-    return LLMGeneratorCompletion::Status::GENERATING;
+    const auto matched_stop_sequence_length = check_stop_sequences(next_token);
+    if (matched_stop_sequence_length) {
+        return {LLMGeneratorCompletion::Status::LOGICAL_END_OF_GENERATION, matched_stop_sequence_length};
+    }
+    if (m_abort_requested) {
+        return {LLMGeneratorCompletion::Status::ABORTED, std::nullopt};
+    }
+    return {LLMGeneratorCompletion::Status::GENERATING, std::nullopt};
 }
 
 Expected<std::pair<int, LLMGeneratorCompletion::Status>> LLMServer::handle_tbt_phase(
@@ -1148,6 +1210,11 @@ Expected<std::pair<int, LLMGeneratorCompletion::Status>> LLMServer::handle_tbt_p
 
     std::map<std::string, MemoryView> tbt_inputs = m_tbt_inputs;
     std::map<std::string, MemoryView> tbt_outputs = m_tbt_outputs;
+
+    TRY(const auto generation_end_before_write, prepare_device_cache_for_write(embeddings.size()));
+    if (generation_end_before_write.has_value()) {
+        return GenerationEndBeforeWrite::value_type(*generation_end_before_write);
+    }
 
     // TBT preprocessing (restore missing logic from old tbt_generation_loop)
     LOGGER__GENAI_STATS_START("[generate-tbt] pre process");
@@ -1168,12 +1235,9 @@ Expected<std::pair<int, LLMGeneratorCompletion::Status>> LLMServer::handle_tbt_p
     LOGGER__GENAI_STATS_END("[generate-tbt] post process");
 
     m_generated_token_count++;
+    handle_generated_reasoning_token(next_token);
 
-    auto generation_status = get_current_generation_status(next_token);
-    if (generation_status != LLMGeneratorCompletion::Status::GENERATING) {
-        // Handle end of generation - may return GENERATING if recovery tokens need delivery
-        TRY(generation_status, handle_generation_completion(generation_status, next_token));
-    }
+    TRY(const auto generation_status, resolve_generation_status(next_token));
 
     return std::make_pair(next_token, generation_status);
 }
@@ -1203,26 +1267,31 @@ hailo_status LLMServer::apply_recovery_sequence(LLMGeneratorCompletion::Status t
 
     // Add recovery tokens to prefix for next generation
     append_tokens_to_next_generation_prefix(m_recovery.tokens);
+    m_tokens_history.insert(m_recovery.tokens.begin(), m_recovery.tokens.end());
 
     return HAILO_SUCCESS;
 }
 
-Expected<LLMGeneratorCompletion::Status> LLMServer::handle_generation_completion(LLMGeneratorCompletion::Status completion_status, int next_token)
+Expected<LLMGeneratorCompletion::Status> LLMServer::handle_generation_completion(
+    const GenerationEnd &generation_end, int next_token)
 {
     if (m_tokenizer) {
         m_tokenizer->clear_buffered_tokens();
     }
 
-    // For reasoning models, handle cache restoration and after-reasoning tokens
-    if (m_reasoning.generation_with_reasoning) {
+    auto completion_status = generation_end.status;
+    const auto kept_last_tokens = last_tokens_kept_in_context(generation_end.matched_stop_sequence_length,
+        next_token);
+    if (m_reasoning.has_rewind_point) {
         CHECK_SUCCESS(handle_reasoning_generation_completion());
     }
 
     bool zero_tokens_back = (0 == m_current_generation_params.max_generated_tokens());
 
-    // since this is not in cache yet, we need to append the current token to the next generation prefix - only if this token is returned
+    // The last generated tokens are not in the cache yet, so the next prompt carries the ones the context keeps
     if (!zero_tokens_back) {
-        append_tokens_to_next_generation_prefix({next_token});
+        m_tokens_history.insert(kept_last_tokens.begin(), kept_last_tokens.end());
+        append_tokens_to_next_generation_prefix(kept_last_tokens);
     }
 
     // After finishing a generation, reset the recent tokens sequence to avoid false stop-token matches
@@ -1244,78 +1313,174 @@ Expected<LLMGeneratorCompletion::Status> LLMServer::handle_generation_completion
     return completion_status;
 }
 
-void LLMServer::handle_reasoning_token_tracking(int next_token)
+std::vector<int> LLMServer::last_tokens_kept_in_context(std::optional<size_t> matched_stop_sequence_length,
+    int last_token) const
 {
-    if (m_reasoning.end_token_id != INVALID_TOKEN_VALUE) {
-        if (m_reasoning.end_token_id == next_token) {
-            // We just hit the end-of-reasoning token, start collecting after-reasoning tokens
-            m_reasoning.past_end_of_reasoning = true;
-        } else if (m_reasoning.past_end_of_reasoning) {
-            // We're past the end-of-reasoning token, collect this token
-            m_reasoning.after_reasoning_tokens.push_back(next_token);
-        }
+    if (!m_reasoning.has_rewind_point) {
+        return {last_token};
     }
+
+    if (matched_stop_sequence_length) {
+        // The matched stop sequence closes the model turn, so it stays even inside an unclosed thought
+        const auto matched_begin = m_recent_tokens_sequence.end() -
+            static_cast<std::ptrdiff_t>(*matched_stop_sequence_length);
+        std::vector<int> stop_sequence_tokens;
+        std::transform(matched_begin, m_recent_tokens_sequence.end(), std::back_inserter(stop_sequence_tokens),
+            [](const RecentToken &recent_token) { return recent_token.token_id; });
+        return stop_sequence_tokens_kept_in_context(stop_sequence_tokens, matched_begin->is_inside_reasoning,
+            m_reasoning.start_token_id, m_reasoning.end_token_id);
+    }
+
+    if (is_reasoning_span_token(last_token, m_reasoning.is_inside_reasoning, m_reasoning.start_token_id)) {
+        return {};
+    }
+    return {last_token};
+}
+
+void LLMServer::save_reasoning_rewind_point(ReasoningOpener opener)
+{
+    LOGGER__GENAI_STATS_START("[generate-reasoning] get local cache for reasoning");
+    m_reasoning.has_rewind_point = true;
+    m_reasoning.is_opened_by_prompt = (ReasoningOpener::Prompt == opener);
+    m_reasoning.is_inside_reasoning = m_reasoning.is_opened_by_prompt;
+    m_reasoning.tokens_outside_reasoning.clear();
+    m_reasoning.tokens_history_before_reasoning = m_tokens_history;
+    m_reasoning.pre_process_cache_before_reasoning = m_pre_process->get_local_cache();
+    LOGGER__GENAI_STATS_END("[generate-reasoning] get local cache for reasoning");
+}
+
+Expected<LLMServer::GenerationEndBeforeWrite> LLMServer::prepare_device_cache_for_write(size_t written_tokens_count)
+{
+    if (!m_reasoning.has_rewind_point || m_reasoning.device_cache_snapshot.has_value()) {
+        return GenerationEndBeforeWrite();
+    }
+
+    const auto rollback_tokens_count = reasoning_rollback_tokens_count();
+    const auto exceeded_limit = find_reasoning_rollback_limit(rollback_tokens_count + written_tokens_count);
+    if (!exceeded_limit) {
+        return GenerationEndBeforeWrite();
+    }
+
+    LOGGER__INFO("Saving the device cache before the rollback reaches {} tokens - attention group '{}' absorbs at most "
+        "{} rolled-back tokens", rollback_tokens_count + written_tokens_count, exceeded_limit->group_name,
+        exceeded_limit->absorbable_rollback_tokens_count);
+    LOGGER__GENAI_STATS_START("[generate-reasoning] get device cache for reasoning");
+    auto cache_buffers = m_inference_manager_prefill->get_cache_buffers();
+    LOGGER__GENAI_STATS_END("[generate-reasoning] get device cache for reasoning");
+    if (!cache_buffers) {
+        // The context has lost no entry yet, so rewinding the offset alone drops the thought exactly
+        LOGGER__ERROR("Saving the device cache failed with status {}, so the generation ends and drops its thought",
+            cache_buffers.status());
+        CHECK_SUCCESS(handle_reasoning_generation_completion());
+        TRY(const auto generation_end, end_generation_without_new_token());
+        return GenerationEndBeforeWrite(generation_end);
+    }
+    m_reasoning.device_cache_snapshot = cache_buffers.release();
+
+    return GenerationEndBeforeWrite();
+}
+
+size_t LLMServer::reasoning_rollback_tokens_count() const
+{
+    return m_pre_process->cache_usage_size() - m_reasoning.pre_process_cache_before_reasoning.usage_size;
+}
+
+std::optional<CacheRollbackLimit> LLMServer::find_reasoning_rollback_limit(size_t rollback_tokens_count) const
+{
+    return find_exceeded_cache_rollback_limit(m_attention_groups, m_pre_process_params.prefill_input_tokens_count,
+        m_reasoning.pre_process_cache_before_reasoning.usage_size, rollback_tokens_count);
+}
+
+void LLMServer::handle_generated_reasoning_token(int next_token)
+{
+    if (m_reasoning.is_tool_call_turn ||
+            !is_reasoning_configured(m_reasoning.start_token_id, m_reasoning.end_token_id)) {
+        return;
+    }
+    if (is_tool_call_keeping_thoughts(next_token, m_reasoning.tool_call_start_token_id,
+            m_reasoning.is_inside_reasoning, m_reasoning.is_opened_by_prompt)) {
+        LOGGER__INFO("Tool call token {} generated outside a thought, so the generation keeps its thoughts",
+            next_token);
+        m_reasoning.is_tool_call_turn = true;
+        m_reasoning.release_rewind_point();
+        return;
+    }
+    if (m_reasoning.has_rewind_point || (m_reasoning.start_token_id != next_token)) {
+        return;
+    }
+
+    save_reasoning_rewind_point(ReasoningOpener::Generation);
+}
+
+void LLMServer::collect_token_if_outside_reasoning(int next_token)
+{
+    const auto is_outside_reasoning = is_outside_reasoning_and_advance_span(next_token, m_reasoning.start_token_id,
+        m_reasoning.end_token_id, m_reasoning.is_inside_reasoning);
+    if (is_outside_reasoning) {
+        m_reasoning.tokens_outside_reasoning.push_back(next_token);
+    }
+}
+
+hailo_status LLMServer::rewind_device_cache_before_reasoning(const DeviceCacheRewindPlan &rewind_plan,
+    size_t rollback_tokens_count)
+{
+    CHECK(DeviceCacheRewind::MissingSnapshot != rewind_plan.action, HAILO_INTERNAL_FAILURE,
+        "No device cache snapshot to roll back {} tokens", rollback_tokens_count);
+    if (DeviceCacheRewind::RestoreThenOffset == rewind_plan.action) {
+        LOGGER__INFO("Restoring the device cache to roll back {} tokens - attention group '{}' absorbs at most {} "
+            "rolled-back tokens", rollback_tokens_count, rewind_plan.exceeded_limit->group_name,
+            rewind_plan.exceeded_limit->absorbable_rollback_tokens_count);
+        LOGGER__GENAI_STATS_START("[generate-reasoning] restore device cache for reasoning");
+        for (const auto &[cache_id, buffer] : *m_reasoning.device_cache_snapshot) {
+            CHECK_SUCCESS(m_inference_manager_prefill->update_cache_buffer(cache_id, MemoryView(*buffer)));
+        }
+        LOGGER__GENAI_STATS_END("[generate-reasoning] restore device cache for reasoning");
+    }
+
+    LOGGER__GENAI_STATS_START("[generate-reasoning] update cache offset for reasoning");
+    CHECK_SUCCESS(m_inference_manager_prefill->update_cache_offset(-static_cast<int32_t>(rollback_tokens_count)));
+    LOGGER__GENAI_STATS_END("[generate-reasoning] update cache offset for reasoning");
+
+    return HAILO_SUCCESS;
 }
 
 hailo_status LLMServer::handle_reasoning_generation_completion()
 {
-    // The reasoning section cached the after-reasoning prefill entries plus one per tbt token, and the last
-    // generated token is not in the cache.
-    assert(m_generated_token_count >= 1);
-    const auto total_rollback = m_reasoning.reasoning_section_token_count + m_generated_token_count - 1;
-    const auto cache_usage_before_reasoning = std::get<0>(m_reasoning.pre_process_cache_before_reasoning);
-    // TODO: HRT-21054 - roll a sliding group back correctly (re-prefill the window it lost) instead of keeping
-    // the reasoning in context
-    const auto exceeded_rollback_limit = find_exceeded_cache_rollback_limit(m_attention_groups,
-        m_pre_process_params.prefill_input_tokens_count, cache_usage_before_reasoning, total_rollback);
-    if (exceeded_rollback_limit) {
-        LOGGER__WARN("Keeping the reasoning section's {} tokens in context - the next prefill still reads the {} "
-            "tokens behind the rollback point, so attention group '{}' absorbs at most {} rolled-back tokens",
-            total_rollback, exceeded_rollback_limit->retained_tokens_count, exceeded_rollback_limit->group_name,
-            exceeded_rollback_limit->absorbable_rollback_tokens_count);
-        m_reasoning.clear();
-        return HAILO_SUCCESS;
+    const auto rollback_tokens_count = reasoning_rollback_tokens_count();
+    const auto rewind_plan = plan_device_cache_rewind(m_attention_groups,
+        m_pre_process_params.prefill_input_tokens_count, m_reasoning.pre_process_cache_before_reasoning.usage_size,
+        rollback_tokens_count, m_reasoning.device_cache_snapshot.has_value());
+    if (DeviceCacheRewind::None != rewind_plan.action) {
+        const auto status = rewind_device_cache_before_reasoning(rewind_plan, rollback_tokens_count);
+        if (HAILO_SUCCESS != status) {
+            reset_conversation_after_device_cache_failure(status);
+            return status;
+        }
     }
 
     LOGGER__GENAI_STATS_START("[generate-reasoning] set local cache for reasoning");
+    const auto &kept_tokens = m_reasoning.tokens_outside_reasoning;
     m_tokens_history = m_reasoning.tokens_history_before_reasoning;
-    m_pre_process->set_local_cache(cache_usage_before_reasoning,
-        std::get<1>(m_reasoning.pre_process_cache_before_reasoning),
-        std::get<2>(m_reasoning.pre_process_cache_before_reasoning),
-        std::get<3>(m_reasoning.pre_process_cache_before_reasoning));
+    m_tokens_history.insert(kept_tokens.begin(), kept_tokens.end());
+    m_pre_process->set_local_cache(m_reasoning.pre_process_cache_before_reasoning);
     LOGGER__GENAI_STATS_END("[generate-reasoning] set local cache for reasoning");
 
-    LOGGER__GENAI_STATS_START("[generate-reasoning] update cache offset for reasoning");
-    CHECK_SUCCESS(m_inference_manager_prefill->update_cache_offset(-static_cast<int32_t>(total_rollback)));
-    LOGGER__GENAI_STATS_END("[generate-reasoning] update cache offset for reasoning");
-
     // Directly prepend tokens instead of converting to text and back to tokens
-    append_tokens_to_next_generation_prefix(m_reasoning.after_reasoning_tokens);
+    append_tokens_to_next_generation_prefix(kept_tokens);
 
     m_reasoning.clear();
 
     return HAILO_SUCCESS;
 }
 
-hailo_status LLMServer::validate_context_transfer_supported() const
-{
-    // TODO: HRT-21082 - carry the per-layer inputs cache through a saved context
-    CHECK(!m_embedding_tables.per_layer_inputs, HAILO_NOT_IMPLEMENTED,
-        "Saving or loading the context of a model with a per-layer inputs table is not supported");
-
-    return HAILO_SUCCESS;
-}
-
 Expected<Buffer> LLMServer::get_context() const
 {
-    CHECK_SUCCESS(validate_context_transfer_supported());
-
     TRY(auto cache_buffers, m_inference_manager_prefill->get_cache_buffers());
-    auto [cache_usage_size, cached_embeddings, cached_pos_ids, timestamp_value] = m_pre_process->get_local_cache();
+    const auto pre_process_cache = m_pre_process->get_local_cache();
 
     // Calculate the required payload size
-    TRY(auto payload_size, LLMContextUtils::calculate_payload_size(cached_embeddings, cached_pos_ids,
-        m_tokens_history, m_next_input_prompt_prefix_tokens, cache_buffers));
+    TRY(auto payload_size, LLMContextUtils::calculate_payload_size(pre_process_cache, m_tokens_history,
+        m_next_input_prompt_prefix_tokens, cache_buffers));
 
     // Create buffer with header + dynamic payload
     TRY(auto context_buffer, Buffer::create(sizeof(LLMContextHeader) + payload_size, BufferStorageParams::create_dma()));
@@ -1325,43 +1490,52 @@ Expected<Buffer> LLMServer::get_context() const
     std::memcpy(context_buffer.data(), &header, sizeof(LLMContextHeader));
 
     // Serialize payload data
-    CHECK_SUCCESS(LLMContextUtils::serialize_payload(context_buffer.from(sizeof(LLMContextHeader)),
-        cache_usage_size, cached_embeddings, cached_pos_ids, timestamp_value, m_tokens_history,
-        m_next_input_prompt_prefix_tokens, cache_buffers));
+    CHECK_SUCCESS(LLMContextUtils::serialize_payload(context_buffer.from(sizeof(LLMContextHeader)), pre_process_cache,
+        m_tokens_history, m_next_input_prompt_prefix_tokens, cache_buffers));
 
     return context_buffer;
 }
 
 hailo_status LLMServer::set_context(const MemoryView &context_buffer)
 {
-    if (context_buffer.size() < sizeof(LLMContextHeader)) {
-        return HAILO_INVALID_ARGUMENT;
-    }
+    CHECK(context_buffer.size() >= sizeof(LLMContextHeader), HAILO_INVALID_ARGUMENT,
+        "The context is {} bytes, shorter than its {} byte header", context_buffer.size(), sizeof(LLMContextHeader));
 
     const LLMContextHeader *header = reinterpret_cast<const LLMContextHeader*>(context_buffer.data());
     CHECK_SUCCESS(LLMContextUtils::validate_header(*header, m_inference_manager_prefill->get_hef()));
 
-    if (context_buffer.size() < sizeof(LLMContextHeader) + header->payload_size) {
-        return HAILO_INVALID_ARGUMENT;
-    }
+    const auto received_payload_size = context_buffer.size() - sizeof(LLMContextHeader);
+    CHECK(header->payload_size == received_payload_size, HAILO_INVALID_ARGUMENT,
+        "The context header declares a {} byte payload, but {} bytes follow it", header->payload_size,
+        received_payload_size);
 
     // Deserialize payload data
-    auto [cache_usage_size, cached_embeddings, cached_pos_ids, timestamp_value_from_cache] = m_pre_process->get_local_cache(); // initializing the eigen arrays properly
+    auto model_shaped_cache = m_pre_process->get_local_cache();
+    std::unordered_set<int32_t> tokens_history;
+    std::vector<int32_t> next_prompt_prefix;
     std::unordered_map<uint32_t, MemoryView> cache_buffers;
-    uint32_t timestamp_value;
 
-    CHECK_SUCCESS(LLMContextUtils::deserialize_payload(context_buffer.from(sizeof(LLMContextHeader)),
-        cache_usage_size, cached_embeddings, cached_pos_ids, timestamp_value, m_tokens_history,
-        m_next_input_prompt_prefix_tokens, cache_buffers));
+    const auto payload = MemoryView::create_const(context_buffer.data() + sizeof(LLMContextHeader),
+        header->payload_size);
+    CHECK_SUCCESS(LLMContextUtils::deserialize_payload(payload, model_shaped_cache, tokens_history, next_prompt_prefix,
+        cache_buffers));
 
-    // Set local cache
-    m_pre_process->set_local_cache(cache_usage_size, cached_embeddings, cached_pos_ids, timestamp_value);
+    prepare_for_new_generation();
+    m_pre_process->set_local_cache(model_shaped_cache);
+    m_tokens_history = std::move(tokens_history);
+    m_next_input_prompt_prefix_tokens = std::move(next_prompt_prefix);
 
-    // Update cache buffers
-    for (const auto &[cache_id, buffer] : cache_buffers) {
-        CHECK_SUCCESS(m_inference_manager_prefill->update_cache_buffer(cache_id, buffer));
+    const auto load_device_cache = [&]() -> hailo_status {
+        for (const auto &[cache_id, buffer] : cache_buffers) {
+            CHECK_SUCCESS(m_inference_manager_prefill->update_cache_buffer(cache_id, buffer));
+        }
+        return m_inference_manager_prefill->init_cache(static_cast<uint32_t>(model_shaped_cache.usage_size));
+    };
+    const auto status = load_device_cache();
+    if (HAILO_SUCCESS != status) {
+        reset_conversation_after_device_cache_failure(status);
+        return status;
     }
-    CHECK_SUCCESS(m_inference_manager_prefill->init_cache(static_cast<uint32_t>(cache_usage_size)));
 
     return HAILO_SUCCESS;
 }

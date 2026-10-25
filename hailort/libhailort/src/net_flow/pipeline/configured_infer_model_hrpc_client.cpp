@@ -15,6 +15,8 @@
 namespace hailort
 {
 
+static constexpr std::chrono::milliseconds MESSAGE_LOOP_FINISHED_POLL_INTERVAL(100);
+
 Expected<std::shared_ptr<AsyncInferJobHrpcClient>> AsyncInferJobHrpcClient::create_shared()
 {
     TRY(auto event_ptr, Event::create_shared(Event::State::not_signalled));
@@ -45,9 +47,12 @@ Expected<std::shared_ptr<ConfiguredInferModelHrpcClient>> ConfiguredInferModelHr
     std::vector<hailo_vstream_info_t> &&output_vstream_infos, uint32_t max_ongoing_transfers, rpc_object_handle_t infer_model_id,
     const std::unordered_map<std::string, size_t> inputs_frame_sizes, const std::unordered_map<std::string, size_t> outputs_frame_sizes)
 {
+    auto jobs_state = make_shared_nothrow<AsyncJobsState>();
+    CHECK_NOT_NULL(jobs_state, HAILO_OUT_OF_HOST_MEMORY);
+
     auto ptr = make_shared_nothrow<ConfiguredInferModelHrpcClient>(client, handle_id, std::move(input_vstream_infos),
         std::move(output_vstream_infos), max_ongoing_transfers, infer_model_id, inputs_frame_sizes,
-        outputs_frame_sizes);
+        outputs_frame_sizes, std::move(jobs_state));
     CHECK_NOT_NULL(ptr, HAILO_OUT_OF_HOST_MEMORY);
 
     return ptr;
@@ -57,11 +62,13 @@ ConfiguredInferModelHrpcClient::ConfiguredInferModelHrpcClient(std::shared_ptr<C
     std::vector<hailo_vstream_info_t> &&input_vstream_infos, std::vector<hailo_vstream_info_t> &&output_vstream_infos,
     uint32_t max_ongoing_transfers, rpc_object_handle_t infer_model_handle_id,
     const std::unordered_map<std::string, size_t> inputs_frame_sizes,
-    const std::unordered_map<std::string, size_t> outputs_frame_sizes) :
+    const std::unordered_map<std::string, size_t> outputs_frame_sizes, std::shared_ptr<AsyncJobsState> jobs_state) :
         ConfiguredInferModelBase(inputs_frame_sizes, outputs_frame_sizes),
-        m_client(client), m_handle_id(handle_id), m_input_vstream_infos(std::move(input_vstream_infos)),
+        m_client(client), m_client_message_loop_thread_id(client->message_loop_thread_id()),
+        m_is_client_message_loop_finished(client->message_loop_finished_flag()),
+        m_handle_id(handle_id), m_input_vstream_infos(std::move(input_vstream_infos)),
         m_output_vstream_infos(std::move(output_vstream_infos)), m_max_ongoing_transfers(max_ongoing_transfers),
-        m_ongoing_transfers(0), m_infer_model_handle_id(infer_model_handle_id)
+        m_jobs_state(std::move(jobs_state)), m_infer_model_handle_id(infer_model_handle_id)
 {
     m_input_names.reserve(m_input_vstream_infos.size());
     for (const auto &vstream_info : m_input_vstream_infos) {
@@ -75,6 +82,7 @@ ConfiguredInferModelHrpcClient::ConfiguredInferModelHrpcClient(std::shared_ptr<C
 
 ConfiguredInferModelHrpcClient::~ConfiguredInferModelHrpcClient()
 {
+    DEFER((void)wait_for_pending_callbacks());
     if (INVALID_HANDLE_ID == m_handle_id) {
         return;
     }
@@ -132,9 +140,9 @@ Expected<ConfiguredInferModel::Bindings> ConfiguredInferModelHrpcClient::create_
 
 hailo_status ConfiguredInferModelHrpcClient::wait_for_async_ready(std::chrono::milliseconds timeout, uint32_t frames_count)
 {
-    std::unique_lock<std::mutex> lock(m_ongoing_transfers_mutex);
-    bool done = m_cv.wait_for(lock, timeout, [this, frames_count] () {
-        return (m_max_ongoing_transfers - m_ongoing_transfers.load()) >= frames_count;
+    std::unique_lock<std::mutex> lock(m_jobs_state->mutex);
+    bool done = m_jobs_state->cv.wait_for(lock, timeout, [this, frames_count] () {
+        return (m_max_ongoing_transfers - m_jobs_state->ongoing_transfers) >= frames_count;
     });
     CHECK(done, HAILO_TIMEOUT, "Waiting for async pipeline to be ready has timed out!");
 
@@ -174,15 +182,10 @@ Expected<AsyncInferJob> ConfiguredInferModelHrpcClient::run_async_impl(const Con
     CHECK_SUCCESS(status);
 
     TRY(auto job, AsyncInferJobHrpcClient::create_shared());
-    auto wrapped_callback = [this, request_buffer, callback, job] (rpc_message_t reply) {
-        {
-            std::unique_lock<std::mutex> transfers_lock(m_ongoing_transfers_mutex);
-            m_ongoing_transfers--;
-        }
-        m_cv.notify_one();
+    auto wrapped_callback = [jobs_state = m_jobs_state, request_buffer, callback, job] (rpc_message_t reply) {
+        jobs_state->release_transfer_slot();
 
         auto status = static_cast<hailo_status>(reply.header.status);
-
         if (callback) {
             callback(AsyncInferCompletionInfo(status));
         }
@@ -191,18 +194,81 @@ Expected<AsyncInferJob> ConfiguredInferModelHrpcClient::run_async_impl(const Con
         if (HAILO_SUCCESS != status) {
             LOGGER__CRITICAL("Failed to signal event with status: {}", status);
         }
+
+        // Released after the user callback, so that waiting for pending callbacks also waits for it.
+        jobs_state->release_pending_callback();
     };
-    {
-        std::unique_lock<std::mutex> transfers_lock(m_ongoing_transfers_mutex);
-        m_ongoing_transfers++;
-    }
     TRY(auto write_buffers, get_write_buffers(bindings));
     TRY(auto read_buffers, get_read_buffers(bindings));
+    m_jobs_state->add_job();
     status = client->execute_request_async(static_cast<uint32_t>(HailoRpcActionID::CONFIGURED_INFER_MODEL__RUN_ASYNC),
         request_view, wrapped_callback, std::move(write_buffers), std::move(read_buffers));
+    if (HAILO_SUCCESS != status) {
+        m_jobs_state->cancel_job_without_callback();
+    }
     CHECK_SUCCESS(status);
 
     return AsyncInferJobBase::create(job);
+}
+
+void AsyncJobsState::add_job()
+{
+    std::unique_lock<std::mutex> lock(mutex);
+    ongoing_transfers++;
+    pending_callbacks++;
+}
+
+void AsyncJobsState::cancel_job_without_callback()
+{
+    std::unique_lock<std::mutex> lock(mutex);
+    ongoing_transfers--;
+    pending_callbacks--;
+    cv.notify_all();
+}
+
+void AsyncJobsState::release_transfer_slot()
+{
+    std::unique_lock<std::mutex> lock(mutex);
+    ongoing_transfers--;
+    cv.notify_all();
+}
+
+void AsyncJobsState::release_pending_callback()
+{
+    std::unique_lock<std::mutex> lock(mutex);
+    pending_callbacks--;
+    cv.notify_all();
+}
+
+hailo_status ConfiguredInferModelHrpcClient::wait_for_pending_callbacks()
+{
+    // All callbacks run on the client's message loop, so waiting there would only time out.
+    if (std::this_thread::get_id() == m_client_message_loop_thread_id) {
+        return HAILO_SUCCESS;
+    }
+
+    std::unique_lock<std::mutex> lock(m_jobs_state->mutex);
+    const auto is_wait_done = [this] () {
+        return (0 == m_jobs_state->pending_callbacks) || *m_is_client_message_loop_finished;
+    };
+    // After a timed-out wait, a full wait would only add another timeout to the teardown.
+    const auto timeout = m_has_pending_callbacks_wait_timed_out ? std::chrono::milliseconds(0)
+        : WAIT_FOR_ASYNC_IN_DTOR_TIMEOUT;
+    // The end of the message loop is not signaled, so it is polled.
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    auto is_done = is_wait_done();
+    while (!is_done && (std::chrono::steady_clock::now() < deadline)) {
+        is_done = m_jobs_state->cv.wait_for(lock, MESSAGE_LOOP_FINISHED_POLL_INTERVAL, is_wait_done);
+    }
+    if (is_done) {
+        return HAILO_SUCCESS;
+    }
+    CHECK(!m_has_pending_callbacks_wait_timed_out, HAILO_TIMEOUT, "{} pending callbacks did not return",
+        m_jobs_state->pending_callbacks);
+
+    m_has_pending_callbacks_wait_timed_out = true;
+    LOGGER__ERROR("Timed out waiting for {} pending callbacks to return", m_jobs_state->pending_callbacks);
+    return HAILO_TIMEOUT;
 }
 
 Expected<std::vector<RunAsyncSerializer::BufferInfo>> ConfiguredInferModelHrpcClient::get_buffer_infos(const ConfiguredInferModel::Bindings &bindings)
@@ -536,6 +602,17 @@ hailo_status ConfiguredInferModelHrpcClient::validate_output_bindings(const Conf
 }
 
 hailo_status ConfiguredInferModelHrpcClient::shutdown()
+{
+    const auto request_status = request_shutdown();
+    const auto wait_status = wait_for_pending_callbacks();
+    if (HAILO_SUCCESS != request_status) {
+        return request_status;
+    }
+
+    return wait_status;
+}
+
+hailo_status ConfiguredInferModelHrpcClient::request_shutdown()
 {
     auto client = m_client.lock();
     CHECK(nullptr != client, HAILO_INTERNAL_FAILURE,

@@ -132,8 +132,11 @@ public:
      * Returns an LLMGeneratorCompletion, which allows fetching generated tokens incrementally.
      *
      * @param[in] prompt            The prompt to be processed by the VLM model. The prompt is written as-is without any template formatting.
-     * @param[in] image_embeddings  The embeddings for standalone images, one buffer per image. Each buffer contains the vision encoder output for that image, Can be empty.
-     * @param[in] video_embeddings  The embeddings for videos, can be empty. Each inner vector represents one video's frame embeddings.
+     * @param[in] image_embeddings  The embeddings for standalone images, one buffer per image, can be empty. Each
+     *                              buffer holds the image's embeddings as uint16 codes in the quantization of the
+     *                              LLM's embeddings input layer, which can differ from the vision encoder output's.
+     * @param[in] video_embeddings  The embeddings for videos, can be empty. Each inner vector represents one video's
+     *                              frame embeddings, in the same quantization as image_embeddings.
      *
      * @return Upon success, returns Expected of LLMGeneratorCompletion. Otherwise, returns Unexpected of ::hailo_status error.
      * @note The model must support raw embeddings input for this method to work.
@@ -150,8 +153,11 @@ public:
      * Returns an LLMGeneratorCompletion, which allows fetching generated tokens incrementally.
      *
      * @param[in] messages_json_strings A vector of JSON strings representing structured messages.
-     * @param[in] image_embeddings      The embeddings for standalone images, one buffer per image. Each buffer contains the vision encoder output for that image, Can be empty.
-     * @param[in] video_embeddings      The embeddings for videos, can be empty. Each inner vector represents one video's frame embeddings.
+     * @param[in] image_embeddings      The embeddings for standalone images, one buffer per image, can be empty. Each
+     *                                  buffer holds the image's embeddings as uint16 codes in the quantization of the
+     *                                  LLM's embeddings input layer, which can differ from the vision encoder output's.
+     * @param[in] video_embeddings      The embeddings for videos, can be empty. Each inner vector represents one
+     *                                  video's frame embeddings, in the same quantization as image_embeddings.
      *
      * @return Upon success, returns Expected of LLMGeneratorCompletion. Otherwise, returns Unexpected of ::hailo_status error.
      * @note The model must support raw embeddings input for this method to work.

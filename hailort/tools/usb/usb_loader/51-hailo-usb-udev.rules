@@ -1,5 +1,0 @@
-# Load USB Image
-ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="0b05", ATTR{idProduct}=="1d6f", ATTR{product}=="UGen300 USB Loader", RUN+="/usr/bin/systemd-run --no-block /lib/firmware/hailo/hailo10h_usb/load_usb_image.sh"
-
-# Add permissions for USB
-SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="0b05", ATTR{idProduct}=="1d6f", MODE="0666"

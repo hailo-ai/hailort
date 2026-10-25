@@ -33,6 +33,7 @@ namespace genai
 
 // Forward declarations
 class SessionWrapper;
+class PromptTemplateHandler;
 
 class GenAICommon
 {
@@ -44,13 +45,19 @@ public:
     static hailo_status validate_kept_resources_found(const std::string &hef_path,
         const std::unordered_set<std::string> &kept_resource_names,
         const std::map<std::string, BufferPtr> &local_resources_buffers);
+    // The server may clear its conversation on a failed load, so the template follows its reported usage
+    static void resync_prompt_template_after_failed_load(hailo_status load_status,
+        const Expected<size_t> &context_usage, PromptTemplateHandler &prompt_template_handler);
+    static void resync_prompt_template(const Expected<size_t> &context_usage,
+        PromptTemplateHandler &prompt_template_handler);
+    static Expected<size_t> get_context_usage_size(SessionWrapper &session);
 
 #ifdef HAILO_CLIENT_TOKENIZER_ENABLED
     static Expected<EmbeddingTables> read_hef_embedding_tables(const std::string &hef_path);
     // The resources a host that tokenizes keeps instead of streaming; the server reads none of them from such a host
     static std::unordered_set<std::string> host_kept_resources(const EmbeddingTables &embedding_tables);
     static Expected<std::unique_ptr<TokenEmbedder<uint16_t>>> create_kept_table_embedder(
-        const std::map<std::string, BufferPtr> &kept_resources, const std::string &resource, uint32_t features,
+        const std::map<std::string, BufferPtr> &kept_resources, const EmbeddingTableParams &table, uint32_t features,
         const std::string &table_description, int image_pad_token_id = INVALID_TOKEN_VALUE,
         int video_pad_token_id = INVALID_TOKEN_VALUE);
 #endif // HAILO_CLIENT_TOKENIZER_ENABLED

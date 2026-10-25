@@ -170,8 +170,8 @@ struct CacheRollbackLimit {
     uint64_t absorbable_rollback_tokens_count;
 };
 
-// Rewinding the cache restores positions, not entries: a sliding group's ring may have wrapped over tokens
-// its window still reads once the rollback lands. Yields the first group whose ring cannot absorb the rollback.
+// Rewinding the cache restores positions, not entries: a ring may have wrapped over tokens the next prefill reads,
+// all of them for a global group. Yields the first group whose ring cannot absorb the rollback.
 std::optional<CacheRollbackLimit> find_exceeded_cache_rollback_limit(
     const std::vector<AttentionGroupParams> &attention_groups, uint32_t prefill_input_tokens_count,
     size_t cache_usage_after_rollback, size_t rollback_tokens_count);
@@ -184,6 +184,15 @@ struct AttentionGroupContext {
     std::vector<int> repeated_mrope_section;
     std::vector<int> cumulative_mrope_section;
     AttentionGroupMaskValues mask_values;
+};
+
+// Everything the pre-process rolls forward between inferences, so a restore rewinds all of it together
+struct PreProcessCache {
+    size_t usage_size = 0;
+    eigen_matrix_2d_u16_t embeddings;
+    eigen_matrix_2d_u16_t per_layer_inputs;
+    eigen_tensor_4d_u32_t pos_ids;
+    int timestamp_value = 0;
 };
 
 class LLMPreProcess
@@ -214,8 +223,8 @@ public:
         const std::vector<AttentionGroupParams> &attention_groups);
     static bool is_deepstack_layer(const std::string &name, const InputLayersNamesSuffixes &input_layers_names_suffixes);
 
-    std::tuple<size_t, eigen_matrix_2d_u16_t, eigen_tensor_4d_u32_t, int> get_local_cache() const;
-    void set_local_cache(size_t cache_size, const eigen_matrix_2d_u16_t &embeddings, const eigen_tensor_4d_u32_t &pos_ids, int timestamp_value);
+    PreProcessCache get_local_cache() const;
+    void set_local_cache(const PreProcessCache &cache);
 
     size_t cache_usage_size() const {
         return m_cache_usage_size;
@@ -252,12 +261,12 @@ protected:
     static void tile_along_last_axis(const Eigen::Tensor<float32_t, 4, Eigen::RowMajor> &input, int repeat_count, MemoryView &layer_buffer);
 
     hailo_status validate_inputs(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer, const std::map<std::string, size_t> &expected_sizes);
-    void update_cache_from_embeddings(const std::vector<EmbeddingViewWrapper> &embedding_rows_views);
+    hailo_status update_cache_from_embeddings(const std::vector<EmbeddingViewWrapper> &embedding_rows_views);
     void prepare_embeddings_input(MemoryView &layer_buffer, uint32_t number_of_tokens);
     hailo_status validate_per_layer_inputs_count(const std::vector<EmbeddingViewWrapper> &per_layer_inputs_rows,
         size_t token_rows_count) const;
     Expected<MemoryView> per_layer_inputs_buffer(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer) const;
-    void prepare_per_layer_inputs(MemoryView &layer_buffer,
+    hailo_status prepare_per_layer_inputs(MemoryView &layer_buffer,
         const std::vector<EmbeddingViewWrapper> &per_layer_inputs_rows, InferencePhase phase);
     int layer_input_tokens_count(InferencePhase phase) const;
 

@@ -269,15 +269,15 @@ AsyncInferJobWrapper ConfiguredInferModelWrapper::run_async(
 
         // enqueue the pythonic_cb (i.e. user-defined callback) only when libhailort's
         // async job is done. Once enqueued, the job will be dequeued by the worker thread
-        cb = [this, pythonic_cb_wrapper](const AsyncInferCompletionInfo &info)
+        cb = [callbacks_queue = m_callbacks_queue, pythonic_cb_wrapper](const AsyncInferCompletionInfo &info)
         {
             {
-                std::lock_guard<std::mutex> lock(m_queue_mutex);
+                std::lock_guard<std::mutex> lock(callbacks_queue->mutex);
                 // push the callback and the status to the queue. If the status is not HAILO_SUCCESS,
                 // the user-defined callback will be get an indication of the failure
-                m_callbacks_queue->push(std::make_pair(pythonic_cb_wrapper, info));
+                callbacks_queue->callbacks.push(std::make_pair(pythonic_cb_wrapper, info));
             }
-            m_cv.notify_one();
+            callbacks_queue->cv.notify_one();
         };
     }
     else
@@ -332,9 +332,11 @@ AsyncInferJobWrapper ConfiguredInferModelWrapper::run_async(
 
         auto cb_wrapper_with_output_copy = [cb, user_output_buffers, aligned_output_buffers](const AsyncInferCompletionInfo &info)
         {
-            for (size_t i = 0; i < user_output_buffers.size(); i++)
-            {
-                std::memcpy(user_output_buffers[i], aligned_output_buffers[i]->data(), aligned_output_buffers[i]->size());
+            if (HAILO_SUCCESS == info.status) {
+                for (size_t i = 0; i < user_output_buffers.size(); i++)
+                {
+                    std::memcpy(user_output_buffers[i], aligned_output_buffers[i]->data(), aligned_output_buffers[i]->size());
+                }
             }
 
             cb(info);
@@ -400,16 +402,17 @@ void ConfiguredInferModelWrapper::execute_callbacks()
 {
     while (true)
     {
-        std::unique_lock<std::mutex> lock(m_queue_mutex);
-        auto ret = m_cv.wait_for(lock, std::chrono::minutes(1), [this](){ return !m_callbacks_queue->empty() || !m_is_alive.load(); });
+        std::unique_lock<std::mutex> lock(m_callbacks_queue->mutex);
+        auto ret = m_callbacks_queue->cv.wait_for(lock, std::chrono::minutes(1),
+            [this](){ return !m_callbacks_queue->callbacks.empty() || !m_is_alive.load(); });
 
         if (!m_is_alive.load()) {
-            while (!m_callbacks_queue->empty()) {
-                auto cb_status_pair = m_callbacks_queue->front();
+            while (!m_callbacks_queue->callbacks.empty()) {
+                auto cb_status_pair = m_callbacks_queue->callbacks.front();
                 auto &cb = cb_status_pair.first;
                 auto status = cb_status_pair.second;
                 cb(status.status);
-                m_callbacks_queue->pop();
+                m_callbacks_queue->callbacks.pop();
             }
             return;
         }
@@ -418,9 +421,9 @@ void ConfiguredInferModelWrapper::execute_callbacks()
             continue;
         }
 
-        auto cb_status_pair = m_callbacks_queue->front();
+        auto cb_status_pair = m_callbacks_queue->callbacks.front();
 
-        m_callbacks_queue->pop();
+        m_callbacks_queue->callbacks.pop();
         lock.unlock(); // release the lock before calling the callback, allowing other threads to push to the queue
 
         auto &cb = cb_status_pair.first;
@@ -443,10 +446,10 @@ void InferModelWrapper::bind(py::module &m)
 {
     py::class_<
         InferModelWrapper,
-        std::shared_ptr<InferModelWrapper>
+        nogil_shared_ptr<InferModelWrapper>
     >(m, "InferModel")
         //.def("hef", &InferModelWrapper::hef)
-        .def("configure", &InferModelWrapper::configure)
+        .def("configure", &InferModelWrapper::configure, py::call_guard<py::gil_scoped_release>())
         .def("set_batch_size", &InferModelWrapper::set_batch_size)
         .def("set_power_mode", &InferModelWrapper::set_power_mode)
         .def("get_input_names", &InferModelWrapper::get_input_names)
@@ -465,25 +468,31 @@ void ConfiguredInferModelWrapper::bind(py::module &m)
         ConfiguredInferModelWrapper,
         nogil_shared_ptr<ConfiguredInferModelWrapper>
     >(m, "ConfiguredInferModel")
+        // Blocking calls release the GIL: HRPC replies are read on a thread that may need the GIL
+        // to drop run_async callbacks
         .def("create_bindings", &ConfiguredInferModelWrapper::create_bindings)
-        .def("activate", &ConfiguredInferModelWrapper::activate)
-        .def("deactivate", &ConfiguredInferModelWrapper::deactivate)
+        .def("activate", &ConfiguredInferModelWrapper::activate, py::call_guard<py::gil_scoped_release>())
+        .def("deactivate", &ConfiguredInferModelWrapper::deactivate, py::call_guard<py::gil_scoped_release>())
         // wait_for_async_ready is a blocking call which could take a long time, and in the meantime, the pythonic
         // callback that was passed to run_async might be called. Therefore, the GIL before calling must be released.
         // This is done in order to avoid any further deadlock. Any c++ function that is called from python and that might
         // be still running while another thread is trying to execute a python callback, should be able to release the GIL.
         .def("wait_for_async_ready", &ConfiguredInferModelWrapper::wait_for_async_ready, py::call_guard<py::gil_scoped_release>())
-        .def("run", &ConfiguredInferModelWrapper::run)
+        .def("run", &ConfiguredInferModelWrapper::run, py::call_guard<py::gil_scoped_release>())
         // run_async is not calling python callbacks*, so there is no need to keep the GIL while calling.
         // Releasing the GIL before calling run_async will allow the callbacks already registered to be called.
         // * callbacks will be called from another thread, and will acquire the GIL by themselves
         .def("run_async", &ConfiguredInferModelWrapper::run_async, py::call_guard<py::gil_scoped_release>())
-        .def("set_scheduler_timeout", &ConfiguredInferModelWrapper::set_scheduler_timeout)
-        .def("set_scheduler_threshold", &ConfiguredInferModelWrapper::set_scheduler_threshold)
-        .def("set_scheduler_priority", &ConfiguredInferModelWrapper::set_scheduler_priority)
+        .def("set_scheduler_timeout", &ConfiguredInferModelWrapper::set_scheduler_timeout,
+            py::call_guard<py::gil_scoped_release>())
+        .def("set_scheduler_threshold", &ConfiguredInferModelWrapper::set_scheduler_threshold,
+            py::call_guard<py::gil_scoped_release>())
+        .def("set_scheduler_priority", &ConfiguredInferModelWrapper::set_scheduler_priority,
+            py::call_guard<py::gil_scoped_release>())
         .def("get_async_queue_size", &ConfiguredInferModelWrapper::get_async_queue_size)
-        .def("shutdown", &ConfiguredInferModelWrapper::shutdown)
-        .def("update_cache_offset", &ConfiguredInferModelWrapper::update_cache_offset)
+        .def("shutdown", &ConfiguredInferModelWrapper::shutdown, py::call_guard<py::gil_scoped_release>())
+        .def("update_cache_offset", &ConfiguredInferModelWrapper::update_cache_offset,
+            py::call_guard<py::gil_scoped_release>())
         .def("finalize_cache", &ConfiguredInferModelWrapper::finalize_cache)
         ;
 }

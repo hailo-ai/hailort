@@ -5,7 +5,6 @@ import struct
 
 import sys
 
-from collections import deque
 from dataclasses import dataclass
 from argparse import ArgumentTypeError
 from datetime import timedelta
@@ -3006,7 +3005,6 @@ class ConfiguredInferModel:
         self._input_names = infer_model.input_names
         self._output_names = infer_model.output_names
         self._infer_model = infer_model
-        self._buffer_guards = deque()
 
     def __enter__(self):
         return self
@@ -3124,6 +3122,10 @@ class ConfiguredInferModel:
             To ensure the inference pipeline can handle new buffers, it is recommended to first call
                  :func:`ConfiguredInferModel.wait_for_async_ready`.
 
+        Note:
+            In-flight jobs do not keep the :class:`ConfiguredInferModel` alive. Keep a reference to it, or stay
+            inside its `with` block, until all jobs complete. Otherwise, the pending jobs are aborted.
+
         Returns:
             AsyncInferJob: The async inference job object.
 
@@ -3137,7 +3139,6 @@ class ConfiguredInferModel:
                 buffers.append(b.input(name).get_buffer())
             for name in self._output_names:
                 buffers.append(b.output(name).get_buffer(None))
-        self._buffer_guards.append(buffers)
 
         def callback_wrapper(error_code):
             cpp_cb_exception = ExceptionWrapper.create_exception_from_status(error_code) if error_code else None
@@ -3145,8 +3146,7 @@ class ConfiguredInferModel:
                 completion_info = AsyncInferCompletionInfo(cpp_cb_exception)
                 callback(completion_info=completion_info)
 
-            # remove the buffers - they are no longer needed
-            self._buffer_guards.popleft()
+            buffers.clear()
 
         with ExceptionWrapper():
             cpp_job = self._configured_infer_model.run_async(
@@ -3228,6 +3228,14 @@ class ConfiguredInferModel:
     def shutdown(self):
         """
         Shuts the inference down. After calling this method, the model is no longer usable.
+
+        Note:
+            This method blocks until the in-flight jobs finish on the device, bounded by a timeout. Their callbacks
+            can still run after this method returns.
+
+        Raises:
+            :class:`HailoRTException` in case of an error, including when in-flight async jobs do not complete
+            within the timeout.
         """
         with ExceptionWrapper():
             return self._configured_infer_model.shutdown()

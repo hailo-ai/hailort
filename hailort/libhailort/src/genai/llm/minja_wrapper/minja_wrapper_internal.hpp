@@ -29,6 +29,7 @@
 /* No action needed — GCC/Clang did not push warnings */
 #endif /* defined(_MSC_VER) */
 
+#include <atomic>
 #include <chrono>
 
 namespace hailort
@@ -58,7 +59,8 @@ private:
 
     minja::chat_template m_templ;
 
-    bool m_is_first;
+    // Reset from another thread
+    std::atomic<bool> m_is_first;
     nlohmann::ordered_json m_extra_context;
     std::string m_system_prompt;
     std::string m_prompt_template;
