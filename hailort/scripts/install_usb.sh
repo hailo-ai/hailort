@@ -14,11 +14,14 @@ readonly FUNCTIONAL_RFS_FILE="${SCRIPT_DIR}/core-image-hailo-hailo10-usb-dongle.
 readonly SWU_RFS_FILE="${SCRIPT_DIR}/core-image-hailo-hailo10-usb-dongle-swu.ext4"
 readonly FW_UPDATE_IMAGE_FILE="${SCRIPT_DIR}/hailo-update-image-hailo10-usb-dongle.swu"
 readonly UPLOAD_TOOL="${SCRIPT_DIR}/hailo_usb_loader"
-readonly LOAD_IMAGE_SCRIPT="${SCRIPT_DIR}/load_image.sh"
+readonly LOAD_IMAGE_SCRIPT="${SCRIPT_DIR}/load_usb_image.sh"
 readonly LOAD_IMAGE_LOCK_DIR="/run/lock/hailo"
 
-readonly UDEV_RULES_FILE="${SCRIPT_DIR}/51-hailo-usb-udev.rules"
-readonly UDEV_RULES_DEST="/etc/udev/rules.d/"
+readonly UDEV_RULES_FILENAME="51-hailo-usb-udev.rules"
+readonly UDEV_RULES_FILE="${SCRIPT_DIR}/${UDEV_RULES_FILENAME}"
+readonly UDEV_RULES_DEST="/lib/udev/rules.d/"
+# A same-named rule in /etc/udev/rules.d overrides the one in /lib/udev/rules.d
+readonly OVERRIDING_UDEV_RULES_FILE="/etc/udev/rules.d/${UDEV_RULES_FILENAME}"
 
 VERIFY_DEVICE=true
 for arg in "$@"; do
@@ -61,6 +64,10 @@ mkdir -p -m 777 "${LOAD_IMAGE_LOCK_DIR}" || true
 
 echo "Installing udev rules..."
 cp "${UDEV_RULES_FILE}" "${UDEV_RULES_DEST}"
+if [[ -f "${OVERRIDING_UDEV_RULES_FILE}" || -L "${OVERRIDING_UDEV_RULES_FILE}" ]]; then
+    rm -f "${OVERRIDING_UDEV_RULES_FILE}"
+    echo "Warning: Removed ${OVERRIDING_UDEV_RULES_FILE} because it overrode the Hailo USB udev rules."
+fi
 
 echo "Reloading udev rules and triggering..."
 udevadm control --reload-rules

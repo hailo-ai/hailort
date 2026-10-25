@@ -97,7 +97,7 @@ hailo_status write_device_file(const std::string &file_path, const std::string &
     std::ofstream file(file_path);
     CHECK(file.good(), HAILO_OPEN_FILE_FAILURE, "Failed to open file {}", file_path);
 
-    file << content;
+    file << content << std::flush;
     CHECK(file.good(), HAILO_FILE_OPERATION_FAILURE, "Failed to write to file {}", file_path);
 
     return HAILO_SUCCESS;

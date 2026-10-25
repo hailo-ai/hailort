@@ -49,7 +49,10 @@ constexpr std::chrono::milliseconds BUFFER_POOL_DEFAULT_QUEUE_TIMEOUT(10000);
 constexpr std::chrono::milliseconds WAIT_FOR_ASYNC_IN_DTOR_TIMEOUT(10000);
 
 // --- GenAI / Configure ---
-constexpr std::chrono::minutes CCWS_READY_TIMEOUT(2);
+constexpr std::chrono::minutes CCWS_READY_TIMEOUT(6);
+
+// --- GenAI / Session ---
+constexpr static const std::chrono::seconds LONG_TIMEOUT = std::chrono::minutes(6);
 
 } /* namespace hailort */
 

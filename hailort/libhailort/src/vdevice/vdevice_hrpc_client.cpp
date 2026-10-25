@@ -144,7 +144,7 @@ Expected<std::shared_ptr<InferModel>> VDeviceHrpcClient::create_infer_model(cons
 
     TRY(auto request_size, CreateInferModelSerializer::serialize_request(m_handle, hef_buffer.size(), name, MemoryView(*request_buffer)));
     TRY(auto result, m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::VDEVICE__CREATE_INFER_MODEL),
-        MemoryView(request_buffer->data(), request_size), std::vector<TransferBuffer>{hef_buffer}, {}, LONG_RPC_ACTION_TIMEOUT));
+        MemoryView(request_buffer->data(), request_size), std::vector<TransferBuffer>{hef_buffer}, {}, hef_transfer_timeout(hef_buffer.size())));
     TRY(auto infer_model_handle, CreateInferModelSerializer::deserialize_reply(MemoryView(result.body.data(), result.header.size)));
 
     TRY(auto hef, Hef::create(hef_buffer));

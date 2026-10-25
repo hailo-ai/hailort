@@ -26,6 +26,9 @@ static const std::string TOKENIZER = "tokenizer.json";
 static const std::string THETA = "rope_theta_data.bin";
 static const std::string HAILO_CONFIG_JSON = "hailo-config.json";
 
+static const std::string TOKEN_EMBEDDINGS_TABLE_DESCRIPTION = "token embeddings";
+static const std::string PER_LAYER_INPUTS_TABLE_DESCRIPTION = "per-layer inputs";
+
 } /* namespace genai */
 } /* namespace hailort */
 

@@ -105,7 +105,8 @@ Expected<std::unique_ptr<VLM::Impl>> VLM::Impl::create_unique(std::shared_ptr<ha
     std::unordered_set<std::string> local_resources;
     std::shared_ptr<HailoTokenizer> tokenizer;
     std::shared_ptr<TokenEmbedder<uint16_t>> token_embedder;
-    BufferPtr token_embedder_buffer;
+    std::map<std::string, BufferPtr> kept_resources;
+    EmbeddingTables embedding_tables;
 
     if (!hef_exists) {
         if (vlm_params.optimize_memory_on_device()) {
@@ -113,13 +114,19 @@ Expected<std::unique_ptr<VLM::Impl>> VLM::Impl::create_unique(std::shared_ptr<ha
             LOGGER__ERROR("Host-tokenization is not enabled in lib compilation");
             return make_unexpected(HAILO_NOT_IMPLEMENTED);
 #else
-            local_resources = {TOKENIZER, INPUT_EMB_BINARY};
+            TRY(embedding_tables, GenAICommon::read_hef_embedding_tables(hef_path));
+            // TODO: HRT-21092 - gather the per-layer inputs table for a VLM
+            CHECK(!embedding_tables.per_layer_inputs, HAILO_NOT_IMPLEMENTED,
+                "A per-layer inputs table is not supported in VLM yet");
+            local_resources = GenAICommon::host_kept_resources(embedding_tables);
 #endif // HAILO_CLIENT_TOKENIZER_ENABLED
         }
 
         // Parse HEF once to get both chunk offsets and buffers of local_resources
-        // local_resources will be in exterlocal_resources_buffersnal_resources but not in chunks
+        // local_resources will be in local_resources_buffers but not in chunks
         TRY(auto parse_result, Hef::parse_hef_for_transfer(hef_path, local_resources));
+        CHECK_SUCCESS(GenAICommon::validate_kept_resources_found(hef_path, local_resources,
+            parse_result.local_resources_buffers));
 
         // Create request with chunks info for chunked transfer
         TRY(create_vlm_request, VLMCreateSerializer::serialize_request(vdevice_params, "", parse_result.chunks, parse_result.total_hef_size, vlm_params.optimize_memory_on_device()));
@@ -139,7 +146,7 @@ Expected<std::unique_ptr<VLM::Impl>> VLM::Impl::create_unique(std::shared_ptr<ha
             auto &tokenizer_buffer = parse_result.local_resources_buffers[TOKENIZER];
             TRY(tokenizer, HailoTokenizer::create(tokenizer_buffer->as_view()));
 
-            token_embedder_buffer = parse_result.local_resources_buffers[INPUT_EMB_BINARY];
+            kept_resources = std::move(parse_result.local_resources_buffers);
         }
 #endif // HAILO_CLIENT_TOKENIZER_ENABLED
 
@@ -154,7 +161,8 @@ Expected<std::unique_ptr<VLM::Impl>> VLM::Impl::create_unique(std::shared_ptr<ha
     auto input_frame_format = vlm_create_reply_info.input_frame_format;
 
     auto chat_template = vlm_create_reply_info.prompt_template;
-    TRY(auto prompt_template_handler, PromptTemplateHandler::create(chat_template));
+    TRY(auto prompt_template_handler, PromptTemplateHandler::create(chat_template,
+        vlm_create_reply_info.bos_token, vlm_create_reply_info.eos_token));
     auto prompt_template_handler_ptr = make_shared_nothrow<PromptTemplateHandler>(std::move(prompt_template_handler));
     CHECK_NOT_NULL_AS_EXPECTED(prompt_template_handler_ptr, HAILO_OUT_OF_HOST_MEMORY);
 
@@ -162,18 +170,17 @@ Expected<std::unique_ptr<VLM::Impl>> VLM::Impl::create_unique(std::shared_ptr<ha
 
     if (vlm_params.optimize_memory_on_device()) {
 #ifndef HAILO_CLIENT_TOKENIZER_ENABLED
-        (void)token_embedder_buffer;
+        (void)kept_resources;
+        (void)embedding_tables;
         LOGGER__ERROR("Host-tokenization is not enabled in lib compilation");
         return make_unexpected(HAILO_NOT_IMPLEMENTED);
 #else
-        CHECK_AS_EXPECTED(nullptr != token_embedder_buffer, HAILO_NOT_AVAILABLE,
-            "Token embedder buffer is not available. This might happen if the HEF exists locally on the server, but 'optimize_memory_on_device' is set to true.");
         auto embedding_features = vlm_create_reply_info.embedding_features;
         auto image_pad_token_id = vlm_create_reply_info.image_pad_token_id;
         auto video_pad_token_id = vlm_create_reply_info.video_pad_token_id;
 
-        TRY(token_embedder, TokenEmbedder<uint16_t>::create(token_embedder_buffer,
-            token_embedder_buffer->size() / (sizeof(uint16_t) * embedding_features), embedding_features,
+        TRY(token_embedder, GenAICommon::create_kept_table_embedder(kept_resources,
+            embedding_tables.token_embeddings, embedding_features, TOKEN_EMBEDDINGS_TABLE_DESCRIPTION,
             image_pad_token_id, video_pad_token_id));
 #endif // HAILO_CLIENT_TOKENIZER_ENABLED
     }
@@ -282,10 +289,7 @@ Expected<size_t> VLM::get_context_usage_size()
 
 Expected<size_t> VLM::Impl::get_context_usage_size()
 {
-    TRY(auto request, LLMGetContextUsageSizeSerializer::serialize_request());
-    TRY(auto reply, m_session->execute(MemoryView(request)));
-    TRY(auto context_usage, LLMGetContextUsageSizeSerializer::deserialize_reply(MemoryView(*reply)));
-    return context_usage;
+    return GenAICommon::get_context_usage_size(*m_session);
 }
 
 Expected<size_t> VLM::max_context_capacity()
@@ -342,7 +346,15 @@ hailo_status VLM::Impl::load_context(const MemoryView &context)
     CHECK_SUCCESS(m_session->write(MemoryView(request)), "Failed to write request");
     CHECK_SUCCESS(m_session->write(context), "Failed to write context");
     TRY(auto reply, m_session->read());
-    CHECK_SUCCESS(LLMSetContextSerializer::deserialize_reply(MemoryView(*reply)), "Failed to set context");
+    const auto set_context_status = LLMSetContextSerializer::deserialize_reply(MemoryView(*reply));
+    if (HAILO_SUCCESS != set_context_status) {
+        GenAICommon::resync_prompt_template_after_failed_load(set_context_status, get_context_usage_size(),
+            *m_prompt_template_handler);
+        return set_context_status;
+    }
+    m_prompt_template_handler->mark_context_used();
+    TRY(const auto context_usage, get_context_usage_size(), "Failed to get context usage after load");
+    m_prompt_template_handler->on_context_loaded(context_usage);
     return HAILO_SUCCESS;
 }
 
@@ -446,6 +458,26 @@ Expected<std::vector<std::string>> VLM::Impl::get_stop_tokens()
         // If tokenizer not on host, then the empty-vector returned by the server is actually the stop tokens
     }
     return stop_tokens_results;
+}
+
+hailo_status VLM::set_chat_template_kwargs(const std::string &chat_template_kwargs)
+{
+    return m_pimpl->set_chat_template_kwargs(chat_template_kwargs);
+}
+
+hailo_status VLM::Impl::set_chat_template_kwargs(const std::string &chat_template_kwargs)
+{
+    return m_prompt_template_handler->set_chat_template_kwargs(chat_template_kwargs);
+}
+
+Expected<std::string> VLM::get_chat_template_kwargs()
+{
+    return m_pimpl->get_chat_template_kwargs();
+}
+
+Expected<std::string> VLM::Impl::get_chat_template_kwargs()
+{
+    return m_prompt_template_handler->chat_template_kwargs();
 }
 
 Expected<VLMGenerator> VLM::create_generator(const LLMGeneratorParams &params)
@@ -689,8 +721,10 @@ Expected<LLMGeneratorCompletion> VLMGenerator::Impl::generate_impl(const std::st
     TRY(auto client_token_queue, SpscQueue<LLMTokenPair>::create(
         TOKENS_BACKLOG, shutdown_event, HAILO_INFINITE_TIMEOUT));
 
+    const std::shared_ptr<TokenEmbedder<uint16_t>> NO_PER_LAYER_INPUTS_EMBEDDER;
     auto pimpl = make_unique_nothrow<LLMGeneratorCompletion::Impl>(m_session, shared_from_this(),
-        std::move(client_token_queue), shutdown_event, m_tokenizer, m_token_embedder, prompt);
+        m_prompt_template_handler, std::move(client_token_queue), shutdown_event, m_tokenizer, m_token_embedder,
+        NO_PER_LAYER_INPUTS_EMBEDDER, prompt);
     CHECK_NOT_NULL_AS_EXPECTED(pimpl, HAILO_OUT_OF_HOST_MEMORY);
 
     LLMGeneratorCompletion obj(std::move(pimpl));

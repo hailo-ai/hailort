@@ -4,7 +4,7 @@
  **/
 /**
  * @file mmap_buffer.cpp
- * @brief Wrapper around unix memory mapping (mmap)
+ * @brief Wrapper around Linux memory mapping (mmap)
  **/
 
 #include "common/mmap_buffer.hpp"
@@ -12,10 +12,7 @@
 
 #include <sys/mman.h>
 #include <errno.h>
-
-#if defined(__linux__)
 #include <linux/mman.h>
-#endif
 
 // If MAP_UNINITIALIZED isn't defined (MAP_UNINITIALIZED isn't POSIX standard) then it has no impact in mmap function
 #ifndef MAP_UNINITIALIZED
@@ -46,15 +43,6 @@ Expected<MmapBufferImpl> MmapBufferImpl::create_file_map(size_t length, FileDesc
     CHECK_AS_EXPECTED(INVALID_ADDR != address, HAILO_INTERNAL_FAILURE, "Failed to mmap buffer fd with errno:{}", errno);
     return MmapBufferImpl(address, length);
 }
-
-#if defined(__QNX__)
-Expected<MmapBufferImpl> MmapBufferImpl::create_file_map_nocache(size_t length, FileDescriptor &file, uintptr_t offset)
-{
-    void *address = mmap(nullptr, length, PROT_WRITE | PROT_READ | PROT_NOCACHE, MAP_SHARED, file, (off_t)offset);
-    CHECK_AS_EXPECTED(INVALID_ADDR != address, HAILO_INTERNAL_FAILURE, "Failed to mmap buffer fd with errno:{}", errno);
-    return MmapBufferImpl(address, length);
-}
-#endif /* defined(__QNX__) */
 
 hailo_status MmapBufferImpl::unmap()
 {

@@ -7,7 +7,7 @@
 #define _HAILO_IOCTL_COMMON_H_
 
 #define HAILO_DRV_VER_MAJOR 5
-#define HAILO_DRV_VER_MINOR 4
+#define HAILO_DRV_VER_MINOR 5
 #define HAILO_DRV_VER_REVISION 0
 
 #define _STRINGIFY_EXPANDED( x ) #x
@@ -155,21 +155,6 @@ static ULONG FORCEINLINE _IOC_(ULONG nr, ULONG type, ULONG size, bool read, bool
 #define HAILO_NNC_IOCTL_MAGIC       'n'
 #define HAILO_PCI_EP_IOCTL_MAGIC    'p'
 
-#elif defined(__QNX__) // #ifdef _WIN32
-#include <devctl.h>
-#include <stdint.h>
-#include <sys/types.h>
-#include <sys/mman.h>
-#include <stdbool.h>
-
-// defines for devctl
-#define _IOW_   __DIOF
-#define _IOR_   __DIOT
-#define _IOWR_  __DIOTF
-#define _IO_    __DION
-#define HAILO_GENERAL_IOCTL_MAGIC   _DCMD_ALL
-#define HAILO_VDMA_IOCTL_MAGIC      _DCMD_MISC
-
 #else // #ifdef _WIN32
 #error "unsupported platform!"
 #endif
@@ -201,15 +186,6 @@ enum hailo_dma_buffer_type {
     HAILO_DMA_BUFFER_MAX_ENUM = INT_MAX,
 };
 
-// TODO HRT-19791: Remove this and replace with a boolean.
-enum hailo_vdma_interrupts_domain {
-    HAILO_VDMA_INTERRUPTS_DOMAIN_NONE   = 0,
-    HAILO_VDMA_INTERRUPTS_DOMAIN_HOST   = (1 << 1),
-
-    /** Max enum value to maintain ABI Integrity */
-    HAILO_VDMA_INTERRUPTS_DOMAIN_MAX_ENUM = INT_MAX,
-};
-
 /* structure used in ioctl HAILO_VDMA_BUFFER_MAP and HAILO_VDMA_BUFFER_UNMAP */
 struct hailo_vdma_buffer_params {
     uintptr_t addr_or_fd;                    // in
@@ -223,7 +199,6 @@ struct hailo_vdma_buffer_params {
 struct hailo_desc_list_create_params {
     size_t desc_count;          // in
     uint16_t desc_page_size;    // in
-    bool is_circular;           // in
     uintptr_t desc_handle;      // out
     uint64_t dma_address;       // out
 };
@@ -239,19 +214,13 @@ struct hailo_write_action_list_params {
     uint64_t dma_address;       // out
 };
 
-/* structure used in ioctl HAILO_DESC_LIST_BIND_VDMA_BUFFER */
 /**
- * Programs the descriptions list (desc_handle), starting from starting_desc, with the given buffer.
+ * Structure used in ioctl HAILO_DESC_LIST_PROGRAM.
+ * Programs the descriptors list (desc_handle), starting from starting_desc, with the given buffer.
  * Program transfers_count transfers each of size transfer_size.
  *
- * For example, if buffer_offset is 0x1000, transfer_size=0x300, transfers_count=2, and desc_page_size is 0x200 (desc
- * page size is taken from the descriptors list), we program the following pattern:
- *   desc[starting_desc] =   { .address = base_buffer+0x1000, .size= 0x200 }
- *   desc[starting_desc+1] = { .address = base_buffer+0x1200, .size= 0x100 }
- *   desc[starting_desc+2] = { .address = base_buffer+0x1400, .size= 0x200 }
- *   desc[starting_desc+3] = { .address = base_buffer+0x1600, .size= 0x100 }
- *
- * notice that the jumps are always aligned to desc_page_size, so the actual programmed size is
+ * NOTE: starting_desc must be 0 or the current descriptor.
+ * NOTE: the jumps are always aligned to desc_page_size, so the actual programmed size is
  * ALIGN(transfer_size, desc_page_size) * transfers_count.
  */
 struct hailo_desc_list_program_params {
@@ -262,7 +231,6 @@ struct hailo_desc_list_program_params {
     uintptr_t desc_handle;      // in
     uint8_t channel_index;      // in
     uint32_t starting_desc;     // in
-    bool is_debug;              // in
 };
 
 /* structure used in ioctl HAILO_VDMA_CANCEL_PREPARED_TRANSFER */
@@ -286,7 +254,6 @@ struct hailo_vdma_interrupts_channel_data {
     uint8_t channel_index;
 
 #define HAILO_VDMA_TRANSFER_DATA_CHANNEL_NOT_ACTIVE  (0xff)
-#define HAILO_VDMA_TRANSFER_DATA_CHANNEL_WITH_ERROR  (0xfe)
 
     // Either amount of transfers done or one of the above defines
     uint8_t data;
@@ -385,9 +352,6 @@ struct hailo_device_properties {
     enum hailo_dma_type          dma_type;
     size_t                       dma_engines_count;
     bool                         is_fw_loaded;
-#ifdef __QNX__
-    pid_t                        resource_manager_pid;
-#endif // __QNX__
 };
 
 struct hailo_driver_info {
@@ -423,7 +387,7 @@ struct hailo_free_continuous_buffer_params {
     uintptr_t buffer_handle;    // in
 };
 
-/* structures used in ioctl HAILO_VDMA_LAUNCH_TRANSFER */
+/* structures used in ioctl HAILO_VDMA_LAUNCH_TRANSFER and HAILO_VDMA_PREPARE_TRANSFER */
 struct hailo_vdma_transfer_buffer {
     enum hailo_dma_buffer_type buffer_type; // in
     uintptr_t addr_or_fd;                   // in
@@ -435,23 +399,13 @@ struct hailo_vdma_transfer_buffer {
 // ioctl multiple times).
 #define HAILO_MAX_BUFFERS_PER_SINGLE_TRANSFER (8)
 
-struct hailo_vdma_prepare_transfer_params {
-    uint8_t channel_index;                                              // in
-
-    uintptr_t desc_handle;                                              // in
-
-    uint8_t buffers_count;                                              // in
-    struct hailo_vdma_transfer_buffer
-        buffers[HAILO_MAX_BUFFERS_PER_SINGLE_TRANSFER];                 // in
-
-    bool is_debug;                                                      // in, if set program hw to send
-                                                                        // more info (e.g desc complete status)
-};
-
-struct hailo_vdma_launch_transfer_params {
-    struct hailo_vdma_prepare_transfer_params prepare_transfer_params;  // in
-    uint8_t engine_index;                                               // in
-    bool is_cyclic;                                                     // in, if false, assumes buffer already synced.
+struct hailo_vdma_transfer_params {
+    uint8_t engine_index;                                                             // in
+    uint8_t channel_index;                                                            // in
+    uintptr_t desc_handle;                                                            // in
+    bool is_programmed; /* If true, assumes desc-list is already programmed. */       // in
+    uint8_t buffers_count;                                                            // in
+    struct hailo_vdma_transfer_buffer buffers[HAILO_MAX_BUFFERS_PER_SINGLE_TRANSFER]; // in
 };
 
 /* structure used in ioctl HAILO_SOC_CONNECT */
@@ -504,8 +458,7 @@ struct tCompatibleHailoIoctlData
         struct hailo_driver_info DriverInfo;
         struct hailo_read_log_params ReadLog;
         struct hailo_mark_as_in_use_params MarkAsInUse;
-        struct hailo_vdma_launch_transfer_params LaunchTransfer;
-        struct hailo_vdma_prepare_transfer_params PrepareTransfer;
+        struct hailo_vdma_transfer_params VdmaTransfer;
         struct hailo_soc_connect_params ConnectParams;
         struct hailo_soc_close_params SocCloseParams;
         struct hailo_pci_ep_accept_params AcceptParams;
@@ -567,8 +520,8 @@ enum hailo_vdma_ioctl_code {
 #define HAILO_VDMA_CONTINUOUS_BUFFER_ALLOC    _IOWR_(HAILO_VDMA_IOCTL_MAGIC, HAILO_VDMA_CONTINUOUS_BUFFER_ALLOC_CODE,      struct hailo_allocate_continuous_buffer_params)
 #define HAILO_VDMA_CONTINUOUS_BUFFER_FREE     _IOR_(HAILO_VDMA_IOCTL_MAGIC,  HAILO_VDMA_CONTINUOUS_BUFFER_FREE_CODE,       struct hailo_free_continuous_buffer_params)
 
-#define HAILO_VDMA_LAUNCH_TRANSFER            _IOR_(HAILO_VDMA_IOCTL_MAGIC,  HAILO_VDMA_LAUNCH_TRANSFER_CODE,              struct hailo_vdma_launch_transfer_params)
-#define HAILO_VDMA_PREPARE_TRANSFER           _IOR_(HAILO_VDMA_IOCTL_MAGIC,  HAILO_VDMA_PREPARE_TRANSFER_CODE,             struct hailo_vdma_prepare_transfer_params)
+#define HAILO_VDMA_LAUNCH_TRANSFER            _IOR_(HAILO_VDMA_IOCTL_MAGIC,  HAILO_VDMA_LAUNCH_TRANSFER_CODE,              struct hailo_vdma_transfer_params)
+#define HAILO_VDMA_PREPARE_TRANSFER           _IOR_(HAILO_VDMA_IOCTL_MAGIC,  HAILO_VDMA_PREPARE_TRANSFER_CODE,             struct hailo_vdma_transfer_params)
 #define HAILO_VDMA_CANCEL_PREPARED_TRANSFER   _IOR_(HAILO_VDMA_IOCTL_MAGIC,  HAILO_VDMA_CANCEL_PREPARED_TRANSFER_CODE,     struct hailo_vdma_cancel_prepared_transfer_params)
 
 enum hailo_nnc_ioctl_code {

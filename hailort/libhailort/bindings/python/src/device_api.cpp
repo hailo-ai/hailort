@@ -279,6 +279,60 @@ uint32_t DeviceWrapper::get_current_limit()
     return current_limit.release();
 }
 
+// A zero-sized probe must report the required size, so any other status - HAILO_SUCCESS included - means the
+// count/array contract was not honoured and the size taken from it cannot be trusted.
+static void validate_clock_frequencies_probe(hailo_status probe_status)
+{
+    if (HAILO_INSUFFICIENT_BUFFER == probe_status) {
+        return;
+    }
+
+    VALIDATE_STATUS(probe_status);
+    THROW_STATUS_ERROR(HAILO_INVALID_OPERATION);
+}
+
+std::vector<uint32_t> DeviceWrapper::get_supported_clock_frequencies(hailo_clock_domain_t domain)
+{
+    uint32_t count = 0;
+    validate_clock_frequencies_probe(device().get_supported_clock_frequencies(domain, &count, nullptr));
+
+    std::vector<uint32_t> frequencies_mhz(count);
+    auto status = device().get_supported_clock_frequencies(domain, &count, frequencies_mhz.data());
+    VALIDATE_STATUS(status);
+
+    return frequencies_mhz;
+}
+
+void DeviceWrapper::set_nominal_clock_frequency(hailo_clock_domain_t domain, uint32_t frequency_mhz)
+{
+    auto status = device().set_nominal_clock_frequency(domain, frequency_mhz);
+    VALIDATE_STATUS(status);
+}
+
+uint32_t DeviceWrapper::get_default_nominal_clock_frequency(hailo_clock_domain_t domain)
+{
+    auto frequency_mhz = device().get_default_nominal_clock_frequency(domain);
+    VALIDATE_EXPECTED(frequency_mhz);
+
+    return frequency_mhz.release();
+}
+
+uint32_t DeviceWrapper::get_nominal_clock_frequency(hailo_clock_domain_t domain)
+{
+    auto frequency_mhz = device().get_nominal_clock_frequency(domain);
+    VALIDATE_EXPECTED(frequency_mhz);
+
+    return frequency_mhz.release();
+}
+
+uint32_t DeviceWrapper::get_current_clock_frequency(hailo_clock_domain_t domain)
+{
+    auto frequency_mhz = device().get_current_clock_frequency(domain);
+    VALIDATE_EXPECTED(frequency_mhz);
+
+    return frequency_mhz.release();
+}
+
 void DeviceWrapper::set_notification_callback(const std::function<void(uintptr_t, const hailo_notification_t&, py::object)> &callback,
     hailo_notification_id_t notification_id, py::object opaque)
 {
@@ -345,6 +399,11 @@ void DeviceWrapper::bind(py::module &m)
     .def("get_chip_temperature", &DeviceWrapper::get_chip_temperature)
     .def("query_performance_stats", &DeviceWrapper::query_performance_stats, py::arg("sampling_period_ms") = 100)
     .def("get_current_limit", &DeviceWrapper::get_current_limit)
+    .def("get_supported_clock_frequencies", &DeviceWrapper::get_supported_clock_frequencies)
+    .def("set_nominal_clock_frequency", &DeviceWrapper::set_nominal_clock_frequency)
+    .def("get_default_nominal_clock_frequency", &DeviceWrapper::get_default_nominal_clock_frequency)
+    .def("get_nominal_clock_frequency", &DeviceWrapper::get_nominal_clock_frequency)
+    .def("get_current_clock_frequency", &DeviceWrapper::get_current_clock_frequency)
     .def("get_extended_device_information", &DeviceWrapper::get_extended_device_information)
     .def("set_pause_frames", &DeviceWrapper::set_pause_frames)
     .def("test_chip_memories", &DeviceWrapper::test_chip_memories)

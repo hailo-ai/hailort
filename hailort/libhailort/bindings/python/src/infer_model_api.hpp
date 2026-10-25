@@ -19,6 +19,8 @@
 #include <thread>
 #include <vector>
 #include <queue>
+#include <mutex>
+#include <condition_variable>
 
 namespace hailort {
 
@@ -30,6 +32,14 @@ class AsyncInferJobWrapper;
 
 using AsyncInferCallBack = std::function<void(const int)>;
 using AsyncInferCallBackAndStatus = std::pair<AsyncInferCallBack, AsyncInferCompletionInfo>;
+
+// Shared with in-flight libhailort callbacks, which may outlive the ConfiguredInferModelWrapper.
+struct CallbacksQueue
+{
+    std::mutex mutex;
+    std::condition_variable cv;
+    std::queue<AsyncInferCallBackAndStatus> callbacks;
+};
 
 class InferModelWrapper final
 {
@@ -61,7 +71,7 @@ public:
     ConfiguredInferModelWrapper(ConfiguredInferModel &&configured_infer_model, bool is_using_service,
         const std::vector<std::string> &output_names, bool should_reallocate_output_buffers=true) :
         m_configured_infer_model(std::move(configured_infer_model)),
-        m_callbacks_queue(std::make_shared<std::queue<AsyncInferCallBackAndStatus>>()),
+        m_callbacks_queue(std::make_shared<CallbacksQueue>()),
         m_is_alive(true),
         m_is_using_service(is_using_service),
         m_output_names(output_names),
@@ -85,8 +95,12 @@ public:
     {
         if (m_is_alive) {
             m_configured_infer_model.shutdown();
-            m_is_alive = false; // signal the thread to stop
-            m_cv.notify_all(); // wake up the thread so it can return
+            {
+                std::lock_guard<std::mutex> lock(m_callbacks_queue->mutex);
+                // Under the cv mutex, so the store cannot land between the worker's predicate check and its wait
+                m_is_alive = false;
+            }
+            m_callbacks_queue->cv.notify_all();
             if (m_callbacks_thread && m_callbacks_thread->joinable())
             {
                 m_callbacks_thread->join();
@@ -116,11 +130,9 @@ private:
     void execute_callbacks();
 
     ConfiguredInferModel m_configured_infer_model;
-    std::mutex m_queue_mutex;
-    std::condition_variable m_cv;
-    std::shared_ptr<std::queue<AsyncInferCallBackAndStatus>> m_callbacks_queue;
+    std::shared_ptr<CallbacksQueue> m_callbacks_queue;
     std::shared_ptr<std::thread> m_callbacks_thread; // worker thread. Executes user defined (pythonic) callbacks
-    std::atomic_bool m_is_alive; // allow main thread to write, while worker thread is reading
+    std::atomic_bool m_is_alive; // Written under m_callbacks_queue->mutex once the worker runs
     bool m_is_using_service;
     std::vector<std::string> m_output_names;
     bool m_should_reallocate_output_buffers;

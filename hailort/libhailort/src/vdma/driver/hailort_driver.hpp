@@ -27,10 +27,6 @@
 #include <list>
 #include <cerrno>
 
-#ifdef __QNX__
-#include <sys/mman.h>
-#endif // __QNX__
-
 
 namespace hailort
 {
@@ -68,7 +64,6 @@ struct ChannelIrqData {
     vdma::ChannelId channel_id;
     bool is_active;
     uint8_t transfers_completed;
-    bool validation_success;
 };
 
 struct IrqData {
@@ -242,11 +237,8 @@ public:
      *
      * @param[in] desc_count - number of descriptors to allocate. The descriptor max size is desc_page_size.
      * @param[in] desc_page_size - maximum size of each descriptor. Must be a power of 2.
-     * @param[in] is_circular - if true, the descriptors list can be used in a circular (and desc_count must be power
-     *                          of 2)
      */
-    Expected<DescriptorsListInfo> descriptors_list_create(size_t desc_count, uint16_t desc_page_size,
-        bool is_circular);
+    Expected<DescriptorsListInfo> descriptors_list_create(size_t desc_count, uint16_t desc_page_size);
 
     /**
      * Frees a vdma descriptors buffer allocated by 'descriptors_list_create'.
@@ -275,7 +267,7 @@ public:
      * The maximum number of transfer buffers is MAX_BUFFERS_IN_REQUEST.
      */
     hailo_status launch_transfer(vdma::ChannelId channel_id, uintptr_t desc_handle,
-        const std::vector<TransferBuffer> &transfer_buffer, bool is_cyclic);
+        const std::vector<TransferBuffer> &transfer_buffer, bool is_programmed);
 
     /**
      * Allocate continuous vdma buffer.
@@ -385,9 +377,6 @@ private:
     size_t m_dma_engines_count;
     DeviceBoardType m_board_type;
     bool m_is_fw_loaded;
-#ifdef __QNX__
-    pid_t m_resource_manager_pid;
-#endif // __QNX__
 
 #ifdef __linux__
     // TODO: HRT-11595 fix linux driver deadlock and remove the mutex.

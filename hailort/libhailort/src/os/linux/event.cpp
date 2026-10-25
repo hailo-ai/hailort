@@ -4,7 +4,7 @@
  **/
 /**
  * @file event.cpp
- * @brief Event & Semaphore wrapper for Unix
+ * @brief Event & Semaphore wrapper for Linux
  **/
 
 #include "hailo/hailort.h"

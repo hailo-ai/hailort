@@ -280,6 +280,66 @@ hailo_status hailo_get_throttling_state(hailo_device device, bool *is_active)
     return HAILO_SUCCESS;
 }
 
+hailo_status hailo_get_supported_clock_frequencies(hailo_device device, hailo_clock_domain_t domain, uint32_t *count,
+    uint32_t *clocks_mhz)
+{
+    CHECK_ARG_NOT_NULL(device);
+    CHECK_ARG_NOT_NULL(count);
+
+    const auto status = device->device->get_supported_clock_frequencies(domain, count, clocks_mhz);
+    // A device with no such clock domain answers HAILO_NOT_SUPPORTED, which is expected, so do not log it.
+    if (HAILO_NOT_SUPPORTED == status) {
+        return status;
+    }
+    CHECK_SUCCESS_WITH_ACCEPTABLE_STATUS(HAILO_INSUFFICIENT_BUFFER, status);
+    return HAILO_SUCCESS;
+}
+
+hailo_status hailo_set_nominal_clock_frequency(hailo_device device, hailo_clock_domain_t domain, uint32_t frequency_mhz)
+{
+    CHECK_ARG_NOT_NULL(device);
+
+    const auto status = device->device->set_nominal_clock_frequency(domain, frequency_mhz);
+    CHECK_SUCCESS_WITH_ACCEPTABLE_STATUS(HAILO_NOT_SUPPORTED, status);
+    return HAILO_SUCCESS;
+}
+
+hailo_status hailo_get_default_nominal_clock_frequency(hailo_device device, hailo_clock_domain_t domain,
+    uint32_t *frequency_mhz)
+{
+    CHECK_ARG_NOT_NULL(device);
+    CHECK_ARG_NOT_NULL(frequency_mhz);
+
+    auto default_nominal_frequency = device->device->get_default_nominal_clock_frequency(domain);
+    CHECK_EXPECTED_WITH_ACCEPTABLE_STATUS(HAILO_NOT_SUPPORTED, default_nominal_frequency);
+    *frequency_mhz = default_nominal_frequency.release();
+    return HAILO_SUCCESS;
+}
+
+hailo_status hailo_get_nominal_clock_frequency(hailo_device device, hailo_clock_domain_t domain,
+    uint32_t *frequency_mhz)
+{
+    CHECK_ARG_NOT_NULL(device);
+    CHECK_ARG_NOT_NULL(frequency_mhz);
+
+    auto nominal_frequency = device->device->get_nominal_clock_frequency(domain);
+    CHECK_EXPECTED_WITH_ACCEPTABLE_STATUS(HAILO_NOT_SUPPORTED, nominal_frequency);
+    *frequency_mhz = nominal_frequency.release();
+    return HAILO_SUCCESS;
+}
+
+hailo_status hailo_get_current_clock_frequency(hailo_device device, hailo_clock_domain_t domain,
+    uint32_t *frequency_mhz)
+{
+    CHECK_ARG_NOT_NULL(device);
+    CHECK_ARG_NOT_NULL(frequency_mhz);
+
+    auto current_frequency = device->device->get_current_clock_frequency(domain);
+    CHECK_EXPECTED_WITH_ACCEPTABLE_STATUS(HAILO_NOT_SUPPORTED, current_frequency);
+    *frequency_mhz = current_frequency.release();
+    return HAILO_SUCCESS;
+}
+
 hailo_status hailo_wd_enable(hailo_device device, hailo_cpu_id_t cpu_id)
 {
     CHECK_ARG_NOT_NULL(device);

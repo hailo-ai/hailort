@@ -26,10 +26,6 @@ public:
     static Expected<MmapBufferImpl> create_shared_memory(size_t length);
     static Expected<MmapBufferImpl> create_file_map(size_t length, FileDescriptor &file, uintptr_t offset);
 
-#if defined(__QNX__)
-    static Expected<MmapBufferImpl> create_file_map_nocache(size_t length, FileDescriptor &file, uintptr_t offset);
-#endif /* defined(__QNX__) */
-
     MmapBufferImpl() : m_address(INVALID_ADDR), m_length(0), m_unmappable(false) {}
 
     ~MmapBufferImpl()
@@ -94,15 +90,6 @@ public:
         CHECK_EXPECTED(mmap);
         return MmapBuffer<T>(mmap.release());
     }
-
-#if defined(__QNX__)
-    static Expected<MmapBuffer<T>> create_file_map_nocache(size_t length, FileDescriptor &file, uintptr_t offset)
-    {
-        auto mmap = MmapBufferImpl::create_file_map_nocache(length, file, offset);
-        CHECK_EXPECTED(mmap);
-        return MmapBuffer<T>(mmap.release());
-    }
-#endif /* defined(__QNX__) */
 
     MmapBuffer() = default;
     ~MmapBuffer() = default;

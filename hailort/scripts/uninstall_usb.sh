@@ -9,20 +9,32 @@ fi
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly IMAGE_DIR_DEST="/lib/firmware/hailo/hailo10h_usb/"
 readonly UPLOAD_TOOL_DEST="/usr/bin/hailo_usb_loader"
-readonly USB_UDEV_RULES="/etc/udev/rules.d/51-hailo-usb-udev.rules"
+readonly UDEV_RULES_FILENAME="51-hailo-usb-udev.rules"
+readonly OVERRIDING_UDEV_RULES_FILE="/etc/udev/rules.d/${UDEV_RULES_FILENAME}"
+readonly USB_UDEV_RULES_FILE="/lib/udev/rules.d/${UDEV_RULES_FILENAME}"
 readonly LOAD_IMAGE_LOCK_DIR="/run/lock/hailo"
 
 echo "Starting uninstallation and cleanup..."
 
 echo "Removing udev rules..."
-if [[ -f "${USB_UDEV_RULES}" ]]; then
-    rm -f "${USB_UDEV_RULES}"
+has_removed_rules=false
+if [[ -f "${OVERRIDING_UDEV_RULES_FILE}" || -L "${OVERRIDING_UDEV_RULES_FILE}" ]]; then
+    rm -f "${OVERRIDING_UDEV_RULES_FILE}"
+    echo "Udev rules ${OVERRIDING_UDEV_RULES_FILE} removed."
+    has_removed_rules=true
+fi
+if [[ -f "${USB_UDEV_RULES_FILE}" ]]; then
+    rm -f "${USB_UDEV_RULES_FILE}"
+    echo "Udev rules ${USB_UDEV_RULES_FILE} removed."
+    has_removed_rules=true
+fi
+
+if [[ "${has_removed_rules}" == "true" ]]; then
     echo "Reloading udev rules..."
     udevadm control --reload-rules
     udevadm trigger --subsystem-match=usb --action=add
-    echo "Udev rules removed."
 else
-    echo "Udev rules not found, skipping."
+    echo "No udev rules removed, skipping udev reload."
 fi
 
 echo "Removing upload tool..."
@@ -33,7 +45,7 @@ else
     echo "Upload tool not found, skipping."
 fi
 
-echo "Removing image files and load_image.sh script..."
+echo "Removing image files and load_usb_image.sh script..."
 if [[ -d "${IMAGE_DIR_DEST}" ]]; then
     rm -rf "${IMAGE_DIR_DEST:?}"/*
     echo "Directory ${IMAGE_DIR_DEST} cleaned."

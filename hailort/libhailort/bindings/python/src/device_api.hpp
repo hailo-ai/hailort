@@ -120,6 +120,11 @@ public:
     hailo_chip_temperature_info_t get_chip_temperature();
     hailo_performance_stats_t query_performance_stats(uint32_t sampling_period_ms);
     uint32_t get_current_limit();
+    std::vector<uint32_t> get_supported_clock_frequencies(hailo_clock_domain_t domain);
+    void set_nominal_clock_frequency(hailo_clock_domain_t domain, uint32_t frequency_mhz);
+    uint32_t get_default_nominal_clock_frequency(hailo_clock_domain_t domain);
+    uint32_t get_nominal_clock_frequency(hailo_clock_domain_t domain);
+    uint32_t get_current_clock_frequency(hailo_clock_domain_t domain);
     void set_notification_callback(const std::function<void(uintptr_t, const hailo_notification_t&, py::object)> &callback,
         hailo_notification_id_t notification_id, py::object opaque);
     void remove_notification_callback(hailo_notification_id_t notification_id);

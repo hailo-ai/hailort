@@ -4,12 +4,9 @@
  **/
 /**
  * @file dma_able_buffer.hpp
- * @brief A Buffer that can be mapped to some device for dma operations.
- *        There are several options for that buffer:
- *          1. No allocation - The user gives its own buffer pointer and address. The buffer must be page aligned.
- *          2. Normal allocation - page aligned allocation. This is the default option for linux and windows.
- *          3. QNX shared memory allocation - for qnx, in order to pass the driver to the resources manager, we need to
- *             create a shared memory object, and pass an handle to it in the mapping. TODO: HRT-10298 implement this.
+ * @brief A Buffer that can be mapped to some device for dma operations. Either:
+ *        1. No allocation - The user gives its own buffer pointer and address. The buffer must be page aligned.
+ *        2. Normal allocation - page aligned allocation.
  **/
 
 #ifndef _HAILO_DMA_ABLE_BUFFER_HPP_

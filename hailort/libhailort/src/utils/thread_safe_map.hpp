@@ -10,7 +10,6 @@
 #ifndef HAILO_THREAD_SAFE_MAP_HPP_
 #define HAILO_THREAD_SAFE_MAP_HPP_
 
-#include <functional>
 #include <map>
 #include <mutex>
 #include <unordered_map>
@@ -63,12 +62,13 @@ public:
         return 0;
     }
 
-    void for_each(std::function<void(Value)> &&func) const
+    // Atomically take all entries, leaving the map empty.
+    std::unordered_map<Key, Value> pop_all()
     {
-        std::shared_lock<std::shared_timed_mutex> lock(m_mutex);
-        for (auto key_val : m_map) {
-            func(key_val.second);
-        }
+        std::unordered_map<Key, Value> all_entries;
+        std::unique_lock<std::shared_timed_mutex> lock(m_mutex);
+        std::swap(all_entries, m_map);
+        return all_entries;
     }
 
     bool contains(const Key &key) const

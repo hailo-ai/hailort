@@ -27,6 +27,15 @@ namespace hailort
 
 constexpr std::chrono::seconds LONG_RPC_ACTION_TIMEOUT = std::chrono::seconds(45);
 
+// A multi-GB HEF outlasts any fixed RPC timeout, so the budget scales with size.
+// The rate is a conservative floor.
+constexpr uint64_t MIN_HEF_TRANSFER_RATE_BYTES_PER_SEC = 25 * 1024 * 1024;
+
+inline std::chrono::seconds hef_transfer_timeout(uint64_t hef_size)
+{
+    return LONG_RPC_ACTION_TIMEOUT + std::chrono::seconds(static_cast<int64_t>(hef_size / MIN_HEF_TRANSFER_RATE_BYTES_PER_SEC));
+}
+
 enum class HailoRpcActionID {
     VDEVICE__CREATE,
     VDEVICE__DESTROY,
@@ -69,6 +78,11 @@ enum class HailoRpcActionID {
     DEVICE__FETCH_LOGS,
     DEVICE__ECHO_BUFFER,
     DEVICE__GET_CURRENT_LIMIT,
+    DEVICE__GET_SUPPORTED_CLOCK_FREQUENCIES,
+    DEVICE__SET_NOMINAL_CLOCK_FREQUENCY,
+    DEVICE__GET_DEFAULT_NOMINAL_CLOCK_FREQUENCY,
+    DEVICE__GET_NOMINAL_CLOCK_FREQUENCY,
+    DEVICE__GET_CURRENT_CLOCK_FREQUENCY,
 
     NOTIFICATION,
 
@@ -615,6 +629,55 @@ struct GetCurrentLimitSerializer
     static Expected<size_t> serialize_request(rpc_object_handle_t device_handle, MemoryView buffer);
     static Expected<rpc_object_handle_t> deserialize_request(const MemoryView &serialized_request);
     static Expected<Buffer> serialize_reply(const uint32_t current_limit_mA);
+    static Expected<uint32_t> deserialize_reply(const MemoryView &serialized_reply);
+};
+
+struct GetSupportedClockFrequenciesSerializer
+{
+    GetSupportedClockFrequenciesSerializer() = delete;
+    static Expected<size_t> serialize_request(rpc_object_handle_t device_handle, hailo_clock_domain_t domain,
+        MemoryView buffer);
+    static Expected<std::tuple<rpc_object_handle_t, hailo_clock_domain_t>> deserialize_request(const MemoryView &serialized_request);
+    static Expected<Buffer> serialize_reply(const std::vector<uint32_t> &clocks_mhz);
+    static Expected<std::vector<uint32_t>> deserialize_reply(const MemoryView &serialized_reply);
+};
+
+struct SetNominalClockFrequencySerializer
+{
+    SetNominalClockFrequencySerializer() = delete;
+    static Expected<size_t> serialize_request(rpc_object_handle_t device_handle, hailo_clock_domain_t domain,
+        uint32_t frequency_mhz, MemoryView buffer);
+    static Expected<std::tuple<rpc_object_handle_t, hailo_clock_domain_t, uint32_t>> deserialize_request(const MemoryView &serialized_request);
+    static Expected<Buffer> serialize_reply();
+};
+
+struct GetDefaultNominalClockFrequencySerializer
+{
+    GetDefaultNominalClockFrequencySerializer() = delete;
+    static Expected<size_t> serialize_request(rpc_object_handle_t device_handle, hailo_clock_domain_t domain,
+        MemoryView buffer);
+    static Expected<std::tuple<rpc_object_handle_t, hailo_clock_domain_t>> deserialize_request(const MemoryView &serialized_request);
+    static Expected<Buffer> serialize_reply(uint32_t frequency_mhz);
+    static Expected<uint32_t> deserialize_reply(const MemoryView &serialized_reply);
+};
+
+struct GetNominalClockFrequencySerializer
+{
+    GetNominalClockFrequencySerializer() = delete;
+    static Expected<size_t> serialize_request(rpc_object_handle_t device_handle, hailo_clock_domain_t domain,
+        MemoryView buffer);
+    static Expected<std::tuple<rpc_object_handle_t, hailo_clock_domain_t>> deserialize_request(const MemoryView &serialized_request);
+    static Expected<Buffer> serialize_reply(uint32_t frequency_mhz);
+    static Expected<uint32_t> deserialize_reply(const MemoryView &serialized_reply);
+};
+
+struct GetCurrentClockFrequencySerializer
+{
+    GetCurrentClockFrequencySerializer() = delete;
+    static Expected<size_t> serialize_request(rpc_object_handle_t device_handle, hailo_clock_domain_t domain,
+        MemoryView buffer);
+    static Expected<std::tuple<rpc_object_handle_t, hailo_clock_domain_t>> deserialize_request(const MemoryView &serialized_request);
+    static Expected<Buffer> serialize_reply(uint32_t frequency_mhz);
     static Expected<uint32_t> deserialize_reply(const MemoryView &serialized_reply);
 };
 

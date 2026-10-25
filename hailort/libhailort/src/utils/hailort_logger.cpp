@@ -63,14 +63,6 @@ static std::string get_home_directory()
         homedir = getpwuid(getuid())->pw_dir;
     }
 
-#ifdef __QNX__
-    const std::string root_dir = "/";
-    std::string homedir_str = std::string(homedir);
-    if (homedir_str == root_dir) {
-        return homedir_str + "home";
-    }
-#endif
-
     return homedir;
 }
 

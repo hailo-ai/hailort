@@ -57,6 +57,8 @@ public:
     std::string prompt_template();
     void set_stop_tokens(const std::vector<std::string> &stop_tokens);
     std::vector<std::string> get_stop_tokens();
+    void set_chat_template_kwargs(const std::string &chat_template_kwargs);
+    std::string get_chat_template_kwargs();
     std::vector<uint8_t> save_context();
     void load_context(const std::vector<uint8_t> &context);
 

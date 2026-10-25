@@ -4,7 +4,7 @@
  **/
 /**
  * @file filesystem.cpp
- * @brief Filesystem wrapper std::filesystem POSIX implementation
+ * @brief Filesystem wrapper std::filesystem Windows implementation
  **/
 
 #include "common/filesystem.hpp"

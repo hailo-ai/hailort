@@ -10,7 +10,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "hailort"
-version = "5.4.0"
+version = "5.5.0"
 description = "HailoRT"
 authors = [{ name = "Hailo team", email = "contact@hailo.ai" }]
 requires-python = ">=3.10,<3.14"

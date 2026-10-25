@@ -8,8 +8,10 @@
 #include "hailo/expected.hpp"
 #include "common/logger_macros.hpp"
 #include "vdma/integrated/integrated_device.hpp"
+#include "utils/clock_frequency_config.hpp"
 
 #include "md5.h"
+#include <algorithm>
 #include <fstream>
 #ifdef __linux__
 #include <glob.h>
@@ -27,7 +29,7 @@ namespace fs = std::filesystem;
 namespace hailort
 {
 
-static constexpr auto CURRENT_LIMIT_FILE = "/sys/devices/soc0/current_limit";
+static constexpr auto CURRENT_LIMIT_FILE = "/run/hailo/usb_current_limit_ma";
 static constexpr auto CHIP_SERIAL_NUMBER_FILE = "/sys/devices/soc0/chip_serial_number";
 
 bool IntegratedDevice::is_loaded()
@@ -342,15 +344,47 @@ Expected<uint32_t> IntegratedDevice::get_current_limit()
     std::string content(reinterpret_cast<char*>(buf), bytes_read.value());
     
     auto trimmed_content = StringUtils::trim(content);
-    if ("NA" == trimmed_content) {
-        return HAILO_CURRENT_LIMIT_NA;
-    }
-    
     uint32_t result = 0;
     auto [ptr, ec] = std::from_chars(trimmed_content.data(), trimmed_content.data() + trimmed_content.size(), result);
     CHECK((std::errc() == ec) && ((trimmed_content.data() + trimmed_content.size()) == ptr), HAILO_FILE_OPERATION_FAILURE, "Failed to parse current limit value from {}", CURRENT_LIMIT_FILE);
     
     return result;
+}
+
+hailo_status IntegratedDevice::get_supported_clock_frequencies(hailo_clock_domain_t domain, uint32_t *count,
+    uint32_t *clocks_mhz)
+{
+    TRY(const auto clock_domain, ClockDomain::create(domain));
+
+    return clock_domain.available_nominal_mhz(count, clocks_mhz);
+}
+
+hailo_status IntegratedDevice::set_nominal_clock_frequency(hailo_clock_domain_t domain, uint32_t frequency_mhz)
+{
+    TRY(const auto clock_domain, ClockDomain::create(domain));
+
+    return clock_domain.set_nominal_mhz(frequency_mhz);
+}
+
+Expected<uint32_t> IntegratedDevice::get_default_nominal_clock_frequency(hailo_clock_domain_t domain)
+{
+    TRY(const auto clock_domain, ClockDomain::create(domain));
+
+    return clock_domain.default_nominal_mhz();
+}
+
+Expected<uint32_t> IntegratedDevice::get_nominal_clock_frequency(hailo_clock_domain_t domain)
+{
+    TRY(const auto clock_domain, ClockDomain::create(domain));
+
+    return clock_domain.nominal_mhz();
+}
+
+Expected<uint32_t> IntegratedDevice::get_current_clock_frequency(hailo_clock_domain_t domain)
+{
+    TRY(const auto clock_domain, ClockDomain::create(domain));
+
+    return clock_domain.current_mhz();
 }
 
 } /* namespace hailort */

@@ -15,6 +15,17 @@ namespace hailort
 {
 constexpr size_t REQUEST_PROTO_MAX_SIZE (256); // TODO: HRT-16644 - make it dynamic
 
+namespace
+{
+struct SyncReplyState
+{
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool is_reply_received = false;
+    rpc_message_t reply {};
+};
+} /* namespace */
+
 inline static std::chrono::milliseconds get_request_timeout(const std::chrono::milliseconds default_timeout)
 {
     auto timeout_seconds = get_env_variable(HAILO_REQUEST_TIMEOUT_SECONDS);
@@ -44,6 +55,14 @@ Client::~Client()
     if (m_message_loop.joinable()) {
         m_message_loop.join();
     }
+    std::unique_lock<std::mutex> lock(m_parked_replies_mutex);
+    m_parked_replies.clear();
+}
+
+void Client::park_reply_until_close(reply_data_t &&reply_data)
+{
+    std::unique_lock<std::mutex> lock(m_parked_replies_mutex);
+    m_parked_replies.push_back(std::move(reply_data));
 }
 
 hailo_status Client::connect()
@@ -63,20 +82,25 @@ hailo_status Client::connect()
     m_connection = make_shared_nothrow<RpcConnection>(std::move(connection_params));
     CHECK_NOT_NULL(m_connection, HAILO_OUT_OF_HOST_MEMORY);
 
+    m_is_message_loop_finished = make_shared_nothrow<std::atomic_bool>(false);
+    CHECK_NOT_NULL(m_is_message_loop_finished, HAILO_OUT_OF_HOST_MEMORY);
+
     m_message_loop = std::thread([this] {
         auto status = message_loop();
         if ((HAILO_SUCCESS != status) && (HAILO_COMMUNICATION_CLOSED != status)) {
             LOGGER__ERROR("Error in message loop: {}", status);
         }
 
+        // Must precede the drain, so that a later request is rejected instead of never getting its callback.
         m_is_running = false;
 
         // Notify all waiting threads when the message loop closes.
         rpc_message_header_t status_header {};
         status_header.status = HAILO_COMMUNICATION_CLOSED;
-        m_reply_data.for_each([status_header] (reply_data_t reply_data) {
-            reply_data.callback(rpc_message_t{nullptr, status_header, {}});
-        });
+        for (const auto &id_and_reply_data : m_reply_data.pop_all()) {
+            id_and_reply_data.second.callback(rpc_message_t{nullptr, status_header, {}});
+        }
+        *m_is_message_loop_finished = true;
     });
     return HAILO_SUCCESS;
 }
@@ -100,7 +124,21 @@ hailo_status Client::message_loop()
 
         // Read additional buffers only if message returned success status.
         if ((HAILO_SUCCESS == reply_header.status) && (reply_data.read_buffers.size() > 0)) {
-            auto status = m_connection->read_buffers(std::move(reply_data.read_buffers));
+            // Only a started read can still write the buffers, so a readiness timeout must not park the reply.
+            auto status = m_connection->wait_for_read_buffer_async_ready(get_total_size(reply_data.read_buffers),
+                RpcConnection::TRANSFER_TIMEOUT);
+            const auto is_ready_for_read = (HAILO_SUCCESS == status);
+            if (is_ready_for_read) {
+                status = m_connection->read_buffers_without_ready_wait(std::move(reply_data.read_buffers));
+            }
+            // The user may free the read buffers in the callback, so it must not run while the DMA may write them.
+            const auto is_read_transfer_possibly_in_flight = is_ready_for_read && (HAILO_TIMEOUT == status);
+            if (is_read_transfer_possibly_in_flight) {
+                park_reply_until_close(std::move(reply_data));
+            } else if (HAILO_SUCCESS != status) {
+                reply_header.status = status;
+                reply_data.callback(rpc_message_t{nullptr, reply_header, {}});
+            }
             CHECK_SUCCESS_WITH_ACCEPTABLE_STATUS(HAILO_COMMUNICATION_CLOSED, status);
         }
 
@@ -118,32 +156,32 @@ Expected<rpc_message_t> Client::execute_request(uint32_t action_id, const Memory
     auto status = wait_for_execute_request_ready(request, get_request_timeout(timeout));
     CHECK_SUCCESS_ACCEPT_DISCONNECT(status);
 
-    std::mutex mutex;
-    std::condition_variable cv;
-    rpc_message_t out_reply {};
-    auto reply_received_callback = [&mutex, &cv, &out_reply] (rpc_message_t reply) {
+    auto sync_reply = make_shared_nothrow<SyncReplyState>();
+    CHECK_NOT_NULL(sync_reply, HAILO_OUT_OF_HOST_MEMORY);
+    auto reply_received_callback = [sync_reply] (rpc_message_t reply) {
         {
-            std::unique_lock<std::mutex> lock(mutex);
-            out_reply = reply;
+            std::unique_lock<std::mutex> lock(sync_reply->mutex);
+            sync_reply->reply = std::move(reply);
+            sync_reply->is_reply_received = true;
         }
-        cv.notify_one();
+        sync_reply->cv.notify_one();
     };
 
     TRY_WITH_ACCEPTABLE_DISCONNECT(auto message_id, execute_request_async_impl(action_id, request,
         reply_received_callback, std::move(write_buffers), std::move(read_buffers)));
 
-    std::unique_lock<std::mutex> lock(mutex);
-    auto wait_status = cv.wait_for(lock, get_request_timeout(timeout));
-    if (std::cv_status::timeout == wait_status) {
-        // Erase to avoid callback being called with uninitialized memory.
+    std::unique_lock<std::mutex> lock(sync_reply->mutex);
+    auto is_reply_received = sync_reply->cv.wait_for(lock, get_request_timeout(timeout),
+        [&sync_reply] { return sync_reply->is_reply_received; });
+    if (!is_reply_received) {
         (void)m_reply_data.pop(message_id);
         return make_unexpected(HAILO_TIMEOUT);
     }
 
-    if (HAILO_SUCCESS != out_reply.header.status) {
-        return make_unexpected(static_cast<hailo_status>(out_reply.header.status));
+    if (HAILO_SUCCESS != sync_reply->reply.header.status) {
+        return make_unexpected(static_cast<hailo_status>(sync_reply->reply.header.status));
     }
-    return out_reply;
+    return std::move(sync_reply->reply);
 }
 
 hailo_status Client::wait_for_execute_request_ready(const MemoryView &request, std::chrono::milliseconds timeout)
@@ -187,7 +225,15 @@ Expected<message_id_t> Client::execute_request_async_impl(uint32_t action_id, co
 
     auto status = m_connection->write_message_async(std::move(transfer_request));
     if ((HAILO_SUCCESS != status) || (!m_is_running)) {
-        (void)m_reply_data.pop(message_id);
+        auto [is_callback_owned_by_caller, reply_data] = m_reply_data.pop(message_id);
+        if (!is_callback_owned_by_caller) {
+            return message_id;
+        }
+        const auto is_write_queued = (HAILO_SUCCESS == status);
+        if (is_write_queued) {
+            park_reply_until_close(std::move(reply_data));
+            status = HAILO_COMMUNICATION_CLOSED;
+        }
     }
     CHECK_SUCCESS_ACCEPT_DISCONNECT(status);
 

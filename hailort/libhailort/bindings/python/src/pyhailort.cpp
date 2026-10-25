@@ -681,6 +681,10 @@ PYBIND11_MODULE(_pyhailort, m) {
         .value("PERFORMANCE", HAILO_POWER_MODE_PERFORMANCE)
         ;
 
+    py::enum_<hailo_clock_domain_t>(m, "ClockDomain")
+        .value("NNC", HAILO_CLOCK_DOMAIN_NNC)
+        ;
+
     py::class_<hailo_activate_network_group_params_t>(m, "ActivateNetworkGroupParams")
         .def(py::init<>())
         .def_static("default", []() {
@@ -926,6 +930,7 @@ PYBIND11_MODULE(_pyhailort, m) {
         .def_static("HAILO_CURRENT_LIMIT_900_MA", []() { return HAILO_CURRENT_LIMIT_900_MA;} )
         .def_static("HAILO_CURRENT_LIMIT_1500_MA", []() { return HAILO_CURRENT_LIMIT_1500_MA;} )
         .def_static("HAILO_CURRENT_LIMIT_3000_MA", []() { return HAILO_CURRENT_LIMIT_3000_MA;} )
+        .def_static("HAILO_CLOCK_FREQUENCY_DEFAULT", []() { return HAILO_CLOCK_FREQUENCY_DEFAULT;} )
         ;
 
     py::class_<hailo_network_group_info_t>(m, "NetworkGroupInfo", py::module_local())

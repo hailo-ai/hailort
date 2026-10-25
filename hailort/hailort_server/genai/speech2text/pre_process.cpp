@@ -65,7 +65,7 @@ Eigen::MatrixXf Speech2TextPreProcess::compute_log_mel(const MemoryView audio_ch
     return mel;
 }
 
-void Speech2TextPreProcess::pad_or_trim(const Eigen::MatrixXf &input, Eigen::Map<Eigen::MatrixXf> &output)
+void Speech2TextPreProcess::pad_or_trim(const Eigen::Ref<const Eigen::MatrixXf> &input, FrameMajorMelMap &output)
 {
     assert(output.cols() == input.cols());
 

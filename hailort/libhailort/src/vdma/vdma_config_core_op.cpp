@@ -9,6 +9,8 @@
 #include "net_flow/pipeline/vstream_internal.hpp"
 #include "device_common/control.hpp"
 
+#include <algorithm>
+
 namespace hailort
 {
 
@@ -259,23 +261,27 @@ bool VdmaConfigCoreOp::has_caches() const
     return cache_buffers && !(cache_buffers->get()).empty();
 }
 
+// TODO: HRT-20895 - drop the core-op-wide cache length getters, or change to per cache-id
 Expected<uint32_t> VdmaConfigCoreOp::get_cache_length_impl(std::function<size_t(const CacheBuffer&)> length_getter,
     const std::string &length_type) const
 {
-    size_t length = 0;
     TRY(const auto cache_buffers, m_cache_manager->get_cache_buffers(name()));
-    for (auto &cache_buffer : cache_buffers.get()) {
-        const auto curr_length = length_getter(cache_buffer.second);
-        if (length == 0) {
-            length = curr_length;
-        } else {
-            CHECK(length == curr_length, HAILO_INTERNAL_FAILURE,
-                "Cache buffer {} has {} length {}. Expected: {}",
-                cache_buffer.first, length_type, curr_length, length);
-        }
+    const auto &cache_buffers_map = cache_buffers.get();
+    CHECK(!cache_buffers_map.empty(), HAILO_INVALID_OPERATION, "No caches in core-op");
+
+    const auto lower_cache_id = [](const auto &lhs, const auto &rhs) { return lhs.first < rhs.first; };
+    const auto &reference_cache = *std::min_element(cache_buffers_map.begin(), cache_buffers_map.end(),
+        lower_cache_id);
+    const auto reference_length = length_getter(reference_cache.second);
+
+    for (const auto &cache_buffer_id_pair : cache_buffers_map) {
+        const auto curr_length = length_getter(cache_buffer_id_pair.second);
+        CHECK(reference_length == curr_length, HAILO_INVALID_OPERATION,
+            "The caches of this core-op don't share a single {} length: cache_id {} has {}, cache_id {} has {}",
+            length_type, reference_cache.first, reference_length, cache_buffer_id_pair.first, curr_length);
     }
 
-    return static_cast<uint32_t>(length);
+    return static_cast<uint32_t>(reference_length);
 }
 
 Expected<uint32_t> VdmaConfigCoreOp::get_cache_length() const

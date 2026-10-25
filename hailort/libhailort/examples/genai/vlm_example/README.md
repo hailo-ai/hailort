@@ -101,9 +101,12 @@ std::vector<std::string> messages = {
 };
 std::vector<hailort::MemoryView> frames = {image_data};
 
-// With simplified API (without generator)
-auto completion = vlm.generate(messages, frames).expect("Failed to generate");
-
+auto generator_params = vlm.create_generator_params().expect("Failed to create generator params");
+const auto status = generator_params.set_frequency_penalty(1.05f);
+if (HAILO_SUCCESS != status) {
+    throw hailort::hailort_error(status, "Failed to set frequency penalty");
+}
+auto completion = vlm.generate(generator_params, messages, frames).expect("Failed to generate");
 ```
 
 ### Multiple Images

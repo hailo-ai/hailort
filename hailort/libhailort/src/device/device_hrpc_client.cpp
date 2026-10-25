@@ -11,6 +11,7 @@
 #include "device_common/device_internal.hpp"
 #include "hailo/hailort.h"
 #include "serializer.hpp"
+#include "utils/clock_frequency_config.hpp"
 #include "vdma/vdma_device.hpp"
 
 namespace hailort
@@ -462,6 +463,79 @@ Expected<uint32_t> DeviceHrpcClient::get_current_limit()
     TRY(auto request_size, Serializer::serialize_request(m_handle, MemoryView(*request_buffer)));
     TRY(auto result, m_client->execute_request(static_cast<uint32_t>(HailoRpcActionID::DEVICE__GET_CURRENT_LIMIT),
         MemoryView(request_buffer->data(), request_size)));
+
+    return Serializer::deserialize_reply(MemoryView(result.body.data(), result.header.size));
+}
+
+hailo_status DeviceHrpcClient::get_supported_clock_frequencies(hailo_clock_domain_t domain, uint32_t *count,
+    uint32_t *clocks_mhz)
+{
+    using Serializer = GetSupportedClockFrequenciesSerializer;
+    CHECK_SUCCESS(validate_clock_domain(domain));
+    CHECK_ARG_NOT_NULL(count);
+    CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
+    TRY(auto request_buffer, m_client->allocate_request_buffer(), "Failed to allocate request buffer");
+    TRY(auto request_size, Serializer::serialize_request(m_handle, domain, MemoryView(*request_buffer)));
+    const auto action_id = static_cast<uint32_t>(HailoRpcActionID::DEVICE__GET_SUPPORTED_CLOCK_FREQUENCIES);
+    TRY_WITH_ACCEPTABLE_STATUS(HAILO_NOT_SUPPORTED, auto result,
+        m_client->execute_request(action_id, MemoryView(request_buffer->data(), request_size)));
+    TRY(const auto supported_mhz, Serializer::deserialize_reply(MemoryView(result.body.data(), result.header.size)));
+
+    return fill_supported_clock_frequencies(supported_mhz, count, clocks_mhz);
+}
+
+hailo_status DeviceHrpcClient::set_nominal_clock_frequency(hailo_clock_domain_t domain, uint32_t frequency_mhz)
+{
+    using Serializer = SetNominalClockFrequencySerializer;
+    CHECK_SUCCESS(validate_clock_domain(domain));
+    CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
+    TRY(auto request_buffer, m_client->allocate_request_buffer(), "Failed to allocate request buffer");
+    TRY(auto request_size, Serializer::serialize_request(m_handle, domain, frequency_mhz, MemoryView(*request_buffer)));
+    const auto action_id = static_cast<uint32_t>(HailoRpcActionID::DEVICE__SET_NOMINAL_CLOCK_FREQUENCY);
+    const auto result = m_client->execute_request(action_id, MemoryView(request_buffer->data(), request_size));
+    CHECK_EXPECTED_WITH_ACCEPTABLE_STATUS(HAILO_NOT_SUPPORTED, result);
+
+    return HAILO_SUCCESS;
+}
+
+Expected<uint32_t> DeviceHrpcClient::get_default_nominal_clock_frequency(hailo_clock_domain_t domain)
+{
+    using Serializer = GetDefaultNominalClockFrequencySerializer;
+    CHECK_SUCCESS(validate_clock_domain(domain));
+    CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
+    TRY(auto request_buffer, m_client->allocate_request_buffer(), "Failed to allocate request buffer");
+    TRY(auto request_size, Serializer::serialize_request(m_handle, domain, MemoryView(*request_buffer)));
+    const auto action_id = static_cast<uint32_t>(HailoRpcActionID::DEVICE__GET_DEFAULT_NOMINAL_CLOCK_FREQUENCY);
+    TRY_WITH_ACCEPTABLE_STATUS(HAILO_NOT_SUPPORTED, auto result,
+        m_client->execute_request(action_id, MemoryView(request_buffer->data(), request_size)));
+
+    return Serializer::deserialize_reply(MemoryView(result.body.data(), result.header.size));
+}
+
+Expected<uint32_t> DeviceHrpcClient::get_nominal_clock_frequency(hailo_clock_domain_t domain)
+{
+    using Serializer = GetNominalClockFrequencySerializer;
+    CHECK_SUCCESS(validate_clock_domain(domain));
+    CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
+    TRY(auto request_buffer, m_client->allocate_request_buffer(), "Failed to allocate request buffer");
+    TRY(auto request_size, Serializer::serialize_request(m_handle, domain, MemoryView(*request_buffer)));
+    const auto action_id = static_cast<uint32_t>(HailoRpcActionID::DEVICE__GET_NOMINAL_CLOCK_FREQUENCY);
+    TRY_WITH_ACCEPTABLE_STATUS(HAILO_NOT_SUPPORTED, auto result,
+        m_client->execute_request(action_id, MemoryView(request_buffer->data(), request_size)));
+
+    return Serializer::deserialize_reply(MemoryView(result.body.data(), result.header.size));
+}
+
+Expected<uint32_t> DeviceHrpcClient::get_current_clock_frequency(hailo_clock_domain_t domain)
+{
+    using Serializer = GetCurrentClockFrequencySerializer;
+    CHECK_SUCCESS(validate_clock_domain(domain));
+    CHECK_NOT_NULL(m_client, HAILO_INVALID_OPERATION);
+    TRY(auto request_buffer, m_client->allocate_request_buffer(), "Failed to allocate request buffer");
+    TRY(auto request_size, Serializer::serialize_request(m_handle, domain, MemoryView(*request_buffer)));
+    const auto action_id = static_cast<uint32_t>(HailoRpcActionID::DEVICE__GET_CURRENT_CLOCK_FREQUENCY);
+    TRY_WITH_ACCEPTABLE_STATUS(HAILO_NOT_SUPPORTED, auto result,
+        m_client->execute_request(action_id, MemoryView(request_buffer->data(), request_size)));
 
     return Serializer::deserialize_reply(MemoryView(result.body.data(), result.header.size));
 }

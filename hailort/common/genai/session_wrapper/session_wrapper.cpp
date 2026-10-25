@@ -22,6 +22,8 @@ namespace hailort
 namespace genai
 {
 
+static constexpr size_t CHUNKED_TRANSFER_BUFFERS_COUNT = 2;
+
 SessionWrapper::SessionWrapper(std::shared_ptr<Session> session) : m_session(session)
 {
 }
@@ -141,18 +143,21 @@ hailo_status SessionWrapper::send_file_chunked(const std::string &file_path, siz
     TRY(auto buffer_b, Buffer::create_shared(chunk_size, BufferStorageParams::create_dma()));
 
     TRY(auto shutdown_event, Event::create_shared(Event::State::not_signalled));
-    TRY(auto buffer_queue, SpscQueue<BufferPtr>::create(2, shutdown_event, timeout_guard.get_remaining_timeout()));
+    // The write callbacks outlive this frame on every early-return path, so they co-own the queue they enqueue into.
+    auto buffer_queue = SpscQueue<BufferPtr>::create_shared(CHUNKED_TRANSFER_BUFFERS_COUNT, shutdown_event,
+        timeout_guard.get_remaining_timeout());
+    CHECK_NOT_NULL(buffer_queue, HAILO_OUT_OF_HOST_MEMORY);
 
     // Initially enqueue both buffers - they're ready for use
-    CHECK_SUCCESS(buffer_queue.enqueue(buffer_a));
-    CHECK_SUCCESS(buffer_queue.enqueue(buffer_b));
+    CHECK_SUCCESS(buffer_queue->enqueue(buffer_a));
+    CHECK_SUCCESS(buffer_queue->enqueue(buffer_b));
 
     for (uint64_t chunk_index = 0; chunk_index < total_chunks; ++chunk_index) {
         uint64_t chunk_offset = chunk_index * chunk_size;
         uint64_t remaining_bytes = file_size_to_send - chunk_offset;
         const size_t current_chunk_size = std::min(chunk_size, remaining_bytes);
 
-        TRY(auto current_buffer, buffer_queue.dequeue(timeout_guard.get_remaining_timeout()));
+        TRY(auto current_buffer, buffer_queue->dequeue(timeout_guard.get_remaining_timeout()));
 
         file.read(reinterpret_cast<char*>(current_buffer->data()), current_chunk_size);
         CHECK(static_cast<size_t>(file.gcount()) == current_chunk_size, HAILO_FILE_OPERATION_FAILURE,
@@ -160,20 +165,27 @@ hailo_status SessionWrapper::send_file_chunked(const std::string &file_path, siz
 
         CHECK_SUCCESS(m_session->wait_for_write_async_ready(current_chunk_size, timeout_guard.get_remaining_timeout()));
         CHECK_SUCCESS(m_session->write_async(current_buffer->data(), current_chunk_size,
-            [&buffer_queue, current_buffer, shutdown_event, chunk_index, total_chunks, current_chunk_size, timeout_guard](hailo_status status) {
+            [buffer_queue, current_buffer, shutdown_event, chunk_index, total_chunks, current_chunk_size,
+                timeout_guard](hailo_status status) {
                 if (HAILO_SUCCESS != status) {
                     LOGGER__ERROR("Failed to write chunk file {}/{} to session (Trying to write {} bytes), status = {}",
                         (chunk_index + 1), total_chunks, current_chunk_size, status);
                     shutdown_event->signal();
                     return;
                 }
-                status = buffer_queue.enqueue(current_buffer, timeout_guard.get_remaining_timeout());
+                status = buffer_queue->enqueue(current_buffer, timeout_guard.get_remaining_timeout());
                 if (HAILO_SUCCESS != status) {
                     LOGGER__ERROR("Failed to enqueue buffer to queue, status = {}", status);
                     shutdown_event->signal();
                     return;
                 }
             }));
+    }
+
+    // A failed write only signals shutdown, so reclaiming every buffer is what surfaces it before the server ack.
+    for (size_t i = 0; i < CHUNKED_TRANSFER_BUFFERS_COUNT; i++) {
+        CHECK_EXPECTED(buffer_queue->dequeue(timeout_guard.get_remaining_timeout()),
+            "Failed waiting for chunk writes of file {} to complete", file_path);
     }
 
     uint8_t ack;
