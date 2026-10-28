@@ -117,6 +117,12 @@ public:
     hailo_status handle_device_fetch_logs(const MemoryView&, ClientConnectionPtr, ResponseWriter);
     hailo_status handle_system_reset(const MemoryView&, ClientConnectionPtr, ResponseWriter);
     hailo_status handle_device_get_current_limit(const MemoryView&, ClientConnectionPtr, ResponseWriter);
+    hailo_status handle_device_get_supported_clock_frequencies(const MemoryView&, ClientConnectionPtr, ResponseWriter);
+    hailo_status handle_device_set_nominal_clock_frequency(const MemoryView&, ClientConnectionPtr, ResponseWriter);
+    hailo_status handle_device_get_default_nominal_clock_frequency(const MemoryView&, ClientConnectionPtr,
+        ResponseWriter);
+    hailo_status handle_device_get_nominal_clock_frequency(const MemoryView&, ClientConnectionPtr, ResponseWriter);
+    hailo_status handle_device_get_current_clock_frequency(const MemoryView&, ClientConnectionPtr, ResponseWriter);
 
     friend class ConfiguredInferModelRunAsyncHandler;
     friend class ConfiguredInferModelRunAsyncForDurationHandler;

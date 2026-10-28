@@ -67,6 +67,7 @@ enum ProtoHEFExtensionType {
     CSM_CRC = 33;
     ENABLE_CONFIG_CHANNELS = 34;
     STRICT_RUNTIME_VERSIONING = 35; // Unused
+    HAILO_NET_FLOW_DAMOYOLO_NMS = 36;
     UNUSED = 0XFFFF;
 }
 
@@ -307,6 +308,33 @@ message ProtoHEFYolov8NmsOp {
     uint32 regression_length = 5;
 };
 
+message ProtoHEFDamoYoloBboxDecoder {
+    // Pixels stride for given bbox
+    uint32 stride = 1;
+
+    // Index of the pad connected to the encoded layer in the decoder (reg layer)
+    uint32 reg_pad_index = 2;
+
+    // Index of the pad connected to the classes scores layer in the decoder (cls layer)
+    uint32 cls_pad_index = 3;
+};
+
+// DAMO-YOLO shares YOLOv8's DFL-based decoding schema; the only runtime difference is the
+// grid-cell reference offset (DAMO-YOLO uses 0.0 instead of YOLOv8's 0.5).
+message ProtoHEFDamoYoloNmsOp {
+    // Input image dimensions
+    double image_height = 1;
+    double image_width = 2;
+
+    // Division factor of proposals sent to the NMS per class, instead of running NMS on all proposal together
+    uint32 input_division_factor = 3;
+
+    // List of bbox decoders (anchors) for the NMS layer. Each model has its own number of boxes per anchor
+    repeated ProtoHEFDamoYoloBboxDecoder bbox_decoders = 4;
+
+    uint32 regression_length = 5;
+};
+
 message ProtoHEFNmsOp {
     // NMS score threshold
     double nms_score_th = 1;
@@ -337,6 +365,7 @@ message ProtoHEFNmsOp {
         ProtoHEFIOUNmsOp iou_op = 10; // IoU only
         ProtoHEFYoloSegNmsOp yolo_seg_op = 11; // YOLOv5 seg post process
         ProtoHEFYolov8NmsOp yolov8_nms_op = 12; // YOLOv8 post process
+        ProtoHEFDamoYoloNmsOp damoyolo_nms_op = 14; // DAMO-YOLO post process
     }
 };
 

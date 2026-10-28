@@ -76,6 +76,10 @@ public:
     hailo_status read_buffer(MemoryView buffer, std::chrono::milliseconds timeout = TRANSFER_TIMEOUT);
     Expected<std::shared_ptr<FileDescriptor>> read_dmabuf_fd();
     hailo_status read_buffers(std::vector<TransferBuffer> &&buffers, std::chrono::milliseconds timeout = TRANSFER_TIMEOUT);
+    // Call only after wait_for_read_buffer_async_ready() succeeded for these buffers.
+    // A HAILO_TIMEOUT return means the transfer may still write the buffers.
+    hailo_status read_buffers_without_ready_wait(std::vector<TransferBuffer> &&buffers,
+        std::chrono::milliseconds timeout = TRANSFER_TIMEOUT);
 
     hailo_status wait_for_write_message_async_ready(size_t buffer_size, std::chrono::milliseconds timeout);
     hailo_status write_message_async(TransferRequest &&transfer_request);
@@ -93,8 +97,6 @@ private:
     std::shared_ptr<PoolAllocator> m_write_messages_allocator;
     std::shared_ptr<PoolAllocator> m_read_messages_allocator;
     EventPtr m_shutdown_event;
-    std::mutex m_read_mutex;
-    std::condition_variable m_read_cv;
     bool m_is_active;
 };
 

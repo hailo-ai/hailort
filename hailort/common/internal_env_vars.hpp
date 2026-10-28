@@ -52,9 +52,6 @@ namespace hailort
 /* Forces flush of the logger to file on every trace, instead of the default (warnings and above) */
 #define HAILORT_LOGGER_FLUSH_EVERY_PRINT_ENV_VAR ("HAILORT_LOGGER_FLUSH_EVERY_PRINT")
 
-/* Force QNX Driver logs to be flushed to specific file - or if left undefined - to stderr */
-#define HAILO_QNX_DRIVER_LOG_STDERR_ENV_VAR ("HAILO_QNX_DRIVER_LOG_STDERR")
-
 /* If set, HailoRTLogger would add a sink to syslog.
     Required for getting all relevant H10 logs in one place, including logs from other sub-systems */
 #define HAILORT_LOGGER_PRINT_TO_SYSLOG_ENV_VAR ("HAILO_PRINT_TO_SYSLOG")

@@ -4,7 +4,7 @@
  **/
 /**
  * @file file_descriptor.cpp
- * @brief Wrapper around system file descriptors for Unix
+ * @brief Wrapper around system file descriptors for Linux
  **/
 
 

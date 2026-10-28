@@ -454,3 +454,47 @@ message Device_GetCurrentLimit_Request {
 message Device_GetCurrentLimit_Reply {
     uint32 current_limit_mA = 1;
 }
+
+message Device_GetSupportedClockFrequencies_Request {
+    HailoObjectHandle device_handle = 1;
+    uint32 domain = 2;
+}
+
+message Device_GetSupportedClockFrequencies_Reply {
+    repeated uint32 clocks_mhz = 1;
+}
+
+message Device_SetNominalClockFrequency_Request {
+    HailoObjectHandle device_handle = 1;
+    uint32 domain = 2;
+    uint32 frequency_mhz = 3;
+}
+
+message Device_SetNominalClockFrequency_Reply {}
+
+message Device_GetDefaultNominalClockFrequency_Request {
+    HailoObjectHandle device_handle = 1;
+    uint32 domain = 2;
+}
+
+message Device_GetDefaultNominalClockFrequency_Reply {
+    uint32 frequency_mhz = 1;
+}
+
+message Device_GetNominalClockFrequency_Request {
+    HailoObjectHandle device_handle = 1;
+    uint32 domain = 2;
+}
+
+message Device_GetNominalClockFrequency_Reply {
+    uint32 frequency_mhz = 1;
+}
+
+message Device_GetCurrentClockFrequency_Request {
+    HailoObjectHandle device_handle = 1;
+    uint32 domain = 2;
+}
+
+message Device_GetCurrentClockFrequency_Reply {
+    uint32 frequency_mhz = 1;
+}

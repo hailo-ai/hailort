@@ -246,7 +246,7 @@ hailo_status VDeviceCreateInferModelHandler::parse_request(const MemoryView &req
     assert(hef_size <= SIZE_MAX);
     TRY(m_hef_buffer, Buffer::create_shared(static_cast<size_t>(hef_size), BufferStorageParams::create_dma()));
 
-    auto status = client_connection->read_buffer(m_hef_buffer->as_view(), LONG_RPC_ACTION_TIMEOUT);
+    auto status = client_connection->read_buffer(m_hef_buffer->as_view(), hef_transfer_timeout(hef_size));
     CHECK_SUCCESS(status);
 
     return HAILO_SUCCESS;
@@ -1180,6 +1180,140 @@ hailo_status HailoRTServer::handle_device_get_current_limit(const MemoryView &re
     return response_writer.write(HAILO_SUCCESS, std::move(reply));
 }
 
+static Expected<std::vector<uint32_t>> read_supported_clock_frequencies(std::shared_ptr<Device> device,
+    hailo_clock_domain_t domain)
+{
+    uint32_t frequencies_count = 0;
+    const auto sizing_status = device->get_supported_clock_frequencies(domain, &frequencies_count, nullptr);
+    CHECK(HAILO_SUCCESS != sizing_status, HAILO_INTERNAL_FAILURE,
+        "Sizing the supported clock frequencies of domain {} succeeded even though no buffer was passed",
+        static_cast<uint32_t>(domain));
+    // HAILO_NOT_SUPPORTED is the expected answer on a device with no clock sysfs files, so do not log it.
+    if (HAILO_NOT_SUPPORTED == sizing_status) {
+        return make_unexpected(HAILO_NOT_SUPPORTED);
+    }
+    CHECK(HAILO_INSUFFICIENT_BUFFER == sizing_status, sizing_status,
+        "Failed to size the supported clock frequencies of domain {}", static_cast<uint32_t>(domain));
+
+    std::vector<uint32_t> clocks_mhz(frequencies_count);
+    const auto read_status = device->get_supported_clock_frequencies(domain, &frequencies_count, clocks_mhz.data());
+    CHECK_SUCCESS_WITH_ACCEPTABLE_STATUS(HAILO_NOT_SUPPORTED, read_status,
+        "Failed to read the supported clock frequencies of domain {}", static_cast<uint32_t>(domain));
+
+    return clocks_mhz;
+}
+
+hailo_status HailoRTServer::handle_device_get_supported_clock_frequencies(const MemoryView &request,
+    ClientConnectionPtr, ResponseWriter response_writer)
+{
+    using Serializer = GetSupportedClockFrequenciesSerializer;
+
+    TRY(auto tuple, Serializer::deserialize_request(request));
+
+    auto device_handle = std::get<0>(tuple);
+    auto domain = std::get<1>(tuple);
+
+    auto &manager = ServerResourceManager<Device>::get_instance();
+    auto device_lambda = [domain] (std::shared_ptr<Device> device) {
+        return read_supported_clock_frequencies(device, domain);
+    };
+
+    TRY_WITH_ACCEPTABLE_STATUS(HAILO_NOT_SUPPORTED, auto clocks_mhz,
+        manager.execute<Expected<std::vector<uint32_t>>>(device_handle, device_lambda));
+
+    TRY(auto reply, Serializer::serialize_reply(clocks_mhz));
+    return response_writer.write(HAILO_SUCCESS, std::move(reply));
+}
+
+hailo_status HailoRTServer::handle_device_set_nominal_clock_frequency(const MemoryView &request, ClientConnectionPtr,
+    ResponseWriter response_writer)
+{
+    using Serializer = SetNominalClockFrequencySerializer;
+
+    TRY(auto tuple, Serializer::deserialize_request(request));
+
+    auto device_handle = std::get<0>(tuple);
+    auto domain = std::get<1>(tuple);
+    auto frequency_mhz = std::get<2>(tuple);
+
+    auto &manager = ServerResourceManager<Device>::get_instance();
+    auto device_lambda = [domain, frequency_mhz] (std::shared_ptr<Device> device) {
+        return device->set_nominal_clock_frequency(domain, frequency_mhz);
+    };
+
+    auto status = manager.execute<hailo_status>(device_handle, device_lambda);
+    CHECK_SUCCESS_WITH_ACCEPTABLE_STATUS(HAILO_NOT_SUPPORTED, status);
+
+    TRY(auto reply, Serializer::serialize_reply());
+    return response_writer.write(HAILO_SUCCESS, std::move(reply));
+}
+
+hailo_status HailoRTServer::handle_device_get_default_nominal_clock_frequency(const MemoryView &request,
+    ClientConnectionPtr, ResponseWriter response_writer)
+{
+    using Serializer = GetDefaultNominalClockFrequencySerializer;
+
+    TRY(auto tuple, Serializer::deserialize_request(request));
+
+    auto device_handle = std::get<0>(tuple);
+    auto domain = std::get<1>(tuple);
+
+    auto &manager = ServerResourceManager<Device>::get_instance();
+    auto device_lambda = [domain] (std::shared_ptr<Device> device) {
+        return device->get_default_nominal_clock_frequency(domain);
+    };
+
+    TRY_WITH_ACCEPTABLE_STATUS(HAILO_NOT_SUPPORTED, auto frequency_mhz,
+        manager.execute<Expected<uint32_t>>(device_handle, device_lambda));
+
+    TRY(auto reply, Serializer::serialize_reply(frequency_mhz));
+    return response_writer.write(HAILO_SUCCESS, std::move(reply));
+}
+
+hailo_status HailoRTServer::handle_device_get_nominal_clock_frequency(const MemoryView &request, ClientConnectionPtr,
+    ResponseWriter response_writer)
+{
+    using Serializer = GetNominalClockFrequencySerializer;
+
+    TRY(auto tuple, Serializer::deserialize_request(request));
+
+    auto device_handle = std::get<0>(tuple);
+    auto domain = std::get<1>(tuple);
+
+    auto &manager = ServerResourceManager<Device>::get_instance();
+    auto device_lambda = [domain] (std::shared_ptr<Device> device) {
+        return device->get_nominal_clock_frequency(domain);
+    };
+
+    TRY_WITH_ACCEPTABLE_STATUS(HAILO_NOT_SUPPORTED, auto frequency_mhz,
+        manager.execute<Expected<uint32_t>>(device_handle, device_lambda));
+
+    TRY(auto reply, Serializer::serialize_reply(frequency_mhz));
+    return response_writer.write(HAILO_SUCCESS, std::move(reply));
+}
+
+hailo_status HailoRTServer::handle_device_get_current_clock_frequency(const MemoryView &request, ClientConnectionPtr,
+    ResponseWriter response_writer)
+{
+    using Serializer = GetCurrentClockFrequencySerializer;
+
+    TRY(auto tuple, Serializer::deserialize_request(request));
+
+    auto device_handle = std::get<0>(tuple);
+    auto domain = std::get<1>(tuple);
+
+    auto &manager = ServerResourceManager<Device>::get_instance();
+    auto device_lambda = [domain] (std::shared_ptr<Device> device) {
+        return device->get_current_clock_frequency(domain);
+    };
+
+    TRY_WITH_ACCEPTABLE_STATUS(HAILO_NOT_SUPPORTED, auto frequency_mhz,
+        manager.execute<Expected<uint32_t>>(device_handle, device_lambda));
+
+    TRY(auto reply, Serializer::serialize_reply(frequency_mhz));
+    return response_writer.write(HAILO_SUCCESS, std::move(reply));
+}
+
 hailo_status DeviceEchoBufferHandler::parse_request(const MemoryView &request, ClientConnectionPtr client_connection)
 {
     TRY(auto buffer_size, EchoBufferSerializer::deserialize_request(request));
@@ -1246,5 +1380,11 @@ Expected<Dispatcher> HailoRTServer::create_dispatcher()
     REGISTER_ACTION_WITH_READS(dispatcher, DEVICE__ECHO_BUFFER, DeviceEchoBufferHandler);
     REGISTER_ACTION(dispatcher, SYSTEM__RESET, handle_system_reset);
     REGISTER_ACTION(dispatcher, DEVICE__GET_CURRENT_LIMIT, handle_device_get_current_limit);
+    REGISTER_ACTION(dispatcher, DEVICE__GET_SUPPORTED_CLOCK_FREQUENCIES, handle_device_get_supported_clock_frequencies);
+    REGISTER_ACTION(dispatcher, DEVICE__SET_NOMINAL_CLOCK_FREQUENCY, handle_device_set_nominal_clock_frequency);
+    REGISTER_ACTION(dispatcher, DEVICE__GET_DEFAULT_NOMINAL_CLOCK_FREQUENCY,
+        handle_device_get_default_nominal_clock_frequency);
+    REGISTER_ACTION(dispatcher, DEVICE__GET_NOMINAL_CLOCK_FREQUENCY, handle_device_get_nominal_clock_frequency);
+    REGISTER_ACTION(dispatcher, DEVICE__GET_CURRENT_CLOCK_FREQUENCY, handle_device_get_current_clock_frequency);
     return dispatcher;
 }

@@ -636,6 +636,89 @@ public:
      */
     virtual Expected<uint32_t> get_current_limit();
 
+    /**
+     * Gets the operating points supported by the device for the given domain, in ascending MHz.
+     *
+     * Call twice: first with @a *count set to 0 and @a clocks_mhz set to nullptr to learn the required size, then with
+     * a buffer of that size. ::HAILO_INSUFFICIENT_BUFFER from the first call is expected, not a failure.
+     *
+     * @param[in] domain            The clock domain to query.
+     * @param[in,out] count         In: the number of entries @a clocks_mhz can hold. Out: the number of entries
+     *                              written, or the number of entries required when the buffer is too small.
+     * @param[out] clocks_mhz       array to be filled by the function with the supported operating points.
+     *                              May be nullptr when @a *count is 0.
+     *
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     *         Returns ::HAILO_INSUFFICIENT_BUFFER if @a *count is too small; @a *count is set to the required size.
+     *         Returns ::HAILO_NOT_SUPPORTED if this device has no such clock domain.
+     *         Returns ::HAILO_INVALID_ARGUMENT if @a domain is not a valid identifier, or @a count is nullptr.
+     *         Returns ::HAILO_FILE_OPERATION_FAILURE if the device clock configuration could not be read or parsed.
+     */
+    virtual hailo_status get_supported_clock_frequencies(hailo_clock_domain_t domain, uint32_t *count,
+        uint32_t *clocks_mhz);
+
+    /**
+     * Sets the nominal clock frequency of a clock domain.
+     *
+     * @param[in] domain            The clock domain to configure.
+     * @param[in] frequency_mhz     Nominal frequency in MHz, or ::HAILO_CLOCK_FREQUENCY_DEFAULT for the default.
+     *
+     * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns a ::hailo_status error.
+     *         Returns ::HAILO_NOT_SUPPORTED if this device has no such clock domain, or if the feature is not
+     *         supported on this device.
+     *         Returns ::HAILO_INVALID_ARGUMENT if @a domain is not a valid identifier, or @a frequency_mhz is not a
+     *         supported operating point. Nothing is applied in that case.
+     *         Returns ::HAILO_FILE_OPERATION_FAILURE if the device clock configuration could not be read, parsed, or
+     *         written. The nominal frequency may or may not have changed; read it back with
+     *         get_nominal_clock_frequency().
+     */
+    virtual hailo_status set_nominal_clock_frequency(hailo_clock_domain_t domain, uint32_t frequency_mhz);
+
+    /**
+     * Gets the default nominal clock frequency of a clock domain, the one applied at device init.
+     *
+     * @param[in] domain            The clock domain to query.
+     *
+     * @return Upon success, returns Expected of the default nominal frequency, in MHz.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     *         Returns Unexpected of ::HAILO_NOT_SUPPORTED if this device has no such clock domain.
+     *         Returns Unexpected of ::HAILO_INVALID_ARGUMENT if @a domain is not a valid identifier.
+     *         Returns Unexpected of ::HAILO_FILE_OPERATION_FAILURE if the device clock configuration could not be
+     *         read or parsed.
+     */
+    virtual Expected<uint32_t> get_default_nominal_clock_frequency(hailo_clock_domain_t domain);
+
+    /**
+     * Gets the nominal clock frequency currently configured for a clock domain.
+     *
+     * @param[in] domain            The clock domain to query.
+     *
+     * @return Upon success, returns Expected of the nominal frequency currently configured, in MHz.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     *         Returns Unexpected of ::HAILO_NOT_SUPPORTED if this device has no such clock domain.
+     *         Returns Unexpected of ::HAILO_INVALID_ARGUMENT if @a domain is not a valid identifier.
+     *         Returns Unexpected of ::HAILO_FILE_OPERATION_FAILURE if the device clock configuration could not be
+     *         read or parsed.
+     *
+     * @note Never reports ::HAILO_CLOCK_FREQUENCY_DEFAULT. Compare against get_default_nominal_clock_frequency() to
+     *       tell whether the device is at its default.
+     */
+    virtual Expected<uint32_t> get_nominal_clock_frequency(hailo_clock_domain_t domain);
+
+    /**
+     * Gets the clock frequency a clock domain is running at right now.
+     *
+     * @param[in] domain            The clock domain to query.
+     *
+     * @return Upon success, returns Expected of the frequency the domain is running at right now, in MHz.
+     *         Otherwise, returns Unexpected of ::hailo_status error.
+     *         Returns Unexpected of ::HAILO_NOT_SUPPORTED if this device has no such clock domain.
+     *         Returns Unexpected of ::HAILO_INVALID_ARGUMENT if @a domain is not a valid identifier.
+     *         Returns Unexpected of ::HAILO_FILE_OPERATION_FAILURE if the device clock configuration could not be
+     *         read or parsed.
+     */
+    virtual Expected<uint32_t> get_current_clock_frequency(hailo_clock_domain_t domain);
+
     hailo_status set_overcurrent_state(bool should_activate);
     Expected<bool> get_overcurrent_state();
     Expected<hailo_health_info_t> get_health_information();

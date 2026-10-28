@@ -79,6 +79,7 @@ if (HAILO_BUILD_GENAI_SERVER)
 
     target_link_libraries(hailort_server PRIVATE
         genai_scheme_proto
+        genai_config
         tokenizers_cpp
         eigen
         nlohmann_json

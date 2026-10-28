@@ -15,6 +15,8 @@
 #include "hailo/hailo_session.hpp"
 #include "hailo/genai/common.hpp"
 #include "common/utils.hpp"
+#include "common/timeouts.hpp"
+
 #include <memory>
 #include <string>
 #include <vector>
@@ -26,8 +28,6 @@ namespace hailort
 {
 namespace genai
 {
-
-constexpr static const std::chrono::seconds LONG_TIMEOUT = std::chrono::minutes(2);
 
 class SessionWrapper final
 {

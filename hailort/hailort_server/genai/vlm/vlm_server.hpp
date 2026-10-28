@@ -50,19 +50,19 @@ public:
 protected:
     // Override to create VLMPreProcess instead of LLMPreProcess
     std::future<hailo_status> create_pre_process_future(const Hef &hef,
-        std::shared_ptr<Event> inference_models_created_event, std::future<Expected<Eigen::VectorXf>> &external_resources_future,
+        std::shared_ptr<Event> inference_models_created_event,
+        std::future<Expected<std::vector<Eigen::VectorXf>>> &external_resources_future,
         std::shared_ptr<Event> pre_process_created_event, std::shared_ptr<Event> shutdown_event) override;
 
     // Override to create VLM-specific token embedder with image_pad_token and embeddings_per_frame
-    std::future<hailo_status> create_token_embedder_future(const Hef &hef,
-        std::shared_ptr<Event> embeddings_arrived_event, std::shared_ptr<Event> pre_process_created_event, std::shared_ptr<Event> shutdown_event) override;
+    std::future<hailo_status> create_token_embedder_future(const Hef &hef, ResourceArrivalsPtr resource_arrivals,
+        std::shared_ptr<Event> pre_process_created_event, std::shared_ptr<Event> shutdown_event) override;
 
     std::future<hailo_status> create_frame_encoder_future(std::shared_ptr<VDevice> vdevice, const Hef &hef,
         std::shared_ptr<Event> frame_encoder_created_event, std::shared_ptr<Event> external_resources_created_event,
         StatusEventPtr ccws_ready_event, std::shared_ptr<Event> shutdown_event);
     Expected<std::future<hailo_status>> create_resources_async(std::shared_ptr<VDevice> vdevice, std::shared_ptr<Buffer> hef_buffer,
-        bool tokenizer_on_host, std::shared_ptr<Event> theta_arrived_event, std::shared_ptr<Event> hailo_config_json_arrived_event,
-        std::shared_ptr<Event> tokenizer_arrived_event, std::shared_ptr<Event> embeddings_arrived_event,
+        bool tokenizer_on_host, HefSource hef_source, ResourceArrivalsPtr resource_arrivals,
         StatusEventPtr ccws_ready_event, std::shared_ptr<Event> shutdown_event);
 
 private:
@@ -70,7 +70,8 @@ private:
 
     // Override prefill phase to handle frame embeddings
     Expected<std::pair<int, LLMGeneratorCompletion::Status>> handle_prefill_phase(const std::vector<int> &tokens,
-        const std::vector<EmbeddingViewWrapper> &embeddings) override;
+        const std::vector<EmbeddingViewWrapper> &embeddings,
+        const std::vector<EmbeddingViewWrapper> &per_layer_inputs) override;
 
     // This function is used to process the prefill inputs and outputs, without handling (exporting) the generated token
     Expected<int> get_next_token_prefill(std::map<std::string, MemoryView> &prefill_inputs,
@@ -83,6 +84,8 @@ private:
     hailo_status process_prefill_inputs_chunk(std::map<std::string, MemoryView> &prefill_inputs, std::map<std::string, MemoryView> &prefill_outputs,
         const std::vector<EmbeddingViewWrapper> &input_embeddings, EmbeddingsVectorState &standalone_frame_embeddings_state,
         EmbeddingsVectorState &video_embeddings_state);
+
+    void clear_current_vision_inputs();
 
     // Helper to compute embedding counts from buffer sizes
     std::vector<size_t> get_embeddings_count_per_item(const std::vector<BufferPtr> &embeddings_buffers) const;
@@ -110,6 +113,9 @@ private:
 
     hailo_status build_deepstack_outputs_info();
 
+    hailo_status resolve_embeddings_requantization(const InferModel::InferStream &embeddings_input);
+    EmbeddingsRequantization m_embeddings_requantization;
+
     std::unique_ptr<InferenceManager> m_inference_manager_frame_encoder;
 
     int m_image_pad_token_id;
@@ -123,6 +129,9 @@ private:
     std::vector<size_t> m_embeddings_count_per_video; // Per-video embedding counts (one entry per video)
     std::string m_encoder_embeddings_output_suffix; // From config JSON, used to resolve the full output name
     std::string m_encoder_embeddings_output_name;   // Full resolved output name
+    size_t m_encoder_embeddings_per_frame;
+    hailo_format_type_t m_encoder_embeddings_format_type;
+    hailo_quant_info_t m_encoder_embeddings_quant_info;
 
     // Encoder-output-suffix → decoder-input-suffix mapping, parsed from config JSON
     std::unordered_map<std::string, std::string> m_deepstack_encoder_to_decoder_suffix_map;

@@ -82,6 +82,8 @@ public:
     Expected<std::string> prompt_template();
     hailo_status set_stop_tokens(const std::vector<std::string> &stop_tokens);
     Expected<std::vector<std::string>> get_stop_tokens();
+    hailo_status set_chat_template_kwargs(const std::string &chat_template_kwargs);
+    Expected<std::string> get_chat_template_kwargs();
 
     uint32_t input_frame_size() const;
     const hailo_3d_image_shape_t& input_frame_shape() const;

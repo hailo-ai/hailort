@@ -60,6 +60,16 @@ inline std::map<std::string, MemoryView> buffers_to_memviews(const std::map<std:
     return memviews;
 }
 
+inline std::vector<std::string> get_chunk_names(const std::vector<Hef::HefChunksInfo> &chunks)
+{
+    std::vector<std::string> chunk_names;
+    chunk_names.reserve(chunks.size());
+    for (const auto &chunk : chunks) {
+        chunk_names.push_back(chunk.name);
+    }
+    return chunk_names;
+}
+
 inline Expected<std::string> get_model_name_from_suffix(const Hef &hef, const std::string &model_suffix)
 {
     std::string model_name = "";

@@ -4,7 +4,7 @@
  **/
 /**
  * @file socket.cpp
- * @brief Socket wrapper for Unix
+ * @brief Socket wrapper for Linux
  **/
 
 #include "common/socket.hpp"

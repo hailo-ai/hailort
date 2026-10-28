@@ -1,6 +1,5 @@
 cmake_minimum_required(VERSION 3.5.0)
 
-set(HAILO_GENAI_SRC_DIR ${CMAKE_CURRENT_LIST_DIR})
 set(HAILORT_GENAI_SERVER_COMPONENTS_SOURCES "")
 
 add_subdirectory(llm)
@@ -10,6 +9,7 @@ add_subdirectory(speech2text)
 list(APPEND HAILORT_GENAI_SERVER_COMPONENTS_SOURCES
     ${HAILORT_TOKENIZER_DIR}/hailo_tokenizer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/inference_manager.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/resource_arrivals.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/llm/llm_server.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/vlm/vlm_server.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/genai_server.cpp

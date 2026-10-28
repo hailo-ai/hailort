@@ -3,8 +3,8 @@
  * Distributed under the MIT license (https://opensource.org/licenses/MIT)
  **/
 /**
- * @file timer.cpp
- * @brief Timer wrapper for Unix
+ * @file microsec_timer.cpp
+ * @brief Timer wrapper for Linux
  **/
 
 #include "os/microsec_timer.hpp"

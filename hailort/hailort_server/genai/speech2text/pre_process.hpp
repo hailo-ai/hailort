@@ -23,10 +23,12 @@ namespace genai
 class Speech2TextPreProcess
 {
 public:
+    using FrameMajorMelMap = Eigen::Map<Eigen::Matrix<float32_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>;
+
     Speech2TextPreProcess() = delete;
 
     static Eigen::MatrixXf compute_log_mel(const MemoryView chunk, size_t chunk_size, int sample_rate, int hop_length, int n_mels);
-    static void pad_or_trim(const Eigen::MatrixXf &input, Eigen::Map<Eigen::MatrixXf> &output);
+    static void pad_or_trim(const Eigen::Ref<const Eigen::MatrixXf> &input, FrameMajorMelMap &output);
 };
 
 } /* namespace genai */

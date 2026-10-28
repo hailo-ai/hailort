@@ -89,6 +89,9 @@ extern "C" {
 #define HAILO_CURRENT_LIMIT_1500_MA (1500)
 #define HAILO_CURRENT_LIMIT_3000_MA (3000)
 
+/** Restore the default nominal frequency reported by ::hailo_get_default_nominal_clock_frequency. */
+#define HAILO_CLOCK_FREQUENCY_DEFAULT (0)
+
 typedef float float32_t;
 typedef double float64_t;
 typedef uint16_t nms_bbox_counter_t;
@@ -1346,6 +1349,20 @@ typedef enum {
     HAILO_POWER_MODE_MAX_ENUM          = HAILO_MAX_ENUM
 } hailo_power_mode_t;
 
+/**
+ * Clock domain identifier.
+ */
+typedef enum {
+    /** Neural network core. */
+    HAILO_CLOCK_DOMAIN_NNC          = 0,
+
+    /** Number of defined domains. Not a valid domain. */
+    HAILO_CLOCK_DOMAIN_COUNT,
+
+    /** Max enum value to maintain ABI Integrity */
+    HAILO_CLOCK_DOMAIN_MAX_ENUM     = HAILO_MAX_ENUM
+} hailo_clock_domain_t;
+
 /** Latency measurement flags */
 typedef enum {
     HAILO_LATENCY_NONE              = 0,
@@ -1935,6 +1952,89 @@ HAILORTAPI hailo_status hailo_set_throttling_state(hailo_device device, bool sho
  * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns an ::hailo_status error.
  */
 HAILORTAPI hailo_status hailo_get_throttling_state(hailo_device device, bool *is_active);
+
+/**
+ * Get the operating points supported by the device for the given domain, in ascending MHz.
+ *
+ * Call twice: first with @a *count set to 0 and @a clocks_mhz set to NULL to learn the required size, then with a
+ * buffer of that size. ::HAILO_INSUFFICIENT_BUFFER from the first call is expected, not a failure.
+ *
+ * @param[in] device            A ::hailo_device object.
+ * @param[in] domain            The clock domain to query.
+ * @param[in,out] count         In: the number of entries @a clocks_mhz can hold. Out: the number of entries written,
+ *                              or the number of entries required when the buffer is too small.
+ * @param[out] clocks_mhz       array to be filled by the function with the supported operating points.
+ *                              May be NULL when @a *count is 0.
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns an ::hailo_status error.
+ *         Returns ::HAILO_INSUFFICIENT_BUFFER if @a *count is too small; @a *count is set to the required size.
+ *         Returns ::HAILO_NOT_SUPPORTED if this device has no such clock domain.
+ *         Returns ::HAILO_INVALID_ARGUMENT if @a domain is not a valid identifier, or @a count is NULL.
+ *         Returns ::HAILO_FILE_OPERATION_FAILURE if the device clock configuration could not be read or parsed.
+ */
+HAILORTAPI hailo_status hailo_get_supported_clock_frequencies(hailo_device device, hailo_clock_domain_t domain,
+    uint32_t *count, uint32_t *clocks_mhz);
+
+/**
+ * Set the nominal clock frequency of a clock domain.
+ *
+ * @param[in] device            A ::hailo_device object.
+ * @param[in] domain            The clock domain to configure.
+ * @param[in] frequency_mhz     Nominal frequency in MHz, or ::HAILO_CLOCK_FREQUENCY_DEFAULT for the default.
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns an ::hailo_status error.
+ *         Returns ::HAILO_NOT_SUPPORTED if this device has no such clock domain, or if the feature is not supported
+ *         on this device.
+ *         Returns ::HAILO_INVALID_ARGUMENT if @a domain is not a valid identifier, or @a frequency_mhz is not a
+ *         supported operating point. Nothing is applied in that case.
+ *         Returns ::HAILO_FILE_OPERATION_FAILURE if the device clock configuration could not be read, parsed, or
+ *         written. The nominal frequency may or may not have changed; read it back with
+ *         ::hailo_get_nominal_clock_frequency.
+ */
+HAILORTAPI hailo_status hailo_set_nominal_clock_frequency(hailo_device device, hailo_clock_domain_t domain,
+    uint32_t frequency_mhz);
+
+/**
+ * Get the default nominal clock frequency of a clock domain, the one applied at device init.
+ *
+ * @param[in] device            A ::hailo_device object.
+ * @param[in] domain            The clock domain to query.
+ * @param[out] frequency_mhz    The default nominal frequency, in MHz.
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns an ::hailo_status error.
+ *         Returns ::HAILO_NOT_SUPPORTED if this device has no such clock domain.
+ *         Returns ::HAILO_INVALID_ARGUMENT if @a domain is not a valid identifier.
+ *         Returns ::HAILO_FILE_OPERATION_FAILURE if the device clock configuration could not be read or parsed.
+ */
+HAILORTAPI hailo_status hailo_get_default_nominal_clock_frequency(hailo_device device, hailo_clock_domain_t domain,
+    uint32_t *frequency_mhz);
+
+/**
+ * Get the nominal clock frequency currently configured for a clock domain.
+ *
+ * @param[in] device            A ::hailo_device object.
+ * @param[in] domain            The clock domain to query.
+ * @param[out] frequency_mhz    The nominal frequency currently configured, in MHz.
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns an ::hailo_status error.
+ *         Returns ::HAILO_NOT_SUPPORTED if this device has no such clock domain.
+ *         Returns ::HAILO_INVALID_ARGUMENT if @a domain is not a valid identifier.
+ *         Returns ::HAILO_FILE_OPERATION_FAILURE if the device clock configuration could not be read or parsed.
+ * @note Never reports ::HAILO_CLOCK_FREQUENCY_DEFAULT. Compare against
+ *       ::hailo_get_default_nominal_clock_frequency to tell whether the device is at its default.
+ */
+HAILORTAPI hailo_status hailo_get_nominal_clock_frequency(hailo_device device, hailo_clock_domain_t domain,
+    uint32_t *frequency_mhz);
+
+/**
+ * Get the clock frequency a clock domain is running at right now.
+ *
+ * @param[in] device            A ::hailo_device object.
+ * @param[in] domain            The clock domain to query.
+ * @param[out] frequency_mhz    The frequency the domain is running at right now, in MHz.
+ * @return Upon success, returns ::HAILO_SUCCESS. Otherwise, returns an ::hailo_status error.
+ *         Returns ::HAILO_NOT_SUPPORTED if this device has no such clock domain.
+ *         Returns ::HAILO_INVALID_ARGUMENT if @a domain is not a valid identifier.
+ *         Returns ::HAILO_FILE_OPERATION_FAILURE if the device clock configuration could not be read or parsed.
+ */
+HAILORTAPI hailo_status hailo_get_current_clock_frequency(hailo_device device, hailo_clock_domain_t domain,
+    uint32_t *frequency_mhz);
 
 /**
  * Enable firmware watchdog.

@@ -5,7 +5,6 @@ import struct
 
 import sys
 
-from collections import deque
 from dataclasses import dataclass
 from argparse import ArgumentTypeError
 from datetime import timedelta
@@ -27,7 +26,7 @@ from hailo_platform.pyhailort._pyhailort import (HailoRTException, TemperatureIn
                                                  AveragingFactor, SamplingPeriod, MeasurementBufferIndex,
                                                  FormatType, WatchdogMode,
                                                  BootSource, Endianness,
-                                                 SensorConfigTypes)
+                                                 SensorConfigTypes, ClockDomain)
 
 BBOX_PARAMS = _pyhailort.HailoRTDefaults.BBOX_PARAMS()
 BBOX_WITH_MASK_PARAMS = 6  # 4 coordinates + score + class_idx
@@ -39,6 +38,7 @@ HAILO_CURRENT_LIMIT_NA = _pyhailort.HailoRTDefaults.HAILO_CURRENT_LIMIT_NA()
 HAILO_CURRENT_LIMIT_900_MA = _pyhailort.HailoRTDefaults.HAILO_CURRENT_LIMIT_900_MA()
 HAILO_CURRENT_LIMIT_1500_MA = _pyhailort.HailoRTDefaults.HAILO_CURRENT_LIMIT_1500_MA()
 HAILO_CURRENT_LIMIT_3000_MA = _pyhailort.HailoRTDefaults.HAILO_CURRENT_LIMIT_3000_MA()
+HAILO_CLOCK_FREQUENCY_DEFAULT = _pyhailort.HailoRTDefaults.HAILO_CLOCK_FREQUENCY_DEFAULT()
 DEFAULT_VSTREAM_TIMEOUT_MS = 10000
 DEFAULT_VSTREAM_QUEUE_SIZE = 2
 BOARD_INFO_NOT_CONFIGURED_ATTR = "<N/A>"
@@ -1414,7 +1414,7 @@ class HailoFormatFlags(_pyhailort.FormatFlags):
 
 SUPPORTED_PROTOCOL_VERSION = 2
 SUPPORTED_FW_MAJOR = 5
-SUPPORTED_FW_MINOR = 4
+SUPPORTED_FW_MINOR = 5
 SUPPORTED_FW_REVISION = 0
 
 MEGA_MULTIPLIER = 1000.0 * 1000.0
@@ -2166,6 +2166,96 @@ class Control:
         with ExceptionWrapper():
             return self._device.get_current_limit()
 
+    def get_supported_clock_frequencies(self, domain: ClockDomain) -> List[int]:
+        """Returns the operating points supported by the device for the given domain, in ascending MHz.
+
+        Args:
+            domain (ClockDomain): The clock domain to query.
+
+        Returns:
+            List[int]: The supported operating points in MHz, ascending.
+
+        Raises:
+            HailoRTInvalidArgumentException: If domain is not a valid identifier.
+            HailoRTException: If this device has no such clock domain, or the device clock
+                configuration could not be read or parsed.
+        """
+        with ExceptionWrapper():
+            return self._device.get_supported_clock_frequencies(domain)
+
+    def set_nominal_clock_frequency(self, domain: ClockDomain, frequency_mhz: int) -> None:
+        """Sets the nominal clock frequency of a clock domain.
+
+        Args:
+            domain (ClockDomain): The clock domain to configure.
+            frequency_mhz (int): Nominal frequency in MHz, or HAILO_CLOCK_FREQUENCY_DEFAULT for the
+                default.
+
+        Raises:
+            HailoRTInvalidArgumentException: If domain is not a valid identifier, or frequency_mhz
+                is not a supported operating point.
+            HailoRTException: If this device has no such clock domain, or the device clock
+                configuration could not be read, parsed, or written. The frequency may or may not have changed,
+                so read it back with :func:`get_nominal_clock_frequency`.
+        """
+        with ExceptionWrapper():
+            self._device.set_nominal_clock_frequency(domain, frequency_mhz)
+
+    def get_default_nominal_clock_frequency(self, domain: ClockDomain) -> int:
+        """Returns the default nominal clock frequency of a clock domain, the one applied at device init.
+
+        Args:
+            domain (ClockDomain): The clock domain to query.
+
+        Returns:
+            int: The default nominal frequency in MHz.
+
+        Raises:
+            HailoRTInvalidArgumentException: If domain is not a valid identifier.
+            HailoRTException: If this device has no such clock domain, or the device clock
+                configuration could not be read or parsed.
+        """
+        with ExceptionWrapper():
+            return self._device.get_default_nominal_clock_frequency(domain)
+
+    def get_nominal_clock_frequency(self, domain: ClockDomain) -> int:
+        """Returns the nominal clock frequency currently configured for a clock domain.
+
+        Args:
+            domain (ClockDomain): The clock domain to query.
+
+        Returns:
+            int: The nominal frequency currently configured, in MHz.
+
+        Raises:
+            HailoRTInvalidArgumentException: If domain is not a valid identifier.
+            HailoRTException: If this device has no such clock domain, or the device clock
+                configuration could not be read or parsed.
+
+        Note:
+            Never returns HAILO_CLOCK_FREQUENCY_DEFAULT. Compare against
+            :func:`get_default_nominal_clock_frequency` to tell whether the device is at its default.
+        """
+        with ExceptionWrapper():
+            return self._device.get_nominal_clock_frequency(domain)
+
+    def get_current_clock_frequency(self, domain: ClockDomain) -> int:
+        """Returns the clock frequency a clock domain is running at right now.
+
+        Args:
+            domain (ClockDomain): The clock domain to query.
+
+        Returns:
+            int: The frequency the domain is running at right now, in MHz.
+
+        Raises:
+            HailoRTInvalidArgumentException: If domain is not a valid identifier.
+            HailoRTException: If this device has no such clock domain, or the device clock
+                configuration could not be read or parsed.
+        """
+        with ExceptionWrapper():
+            return self._device.get_current_clock_frequency(domain)
+
     def get_extended_device_information(self):
         """Returns extended information about the device
 
@@ -2915,7 +3005,6 @@ class ConfiguredInferModel:
         self._input_names = infer_model.input_names
         self._output_names = infer_model.output_names
         self._infer_model = infer_model
-        self._buffer_guards = deque()
 
     def __enter__(self):
         return self
@@ -3033,6 +3122,10 @@ class ConfiguredInferModel:
             To ensure the inference pipeline can handle new buffers, it is recommended to first call
                  :func:`ConfiguredInferModel.wait_for_async_ready`.
 
+        Note:
+            In-flight jobs do not keep the :class:`ConfiguredInferModel` alive. Keep a reference to it, or stay
+            inside its `with` block, until all jobs complete. Otherwise, the pending jobs are aborted.
+
         Returns:
             AsyncInferJob: The async inference job object.
 
@@ -3046,7 +3139,6 @@ class ConfiguredInferModel:
                 buffers.append(b.input(name).get_buffer())
             for name in self._output_names:
                 buffers.append(b.output(name).get_buffer(None))
-        self._buffer_guards.append(buffers)
 
         def callback_wrapper(error_code):
             cpp_cb_exception = ExceptionWrapper.create_exception_from_status(error_code) if error_code else None
@@ -3054,8 +3146,7 @@ class ConfiguredInferModel:
                 completion_info = AsyncInferCompletionInfo(cpp_cb_exception)
                 callback(completion_info=completion_info)
 
-            # remove the buffers - they are no longer needed
-            self._buffer_guards.popleft()
+            buffers.clear()
 
         with ExceptionWrapper():
             cpp_job = self._configured_infer_model.run_async(
@@ -3137,6 +3228,14 @@ class ConfiguredInferModel:
     def shutdown(self):
         """
         Shuts the inference down. After calling this method, the model is no longer usable.
+
+        Note:
+            This method blocks until the in-flight jobs finish on the device, bounded by a timeout. Their callbacks
+            can still run after this method returns.
+
+        Raises:
+            :class:`HailoRTException` in case of an error, including when in-flight async jobs do not complete
+            within the timeout.
         """
         with ExceptionWrapper():
             return self._configured_infer_model.shutdown()
@@ -4022,7 +4121,7 @@ class LLMGeneratorCompletion:
         with ExceptionWrapper():
             return self._generator_completion.generation_status()
 
-    def read(self, timeout_ms=10000):
+    def read(self, timeout_ms=120000):
         with ExceptionWrapper():
             return self._generator_completion.read(timeout_ms)
 
@@ -4068,6 +4167,34 @@ class LLMGeneratorCompletion:
         return self.read()
 
 
+def _has_only_str_keys(value):
+    pending = [value]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, dict):
+            if not all(isinstance(key, str) for key in current):
+                return False
+            pending.extend(current.values())
+        elif isinstance(current, (list, tuple)):
+            pending.extend(current)
+    return True
+
+
+def _chat_template_kwargs_to_json(chat_template_kwargs):
+    if chat_template_kwargs is None:
+        return "{}"
+    if not isinstance(chat_template_kwargs, dict):
+        raise HailoRTInvalidArgumentException("chat_template_kwargs must be a dict or None")
+    try:
+        kwargs_json = json.dumps(chat_template_kwargs, allow_nan=False)
+    except (TypeError, ValueError) as e:
+        raise HailoRTInvalidArgumentException(f"chat_template_kwargs must be JSON serializable: {e}") from e
+    # Checked after json.dumps, which rejects circular references
+    if not _has_only_str_keys(chat_template_kwargs):
+        raise HailoRTInvalidArgumentException("chat_template_kwargs keys must be str")
+    return kwargs_json
+
+
 class LLM:
     """
     Large Language Model inference interface for Hailo devices.
@@ -4082,6 +4209,7 @@ class LLM:
         - Context management for multi-turn conversations
         - Flexible generation parameters (temperature, top_p, etc.)
         - LoRA (Low-Rank Adaptation) support for fine-tuned models
+        - Chat template arguments (``chat_template_kwargs``) for structured prompts
         - Built-in tokenization utilities
 
     Example::
@@ -4481,6 +4609,39 @@ class LLM:
         with ExceptionWrapper():
             return self._llm.get_stop_tokens()
 
+    def set_chat_template_kwargs(self, chat_template_kwargs):
+        """
+        Set extra chat template variables for structured prompts.
+
+        Args:
+            chat_template_kwargs (dict or None): Variables with JSON values. None or {} clears them.
+
+        Raises:
+            HailoRTInvalidArgumentException: Not a JSON-serializable dict with str keys, or the template fails to render its system prompt.
+            HailoRTInvalidOperationException: New value on a used context.
+            HailoRTException: A non-empty value on a model without a chat template.
+
+        Example::
+
+            # Pin the date that Llama 3.x templates print
+            llm.set_chat_template_kwargs({"date_string": "26 Jul 2024"})
+
+        Note:
+            A new value is accepted only on a fresh context (after creation or ``clear_context()``, before the first structured prompt or loading a non-empty context with ``load_context()``).
+            The value stays in effect across ``clear_context()``, is not saved by ``save_context()``,
+            and does not affect raw (str) prompts.
+            Overriding variables the renderer sets (e.g. messages, tools, bos_token) or built-in filters and functions is undefined behavior.
+        """
+        kwargs_json = _chat_template_kwargs_to_json(chat_template_kwargs)
+        with ExceptionWrapper():
+            self._llm.set_chat_template_kwargs(kwargs_json)
+
+    def get_chat_template_kwargs(self):
+        """Return the current chat template variables as a dict (empty if none are set)."""
+        with ExceptionWrapper():
+            kwargs_json = self._llm.get_chat_template_kwargs()
+        return json.loads(kwargs_json)
+
     def save_context(self):
         """
         Save the current context of the LLM as a binary blob.
@@ -4537,6 +4698,8 @@ class LLM:
             - The context must be from the same LLM model
             - Loading a context will replace the current context completely
             - This operation will fail if the context is from a different model
+            - After loading a non-empty context, the context is not fresh: tools, system role messages and
+              ``set_chat_template_kwargs()`` changes are rejected until ``clear_context()``
         """
         with ExceptionWrapper():
             self._llm.load_context(list(context_data))
@@ -4555,6 +4718,7 @@ class VLM:
         - Structured prompts (chat format) and raw text prompts
         - Context management for multi-turn conversations
         - Flexible generation parameters (temperature, top_p, etc.)
+        - Chat template arguments (``chat_template_kwargs``) for structured prompts
         - Built-in tokenization utilities
 
     Example::
@@ -4918,6 +5082,39 @@ class VLM:
         with ExceptionWrapper():
             return self._vlm.get_stop_tokens()
 
+    def set_chat_template_kwargs(self, chat_template_kwargs):
+        """
+        Set extra chat template variables for structured prompts.
+
+        Args:
+            chat_template_kwargs (dict or None): Variables with JSON values. None or {} clears them.
+
+        Raises:
+            HailoRTInvalidArgumentException: Not a JSON-serializable dict with str keys, or the template fails to render its system prompt.
+            HailoRTInvalidOperationException: New value on a used context.
+            HailoRTException: A non-empty value on a model without a chat template.
+
+        Example::
+
+            # Label each image in Qwen-VL templates
+            vlm.set_chat_template_kwargs({"add_vision_id": True})
+
+        Note:
+            A new value is accepted only on a fresh context (after creation or ``clear_context()``, before the first structured prompt or loading a non-empty context with ``load_context()``).
+            The value stays in effect across ``clear_context()``, is not saved by ``save_context()``,
+            and does not affect raw (str) prompts.
+            Overriding variables the renderer sets (e.g. messages, tools, bos_token) or built-in filters and functions is undefined behavior.
+        """
+        kwargs_json = _chat_template_kwargs_to_json(chat_template_kwargs)
+        with ExceptionWrapper():
+            self._vlm.set_chat_template_kwargs(kwargs_json)
+
+    def get_chat_template_kwargs(self):
+        """Return the current chat template variables as a dict (empty if none are set)."""
+        with ExceptionWrapper():
+            kwargs_json = self._vlm.get_chat_template_kwargs()
+        return json.loads(kwargs_json)
+
     def save_context(self):
         """
         Save the current context of the VLM as a binary blob.
@@ -4974,6 +5171,8 @@ class VLM:
             - The context must be from the same VLM model
             - Loading a context will replace the current context completely
             - This operation will fail if the context is from a different model
+            - After loading a non-empty context, the context is not fresh: system role messages and
+              ``set_chat_template_kwargs()`` changes are rejected until ``clear_context()``
         """
         with ExceptionWrapper():
             self._vlm.load_context(list(context_data))

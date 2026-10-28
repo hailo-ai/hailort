@@ -136,6 +136,18 @@ std::vector<std::string> VLMWrapper::get_stop_tokens()
     return expected.release();
 }
 
+void VLMWrapper::set_chat_template_kwargs(const std::string &chat_template_kwargs)
+{
+    VALIDATE_STATUS(m_vlm->set_chat_template_kwargs(chat_template_kwargs));
+}
+
+std::string VLMWrapper::get_chat_template_kwargs()
+{
+    auto expected = m_vlm->get_chat_template_kwargs();
+    VALIDATE_EXPECTED(expected);
+    return expected.release();
+}
+
 std::vector<uint8_t> VLMWrapper::save_context()
 {
     auto expected = m_vlm->save_context();
@@ -194,6 +206,8 @@ void VLMWrapper::bind(py::module &m)
         .def("prompt_template", &VLMWrapper::prompt_template)
         .def("set_stop_tokens", &VLMWrapper::set_stop_tokens)
         .def("get_stop_tokens", &VLMWrapper::get_stop_tokens)
+        .def("set_chat_template_kwargs", &VLMWrapper::set_chat_template_kwargs)
+        .def("get_chat_template_kwargs", &VLMWrapper::get_chat_template_kwargs)
         .def("save_context", &VLMWrapper::save_context)
         .def("load_context", &VLMWrapper::load_context)
         .def("input_frame_size", &VLMWrapper::input_frame_size)

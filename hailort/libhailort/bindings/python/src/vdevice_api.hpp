@@ -29,6 +29,7 @@
 #include <pybind11/functional.h>
 
 #include <string>
+#include <utility>
 
 
 namespace hailort
@@ -129,8 +130,12 @@ public:
 
     void release()
     {
-        m_net_groups.clear();
-        m_vdevice.reset();
+        auto net_groups = std::exchange(m_net_groups, {});
+        auto vdevice = std::exchange(m_vdevice, nullptr);
+        py::gil_scoped_release nogil;
+        // Destroy explicitly: the locals' destructors would run after nogil re-takes the GIL
+        net_groups.clear();
+        vdevice.reset();
     }
 
     InferModelWrapper create_infer_model_from_file(const std::string &hef_path, const std::string &network_name);

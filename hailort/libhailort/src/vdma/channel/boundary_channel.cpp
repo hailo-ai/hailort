@@ -31,7 +31,7 @@ BoundaryChannel::BoundaryChannel(HailoRTDriver &driver, vdma::ChannelId channel_
     m_pending(queue_size + 1), // CircularArrays with storage-size x+1 can store x elements.
     m_ongoing(ONGOING_TRANSFERS_SIZE),
     m_latency_meter(latency_meter),
-    m_is_cyclic(false)
+    m_is_programmed(false)
 {}
 
 Expected<BoundaryChannelPtr> BoundaryChannel::create(HailoRTDriver &driver, vdma::ChannelId channel_id,
@@ -165,7 +165,7 @@ hailo_status BoundaryChannel::prepare_transfer(TransferRequest &&request)
 // Assumes channel is activated, locked, and that `chunk.num_descs < m_num_free_descs`.
 hailo_status BoundaryChannel::launch_transfer_internal(TransferChunk &chunk)
 {
-    auto status = m_driver.launch_transfer(m_channel_id, m_desc_list.handle(), chunk.buffers, m_is_cyclic);
+    auto status = m_driver.launch_transfer(m_channel_id, m_desc_list.handle(), chunk.buffers, m_is_programmed);
     CHECK_SUCCESS_WITH_ACCEPTABLE_STATUS(HAILO_STREAM_ABORT, status);
 
     if ((m_latency_meter) && (Direction::H2D == m_direction) && (chunk.is_first)) {
@@ -181,7 +181,7 @@ hailo_status BoundaryChannel::bind_cyclic_buffer(MappedBufferPtr buffer)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
 
-    CHECK(!m_is_cyclic, HAILO_INTERNAL_FAILURE, "Cyclic buffer is already bound to channel {}", m_channel_id);
+    CHECK(!m_is_programmed, HAILO_INTERNAL_FAILURE, "Cyclic buffer is already bound to channel {}", m_channel_id);
 
     const size_t expected_size = m_desc_list.desc_page_size() * m_desc_list.count();
     CHECK(buffer->size() == expected_size, HAILO_INVALID_ARGUMENT, "Cyclic buffer too large for desc list");
@@ -190,7 +190,7 @@ hailo_status BoundaryChannel::bind_cyclic_buffer(MappedBufferPtr buffer)
     auto status = m_desc_list.program(buffer, buffer->size(), DEFAULT_BUFFER_OFFSET, m_channel_id);
     CHECK_SUCCESS(status);
 
-    m_is_cyclic = true;
+    m_is_programmed = true;
 
     return HAILO_SUCCESS;
 }

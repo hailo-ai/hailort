@@ -15,6 +15,7 @@
 #include "hailo/transform.hpp"
 
 #include <unordered_map>
+#include <vector>
 
 #include "../llm/pre_process.hpp"
 
@@ -24,10 +25,29 @@ namespace hailort
 namespace genai
 {
 
-// TODO: HRT-16260 - Get this info from Hef
-static const uint32_t VISION_PATH_SIZE = 14;
 static const uint32_t MERGE_SIZE_H = 2;
 static const uint32_t MERGE_SIZE_W = 2;
+
+// The patch size whose merged patches tile the encoder frame into exactly encoder_embeddings_per_frame embeddings
+Expected<uint32_t> resolve_vision_patch_size(const hailo_3d_image_shape_t &encoder_input_shape,
+    size_t encoder_embeddings_per_frame);
+
+// Maps uint16 codes of the vision encoder output onto the quantization of the LLM's embeddings input
+class EmbeddingsRequantization final {
+public:
+    EmbeddingsRequantization() = default;
+    static Expected<EmbeddingsRequantization> create(const hailo_quant_info_t &encoder_quant,
+        const hailo_quant_info_t &decoder_quant);
+
+    bool is_needed() const;
+    void apply(MemoryView codes) const;
+
+private:
+    explicit EmbeddingsRequantization(BufferPtr decoder_code_by_encoder_code);
+
+    // Null means identity: apply() leaves the codes as they are
+    BufferPtr m_decoder_code_by_encoder_code;
+};
 
 class EmbeddingsVectorState {
 public:
@@ -70,26 +90,54 @@ private:
 };
 
 
+// The embedding row of a prompt's reasoning start. Images and videos span several rows each, so the row is counted
+// from the prompt's end, and no image or video may follow the reasoning start.
+Expected<size_t> find_start_of_reasoning_row(const std::vector<int> &tokens,
+    const std::vector<EmbeddingViewWrapper> &embeddings, size_t start_of_reasoning_token_index);
+
+struct DeepstackOutputLayout
+{
+    size_t frame_size = 0;
+    size_t tokens_per_frame = 0;
+};
+
+struct VisionEncoderLayout
+{
+    size_t embeddings_frame_size = 0;
+    size_t embeddings_per_frame = 0;
+    // Keyed by the decoder input suffix each output feeds
+    std::unordered_map<std::string, DeepstackOutputLayout> deepstack;
+};
+
 class VLMPreProcess : public LLMPreProcess
 {
 public:
     static Expected<std::unique_ptr<LLMPreProcess>> create(const std::map<std::string, size_t> &prefill_inputs_frame_size,
-        const std::map<std::string, size_t> &tbt_inputs_frame_size, Eigen::VectorXf &&theta,
-        uint32_t text_embeddings_layer_features, const hailo_3d_image_shape_t &input_encoder_shape, uint8_t scaled_mask_value,
-        const InputLayersNamesSuffixes &input_layers_names_suffixes, const PreProcessParams &pre_process_params, bool has_deepstack_layers,
-        const std::unordered_map<std::string, size_t> &deepstack_suffix_to_tokens_per_frame = {});
+        const std::map<std::string, size_t> &tbt_inputs_frame_size, const std::vector<Eigen::VectorXf> &group_thetas,
+        uint32_t text_embeddings_layer_features, hailo_format_type_t text_embeddings_layer_type,
+        const EmbeddingTables &embedding_tables, const hailo_3d_image_shape_t &input_encoder_shape,
+        const std::vector<AttentionGroupMaskValues> &group_mask_values,
+        const InputLayersNamesSuffixes &input_layers_names_suffixes, const PreProcessParams &pre_process_params,
+        const std::vector<AttentionGroupParams> &attention_groups, bool has_deepstack_layers,
+        const VisionEncoderLayout &vision_encoder_layout);
 
     void reset_local_cache() override;
 
-    hailo_status prepare_inputs_prefill(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer,
+    hailo_status prepare_inputs_prefill_multimodal(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer,
         std::vector<EmbeddingViewWrapper> input_embeddings, EmbeddingsVectorState &standalone_frame_embeddings_state,
         EmbeddingsVectorState &video_embeddings_state);
 
-    VLMPreProcess(Eigen::VectorXf &&theta, Eigen::Matrix<uint16_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> &&local_cached_embeddings,
+    // The text-only prefill skips every vision token. Deleting it rejects that call on a VLMPreProcess-typed
+    // expression only: the base is not virtual, so a call through a LLMPreProcess pointer to a VLM object still
+    // resolves to the base and runs the text-only path.
+    hailo_status prepare_inputs_prefill(std::map<layer_name_t, MemoryView> &,
+        const std::vector<EmbeddingViewWrapper> &, const std::vector<EmbeddingViewWrapper> &) = delete;
+
+    VLMPreProcess(Eigen::Matrix<uint16_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> &&local_cached_embeddings,
         const std::map<std::string, size_t> &prefill_inputs_frame_size, const std::map<std::string, size_t> &tbt_inputs_frame_size,
-        const hailo_3d_image_shape_t &input_encoder_shape, uint8_t scaled_mask_value, const InputLayersNamesSuffixes &input_layers_names_suffixes,
-        const PreProcessParams &pre_process_params, bool has_deepstack_layers,
-        const std::unordered_map<std::string, size_t> &deepstack_suffix_to_tokens_per_frame);
+        const hailo_3d_image_shape_t &input_encoder_shape, const EmbeddingTables &embedding_tables,
+        const InputLayersNamesSuffixes &input_layers_names_suffixes, const PreProcessParams &pre_process_params,
+        std::vector<AttentionGroupContext> &&groups, bool has_deepstack_layers, uint32_t vision_patch_size);
 
     bool has_deepstack_layers() const { return m_has_deepstack_layers; }
 
@@ -103,8 +151,8 @@ private:
     Eigen::Matrix<uint16_t, 1, Eigen::Dynamic, Eigen::RowMajor> get_embedding(int token, const std::vector<MemoryView> &input_frames_embeddings,
         uint32_t &current_frame_index, uint32_t &current_emb_index_in_frame) const;
 
-    hailo_status prepare_positional_embed_inputs(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer, 
-        int layer_input_tokens_size, const std::vector<std::pair<uint32_t, uint32_t>> &frames_tokens_indices, int input_tokens_count);
+    hailo_status prepare_positional_embed_inputs_mrope(std::map<layer_name_t, MemoryView> &layer_name_to_input_buffer,
+        InferencePhase phase, const std::vector<std::pair<uint32_t, uint32_t>> &frames_tokens_indices, int input_tokens_count);
 
     void fill_temporal_positional_embed(int pos_ids_start_index, int relative_st_image_index,
         int position_ids_features, int merged_patch_size_h, int merged_patch_size_w);
@@ -124,10 +172,10 @@ private:
         size_t token_index, EmbeddingsVectorState &ds_state);
 
     hailo_3d_image_shape_t m_input_encoder_shape;
+    uint32_t m_vision_patch_size;
     int m_temporal_pos_h;
     int m_temporal_pos_w;
     bool m_has_deepstack_layers;
-    std::unordered_map<std::string, size_t> m_deepstack_suffix_to_tokens_per_frame; // suffix → actual token count for that encoder deepstack output
 };
 
 } /* namespace genai */

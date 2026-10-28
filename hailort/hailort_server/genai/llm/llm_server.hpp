@@ -22,10 +22,13 @@
 #include "common/genai/constants.hpp"
 #include "hailo_tokenizer.hpp"
 #include "pre_process.hpp"
+#include "pre_process_config.hpp"
+#include "reasoning.hpp"
 #include "llm_inference_manager.hpp"
 #include "post_process.hpp"
 #include "genai_server.hpp"
 #include "token_embedder.hpp"
+#include "resource_arrivals.hpp"
 
 #include "context_structure.hpp"
 
@@ -40,7 +43,6 @@ namespace hailort
 {
 namespace genai
 {
-
 
 class LLMServer
 {
@@ -80,53 +82,100 @@ public:
     Expected<Buffer> handle_check_hef_exists_request(const MemoryView &request);
 
 protected:
+    enum class ReasoningOpener { Prompt, Generation };
+    using GenerationEndBeforeWrite = std::optional<std::pair<int, LLMGeneratorCompletion::Status>>;
+
+    struct GenerationEnd {
+        LLMGeneratorCompletion::Status status;
+        std::optional<size_t> matched_stop_sequence_length;
+    };
+
     Expected<std::pair<int, LLMGeneratorCompletion::Status>> generate_next_token_on_demand(const std::vector<int> &tokens,
-        const std::vector<EmbeddingViewWrapper> &embeddings);
+        const std::vector<EmbeddingViewWrapper> &embeddings, const std::vector<EmbeddingViewWrapper> &per_layer_inputs);
 
     virtual Expected<std::pair<int, LLMGeneratorCompletion::Status>> handle_prefill_phase(const std::vector<int> &tokens,
-        const std::vector<EmbeddingViewWrapper> &embeddings);
-    virtual Expected<std::pair<int, LLMGeneratorCompletion::Status>> handle_tbt_phase(const std::vector<EmbeddingViewWrapper> &embeddings);
+        const std::vector<EmbeddingViewWrapper> &embeddings, const std::vector<EmbeddingViewWrapper> &per_layer_inputs);
+    virtual Expected<std::pair<int, LLMGeneratorCompletion::Status>> handle_tbt_phase(
+        const std::vector<EmbeddingViewWrapper> &embeddings, const std::vector<EmbeddingViewWrapper> &per_layer_inputs);
+
+    static hailo_status wait_for_table(ResourceArrivals &resource_arrivals, const EmbeddingTableParams &table,
+        const std::string &table_description, EventPtr shutdown_event);
+    static Expected<std::unique_ptr<TokenEmbedder<uint16_t>>> read_table_embedder(const Hef &hef,
+        const EmbeddingTableParams &table, uint32_t features, const std::string &table_description,
+        int image_pad_token_id = INVALID_TOKEN_VALUE, int video_pad_token_id = INVALID_TOKEN_VALUE);
+
+    // Empty when the model declares no per-layer inputs table
+    Expected<std::vector<EmbeddingViewWrapper>> gather_declared_per_layer_inputs(const std::vector<int> &tokens) const;
 
     std::string handle_next_token(int next_token);
 
-    LLMGeneratorCompletion::Status get_current_generation_status(int next_token);
+    GenerationEnd get_current_generation_end(int next_token);
+
+    // Returns GENERATING while recovery tokens of an ungraceful ending still need delivery
+    Expected<LLMGeneratorCompletion::Status> resolve_generation_status(int next_token);
+    void record_token_fed_back(int next_token);
+    // Ends the generation without running this step's inference: aborted, or max tokens when none are expected back
+    Expected<std::pair<int, LLMGeneratorCompletion::Status>> end_generation_without_new_token();
+    std::pair<int, LLMGeneratorCompletion::Status> pop_recovery_token(
+        LLMGeneratorCompletion::Status termination_status);
 
     // Handle generation completion and recovery sequence for ungraceful endings - returns GENERATING if recovery tokens need delivery
-    Expected<LLMGeneratorCompletion::Status> handle_generation_completion(LLMGeneratorCompletion::Status completion_status, int next_token);
+    Expected<LLMGeneratorCompletion::Status> handle_generation_completion(const GenerationEnd &generation_end,
+        int next_token);
 
     void append_tokens_to_next_generation_prefix(const std::vector<int> &tokens_to_prepend);
     hailo_status apply_recovery_sequence(LLMGeneratorCompletion::Status termination_status);
 
     // Reasoning model helper functions
-    void handle_reasoning_token_tracking(int next_token);
+    void save_reasoning_rewind_point(ReasoningOpener opener);
+    // Saves the device cache before a write that overwrites entries the rollback needs. If saving fails, drops the
+    // thought and yields the generation's end, and the write must not run.
+    Expected<GenerationEndBeforeWrite> prepare_device_cache_for_write(size_t written_tokens_count);
+    std::optional<CacheRollbackLimit> find_reasoning_rollback_limit(size_t rollback_tokens_count) const;
+    hailo_status rewind_device_cache_before_reasoning(const DeviceCacheRewindPlan &rewind_plan,
+        size_t rollback_tokens_count);
+    std::vector<int> last_tokens_kept_in_context(std::optional<size_t> matched_stop_sequence_length,
+        int last_token) const;
+    void handle_generated_reasoning_token(int next_token);
+    void collect_token_if_outside_reasoning(int next_token);
+    size_t reasoning_rollback_tokens_count() const;
     hailo_status handle_reasoning_generation_completion();
 
     virtual hailo_status parse_config_json(const MemoryView &config_json);
-    hailo_status parse_config_json(const nlohmann::json &hailo_config_json);
+    hailo_status parse_config_json(const nlohmann::json &hailo_config_json, RopeLayout rope_layout);
+
+    // One entry per attention group in group order, each phase quantized through that phase's own mask layer
+    Expected<std::vector<AttentionGroupMaskValues>> resolve_group_mask_values(
+        const std::map<std::string, size_t> &prefill_inputs_frame_size,
+        const std::map<std::string, size_t> &tbt_inputs_frame_size) const;
 
     // This function is used to process the prefill inputs and outputs, without handling (exporting) the generated token
     Expected<int> get_next_token_prefill(std::map<std::string, MemoryView> &prefill_inputs,
         std::map<std::string, MemoryView> &prefill_outputs, const std::vector<EmbeddingViewWrapper> &input_embeddings,
-        const LLMGeneratorParams &params);
+        const std::vector<EmbeddingViewWrapper> &per_layer_inputs, const LLMGeneratorParams &params);
     hailo_status process_prefill_inputs_chunk(std::map<std::string, MemoryView> &prefill_inputs,
-        std::map<std::string, MemoryView> &prefill_outputs, const std::vector<EmbeddingViewWrapper> &input_embeddings);
+        std::map<std::string, MemoryView> &prefill_outputs, const std::vector<EmbeddingViewWrapper> &input_embeddings,
+        const std::vector<EmbeddingViewWrapper> &per_layer_inputs);
 
     // Check if current token history matches any custom stop sequence
     bool check_custom_stop_sequences(int latest_token);
 
     void prepare_for_new_generation();
 
-    void reset_cnversation_context();
+    hailo_status reset_conversation_context();
+    void clear_host_conversation();
+    // A partly updated device cache no longer matches the host state, so the conversation starts over
+    void reset_conversation_after_device_cache_failure(hailo_status failure_status);
 
-    // Check if current-generation generated-tokens matches any custom stop sequence
-    bool check_stop_sequences(int latest_token);
+    // Records the latest token and yields the length of the stop sequence it completes, if any
+    std::optional<size_t> check_stop_sequences(int latest_token);
+    std::optional<size_t> find_matched_stop_sequence_length() const;
 
     Expected<Buffer> get_context() const;
     hailo_status set_context(const MemoryView &context_buffer);
 
     Expected<std::future<hailo_status>> create_resources_async(std::shared_ptr<VDevice>, std::shared_ptr<Buffer> hef_buffer, const std::string lora_name,
-        bool tokenizer_on_host, std::shared_ptr<Event> theta_arrived_event, std::shared_ptr<Event> hailo_config_json_arrived_event,
-        std::shared_ptr<Event> tokenizer_arrived_event, std::shared_ptr<Event> embeddings_arrived_event,
+        bool tokenizer_on_host, HefSource hef_source, ResourceArrivalsPtr resource_arrivals,
         StatusEventPtr ccws_ready_event, std::shared_ptr<Event> shutdown_event);
 
     virtual std::future<hailo_status> create_inference_managers_future(std::shared_ptr<VDevice> vdevice, const Hef &hef,
@@ -134,24 +183,27 @@ protected:
         std::shared_ptr<Event> inference_models_created_event, StatusEventPtr ccws_ready_event,
         std::shared_ptr<Event> shutdown_event);
 
-    virtual std::future<Expected<Eigen::VectorXf>> parse_external_resources_future(const Hef &hef,
-        std::shared_ptr<Event> hailo_config_json_arrived_event, std::shared_ptr<Event> theta_arrived_event,
-        std::shared_ptr<Event> external_resources_created_event, std::shared_ptr<Event> shutdown_event);
+    virtual std::future<Expected<std::vector<Eigen::VectorXf>>> parse_external_resources_future(const Hef &hef,
+        ResourceArrivalsPtr resource_arrivals, std::shared_ptr<Event> external_resources_created_event,
+        std::shared_ptr<Event> shutdown_event);
 
-    virtual std::future<hailo_status> create_tokenizer_future(const Hef &hef,
-        std::shared_ptr<Event> tokenizer_arrived_event, std::shared_ptr<Event> shutdown_event);
+    virtual std::future<hailo_status> create_tokenizer_future(const Hef &hef, ResourceArrivalsPtr resource_arrivals,
+        std::shared_ptr<Event> shutdown_event);
 
     virtual std::future<hailo_status> create_token_embedder_future(const Hef &hef,
-        std::shared_ptr<Event> embeddings_arrived_event, std::shared_ptr<Event> pre_process_created_event, std::shared_ptr<Event> shutdown_event);
+        ResourceArrivalsPtr resource_arrivals, std::shared_ptr<Event> pre_process_created_event,
+        std::shared_ptr<Event> shutdown_event);
 
     virtual std::future<hailo_status> create_pre_process_future(const Hef &hef,
-        std::shared_ptr<Event> inference_models_created_event, std::future<Expected<Eigen::VectorXf>> &external_resources_future,
+        std::shared_ptr<Event> inference_models_created_event,
+        std::future<Expected<std::vector<Eigen::VectorXf>>> &external_resources_future,
         std::shared_ptr<Event> pre_process_created_event, std::shared_ptr<Event> shutdown_event);
 
     SessionWrapper m_session;
     std::shared_ptr<VDeviceManager> m_vdevice_manager;
     std::unique_ptr<HailoTokenizer> m_tokenizer;
     std::unique_ptr<TokenEmbedder<uint16_t>> m_token_embedder;
+    std::unique_ptr<TokenEmbedder<uint16_t>> m_per_layer_inputs_embedder;
 
     std::unique_ptr<InferenceManager> m_inference_manager_tbt;
     std::pair<std::map<std::string, BufferPtr>, std::map<std::string, BufferPtr>> m_tbt_buffers;
@@ -171,35 +223,53 @@ protected:
     std::unordered_set<int> m_tokens_history;
 
     // For ordered sequence matching (needed for multi-token stop sequences)
-    std::deque<int> m_recent_tokens_sequence;
+    struct RecentToken {
+        int token_id;
+        bool is_inside_reasoning;
+    };
+    std::deque<RecentToken> m_recent_tokens_sequence;
     static constexpr size_t MAX_STOP_SEQUENCE_LENGTH = 50; // Reasonable limit for stop sequences
 
-    int m_end_of_sentence_token_id;
+    int m_end_of_sentence_token_id = INVALID_TOKEN_VALUE;
+    std::string m_bos_token;
+    std::string m_eos_token;
 
     // Relevant for reasoning models only
     // Reasoning model configuration and state
     struct ReasoningState {
-        bool generation_with_reasoning;
+        bool has_rewind_point;
+        // A tool call outside every thought keeps the generation's thoughts, so the turn has no rewind point
+        bool is_tool_call_turn;
 
         int start_token_id;
         int end_token_id;
-        bool past_end_of_reasoning;  // True once we've seen the end-of-reasoning token
+        int tool_call_start_token_id;
+        bool is_inside_reasoning;
+        bool is_opened_by_prompt;
         std::unordered_set<int> tokens_history_before_reasoning;
-        std::tuple<size_t, eigen_matrix_2d_u16_t, eigen_tensor_4d_u32_t, int> pre_process_cache_before_reasoning;
-        std::vector<int> after_reasoning_tokens;
+        PreProcessCache pre_process_cache_before_reasoning;
+        // Taken right before the first write that overwrites device cache entries the next prompt still reads
+        std::optional<std::unordered_map<uint32_t, BufferPtr>> device_cache_snapshot;
+        std::vector<int> tokens_outside_reasoning;
 
-        // Track tokens processed during reasoning section for accurate cache rollback
-        size_t reasoning_section_token_count;
+        ReasoningState() : has_rewind_point(false), is_tool_call_turn(false),
+            start_token_id(INVALID_TOKEN_VALUE), end_token_id(INVALID_TOKEN_VALUE),
+            tool_call_start_token_id(INVALID_TOKEN_VALUE), is_inside_reasoning(false), is_opened_by_prompt(false),
+            pre_process_cache_before_reasoning() {}
 
-        ReasoningState() : generation_with_reasoning(false), start_token_id(INVALID_TOKEN_VALUE),
-            end_token_id(INVALID_TOKEN_VALUE), past_end_of_reasoning(false), reasoning_section_token_count(0) {}
+        void release_rewind_point() {
+            has_rewind_point = false;
+            is_inside_reasoning = false;
+            is_opened_by_prompt = false;
+            tokens_history_before_reasoning.clear();
+            pre_process_cache_before_reasoning = PreProcessCache();
+            device_cache_snapshot.reset();
+            tokens_outside_reasoning.clear();
+        }
 
         void clear() {
-            generation_with_reasoning = false;
-            past_end_of_reasoning = false;
-            tokens_history_before_reasoning.clear();
-            after_reasoning_tokens.clear();
-            reasoning_section_token_count = 0;
+            release_rewind_point();
+            is_tool_call_turn = false;
         }
     } m_reasoning;
 
@@ -229,6 +299,7 @@ protected:
 
     std::string m_chat_template;
     uint32_t m_embeddings_features;
+    uint32_t m_per_layer_inputs_features = 0;
 
     std::vector<int> m_next_input_prompt_prefix_tokens;             // The prefix tokens of the next input prompt, which is used to chain the generated output without reasoning
 
@@ -239,7 +310,11 @@ protected:
     bool m_abort_requested;
 
     InputLayersNamesSuffixes m_input_layers_names_suffixes;
+    EmbeddingTables m_embedding_tables;
     PreProcessParams m_pre_process_params;
+
+    std::vector<AttentionGroupParams> m_attention_groups;
+    uint32_t m_context_capacity = 0;
 
     std::optional<KvCacheGuard> m_kv_cache_guard;
 };

@@ -13,13 +13,11 @@
 
 #include "common/logger_macros.hpp"
 #include "common/utils.hpp"
+#include "common/os_utils.hpp"
 #include "hailo/hailort_common.hpp"
 #include "hailo_ioctl_common.h"
 
 #if defined(__linux__)
-#include <sys/mman.h>
-#elif defined(__QNX__)
-#include <fcntl.h>
 #include <sys/mman.h>
 #elif defined(_WIN32)
 #pragma comment(lib, "cfgmgr32.lib")
@@ -248,10 +246,6 @@ HailoRTDriver::HailoRTDriver(const std::string &device_id, FileDescriptor &&fd, 
 
     m_is_fw_loaded = device_properties.is_fw_loaded;
 
-#ifdef __QNX__
-    m_resource_manager_pid = device_properties.resource_manager_pid;
-#endif // __QNX__
-
     status = HAILO_SUCCESS;
 }
 
@@ -323,12 +317,9 @@ static Expected<IrqData> to_irq_data(const hailo_vdma_interrupts_wait_params& pa
 
         irq.channels_irq_data[i].channel_id.engine_index = engine_index;
         irq.channels_irq_data[i].channel_id.channel_index = channel_index;
-        irq.channels_irq_data[i].validation_success = true;
         irq.channels_irq_data[i].is_active = true;
 
-        if (params.irq_data[i].data == HAILO_VDMA_TRANSFER_DATA_CHANNEL_WITH_ERROR) {
-            irq.channels_irq_data[i].validation_success = false;
-        } else if (params.irq_data[i].data == HAILO_VDMA_TRANSFER_DATA_CHANNEL_NOT_ACTIVE) {
+        if (params.irq_data[i].data == HAILO_VDMA_TRANSFER_DATA_CHANNEL_NOT_ACTIVE) {
             irq.channels_irq_data[i].is_active = false;
         } else {
             irq.channels_irq_data[i].transfers_completed = params.irq_data[i].data;
@@ -468,7 +459,6 @@ hailo_status HailoRTDriver::vdma_buffer_unmap(uintptr_t addr_or_fd, size_t size,
 hailo_status HailoRTDriver::vdma_buffer_sync(VdmaBufferHandle handle, DmaSyncDirection sync_direction,
     size_t offset, size_t count)
 {
-#ifndef __QNX__
     hailo_vdma_buffer_sync_params sync_info{};
     sync_info.handle = handle;
     sync_info.sync_type = (sync_direction == DmaSyncDirection::TO_HOST) ? HAILO_SYNC_FOR_CPU : HAILO_SYNC_FOR_DEVICE;
@@ -476,14 +466,6 @@ hailo_status HailoRTDriver::vdma_buffer_sync(VdmaBufferHandle handle, DmaSyncDir
     sync_info.count = count;
     RUN_AND_CHECK_IOCTL_RESULT(HAILO_VDMA_BUFFER_SYNC, &sync_info, "Failed sync vdma buffer");
     return HAILO_SUCCESS;
-// TODO: HRT-6717 - Remove ifdef when Implement sync ioctl (if determined needed in qnx)
-#else /*  __QNX__ */
-    (void) handle;
-    (void) sync_direction;
-    (void) offset;
-    (void) count;
-    return HAILO_SUCCESS;
-#endif
 }
 
 hailo_status HailoRTDriver::descriptors_list_program(uintptr_t desc_handle, VdmaBufferHandle buffer_handle,
@@ -498,27 +480,23 @@ hailo_status HailoRTDriver::descriptors_list_program(uintptr_t desc_handle, Vdma
     params.channel_index = channel_index;
     params.starting_desc = starting_desc;
 
-#ifdef NDEBUG
-    params.is_debug = false;
-#else
-    params.is_debug = true;
-#endif
-
     RUN_AND_CHECK_IOCTL_RESULT(HAILO_DESC_LIST_PROGRAM, &params, "Failed bind buffer to desc list");
     return HAILO_SUCCESS;
 }
 
-static Expected<hailo_vdma_prepare_transfer_params> fill_prepare_transfer_params(vdma::ChannelId channel_id,
-    uintptr_t desc_handle, const std::vector<TransferBuffer> &transfer_buffers)
+static Expected<hailo_vdma_transfer_params> fill_transfer_params(vdma::ChannelId channel_id,
+    uintptr_t desc_handle, const std::vector<TransferBuffer> &transfer_buffers, bool is_programmed)
 {
-    hailo_vdma_prepare_transfer_params params{};
+    hailo_vdma_transfer_params params{};
     if (transfer_buffers.size() > ARRAY_ENTRIES(params.buffers)) {
         LOGGER__ERROR("Invalid transfer buffers size {} given", transfer_buffers.size());
         return make_unexpected(HAILO_INVALID_ARGUMENT);
     }
 
+    params.engine_index = channel_id.engine_index;
     params.channel_index = channel_id.channel_index;
     params.desc_handle = desc_handle;
+    params.is_programmed = is_programmed;
     params.buffers_count = static_cast<uint8_t>(transfer_buffers.size());
 
     for (size_t i = 0; i < transfer_buffers.size(); i++) {
@@ -527,12 +505,6 @@ static Expected<hailo_vdma_prepare_transfer_params> fill_prepare_transfer_params
         params.buffers[i].addr_or_fd = transfer_buffers[i].addr_or_fd();
         params.buffers[i].size = static_cast<uint32_t>(transfer_buffers[i].size());
     }
-
-#ifdef NDEBUG
-    params.is_debug = false;
-#else
-    params.is_debug = true;
-#endif
 
     return params;
 }
@@ -544,22 +516,19 @@ hailo_status HailoRTDriver::hailo_vdma_prepare_transfer(vdma::ChannelId channel_
         LOGGER__ERROR("Invalid channel id {}", channel_id);
         return HAILO_INVALID_ARGUMENT;
     }
-    TRY(auto params, fill_prepare_transfer_params(channel_id, desc_handle, transfer_buffers));
+    TRY(auto params, fill_transfer_params(channel_id, desc_handle, transfer_buffers, false));
     RUN_AND_CHECK_IOCTL_RESULT(HAILO_VDMA_PREPARE_TRANSFER, &params, "Failed launch transfer");
     return HAILO_SUCCESS;
 }
 
 hailo_status HailoRTDriver::launch_transfer(vdma::ChannelId channel_id, uintptr_t desc_handle,
-    const std::vector<TransferBuffer> &transfer_buffers, bool is_cyclic)
+    const std::vector<TransferBuffer> &transfer_buffers, bool is_programmed)
 {
-    hailo_vdma_launch_transfer_params params{};
-    params.engine_index = channel_id.engine_index;
     if (!is_valid_channel_id(channel_id)) {
         LOGGER__ERROR("Invalid channel id {}", channel_id);
         return HAILO_INVALID_ARGUMENT;
     }
-    TRY(params.prepare_transfer_params, fill_prepare_transfer_params(channel_id, desc_handle, transfer_buffers));
-    params.is_cyclic = is_cyclic;
+    TRY(auto params, fill_transfer_params(channel_id, desc_handle, transfer_buffers, is_programmed));
 
     RUN_AND_CHECK_IOCTL_RESULT(HAILO_VDMA_LAUNCH_TRANSFER, &params, "Failed launch transfer");
 
@@ -620,7 +589,7 @@ hailo_status HailoRTDriver::vdma_continuous_buffer_free(const CmaBufferInfo &buf
 
     return status;
 }
-#elif defined(__QNX__) || defined(_WIN32)
+#elif defined(_WIN32)
 
 Expected<CmaBufferInfo> HailoRTDriver::vdma_continuous_buffer_alloc(size_t /* size */)
 {
@@ -782,7 +751,7 @@ int HailoRTDriver::run_ioctl(uint32_t ioctl_code, PointerType param)
 
     return run_hailo_ioctl(m_fd, ioctl_code, param);
 }
-#elif defined(__QNX__) || defined(_WIN32)
+#elif defined(_WIN32)
 
 template<typename PointerType>
 int HailoRTDriver::run_ioctl(uint32_t ioctl_code, PointerType param)
@@ -793,15 +762,13 @@ int HailoRTDriver::run_ioctl(uint32_t ioctl_code, PointerType param)
 #error "Unsupported platform"
 #endif
 
-Expected<DescriptorsListInfo> HailoRTDriver::descriptors_list_create(size_t desc_count,
-    uint16_t desc_page_size, bool is_circular)
+Expected<DescriptorsListInfo> HailoRTDriver::descriptors_list_create(size_t desc_count, uint16_t desc_page_size)
 {
     CHECK(is_powerof2(desc_page_size), HAILO_INVALID_ARGUMENT, "Invalid desc page size {}", desc_page_size);
 
     hailo_desc_list_create_params create_desc_info{};
     create_desc_info.desc_count = desc_count;
     create_desc_info.desc_page_size = desc_page_size;
-    create_desc_info.is_circular = is_circular;
 
     RUN_AND_CHECK_IOCTL_RESULT(HAILO_DESC_LIST_CREATE, &create_desc_info, "Failed to create desc list");
 
@@ -849,7 +816,8 @@ Expected<void *> HailoRTDriver::continous_buffer_mmap(uintptr_t desc_handle, siz
     // We lock m_driver_lock before calling mmap. Read m_driver_lock doc in the header
     std::unique_lock<std::mutex> lock(m_driver_lock);
 
-    void *address = mmap(nullptr, size, PROT_WRITE | PROT_READ, MAP_SHARED, m_fd, (off_t)desc_handle);
+    const auto offset = static_cast<off_t>(desc_handle * OsUtils::get_page_size());
+    void *address = mmap(nullptr, size, PROT_WRITE | PROT_READ, MAP_SHARED, m_fd, offset);
     if (MAP_FAILED == address) {
         LOGGER__ERROR("Failed to continous buffer buffer with errno: {}", errno);
         return make_unexpected(HAILO_DRIVER_OPERATION_FAILED);

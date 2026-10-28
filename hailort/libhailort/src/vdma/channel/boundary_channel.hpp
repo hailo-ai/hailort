@@ -99,7 +99,7 @@ private:
     CircularArray<TransferChunk, IsNotPow2Tag> m_pending;
     CircularArray<TransferChunk, IsPow2Tag> m_ongoing;
     LatencyMeterPtr m_latency_meter;
-    bool m_is_cyclic;
+    bool m_is_programmed;
 };
 
 } /* namespace vdma */

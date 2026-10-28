@@ -142,6 +142,19 @@ private:
         for (uint32_t row = 0; row < cls_shape.height; row++) {
             uint32_t offset = row_offset;
             for (uint32_t curr_class_idx = 0; curr_class_idx < nms_config.number_of_classes; curr_class_idx++) {
+                auto class_id = curr_class_idx;
+                if (nms_config.background_removal) {
+                    if (nms_config.background_removal_index == curr_class_idx) {
+                        // Ignore the background class (e.g. DAMO-YOLO's legacy extra classification channel).
+                        // Skip the whole (padded) feature so the running offset stays aligned.
+                        offset += cls_padded_shape.width;
+                        continue;
+                    } else if (0 == nms_config.background_removal_index) {
+                        // background_removal_index is always the first or last class. When it is the first one
+                        // we shift the remaining class ids down by one (the last case is handled by the continue above).
+                        class_id--;
+                    }
+                }
                 uint32_t end_of_feature = offset + cls_shape.width; // We want to iterate over the entire feature, without the padding
                 for (; offset < end_of_feature; offset++) {
                     if (cls_data[offset] >= quantized_threshold) { // First - compare quantized values
@@ -155,8 +168,8 @@ private:
                             auto col = offset % cls_padded_shape.width;
                             auto bbox = get_bbox<DstType, SrcType>(row, col, stride, reg_padded_shape, reg_shape, reg_quant_info,
                                                                     (SrcType*)reg_data, d_matrix, class_confidence);
-                            m_detections.emplace_back(DetectionBbox(bbox, curr_class_idx));
-                            m_classes_detections_count[curr_class_idx]++;
+                            m_detections.emplace_back(DetectionBbox(bbox, class_id));
+                            m_classes_detections_count[class_id]++;
                         }
                     }
                 }

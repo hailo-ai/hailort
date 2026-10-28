@@ -14,6 +14,9 @@
 #include "infer_model_internal.hpp"
 #include "hrpc/client.hpp"
 
+#include <mutex>
+#include <condition_variable>
+
 namespace hailort
 {
 
@@ -30,6 +33,20 @@ private:
     std::atomic<hailo_status> m_job_status;
 };
 
+// Shared with in-flight callbacks, which may outlive the ConfiguredInferModelHrpcClient.
+struct AsyncJobsState
+{
+    void add_job();
+    void cancel_job_without_callback();
+    void release_transfer_slot();
+    void release_pending_callback();
+
+    std::mutex mutex;
+    std::condition_variable cv;
+    uint32_t ongoing_transfers = 0;
+    uint32_t pending_callbacks = 0;
+};
+
 class ConfiguredInferModelHrpcClient : public ConfiguredInferModelBase
 {
 public:
@@ -42,7 +59,7 @@ public:
         std::vector<hailo_vstream_info_t> &&input_vstream_infos, std::vector<hailo_vstream_info_t> &&output_vstream_infos,
         uint32_t max_ongoing_transfers, rpc_object_handle_t infer_model_handle_id,
         const std::unordered_map<std::string, size_t> inputs_frame_sizes,
-        const std::unordered_map<std::string, size_t> outputs_frame_sizes);
+        const std::unordered_map<std::string, size_t> outputs_frame_sizes, std::shared_ptr<AsyncJobsState> jobs_state);
     virtual ~ConfiguredInferModelHrpcClient();
 
     ConfiguredInferModelHrpcClient(const ConfiguredInferModelHrpcClient &) = delete;
@@ -86,15 +103,18 @@ private:
     hailo_status push_output_buffer_infos(const ConfiguredInferModel::Bindings &bindings, std::vector<RunAsyncSerializer::BufferInfo> &buffer_infos);
     Expected<std::vector<TransferBuffer>> get_write_buffers(const ConfiguredInferModel::Bindings &bindings);
     Expected<std::vector<TransferBuffer>> get_read_buffers(const ConfiguredInferModel::Bindings &bindings);
+    hailo_status request_shutdown();
+    hailo_status wait_for_pending_callbacks();
 
     std::weak_ptr<Client> m_client;
+    std::thread::id m_client_message_loop_thread_id;
+    std::shared_ptr<const std::atomic_bool> m_is_client_message_loop_finished;
+    std::atomic_bool m_has_pending_callbacks_wait_timed_out {false};
     rpc_object_handle_t m_handle_id;
     std::vector<hailo_vstream_info_t> m_input_vstream_infos;
     std::vector<hailo_vstream_info_t> m_output_vstream_infos;
     uint32_t m_max_ongoing_transfers;
-    std::mutex m_ongoing_transfers_mutex;
-    std::condition_variable m_cv;
-    std::atomic_uint32_t m_ongoing_transfers;
+    const std::shared_ptr<AsyncJobsState> m_jobs_state;
     rpc_object_handle_t m_infer_model_handle_id;
     std::mutex m_infer_mutex;
 
