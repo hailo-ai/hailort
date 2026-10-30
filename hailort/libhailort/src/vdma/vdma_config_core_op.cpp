@@ -172,8 +172,10 @@ hailo_status VdmaConfigCoreOp::shutdown_impl()
 {
     hailo_status status = HAILO_SUCCESS; // Success oriented
 
-    if (m_is_shutdown.exchange(true)) {
-        return HAILO_SUCCESS;
+    int previous_status = SHUTDOWN_NOT_STARTED;
+    if (!m_shutdown_status.compare_exchange_strong(previous_status, SHUTDOWN_IN_PROGRESS)) {
+        return (SHUTDOWN_IN_PROGRESS == previous_status) ? HAILO_INVALID_OPERATION :
+            static_cast<hailo_status>(previous_status);
     }
 
     auto abort_status = abort_low_level_streams();
@@ -190,6 +192,7 @@ hailo_status VdmaConfigCoreOp::shutdown_impl()
         status = deactivate_status;
     }
 
+    m_shutdown_status.store(static_cast<int>(status));
     return status;
 }
 

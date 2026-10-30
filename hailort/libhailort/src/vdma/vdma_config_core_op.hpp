@@ -22,6 +22,7 @@
 #include "core_op/active_core_op_holder.hpp"
 
 #include "control_protocol.h"
+#include <atomic>
 #include <cstdint>
 #include <assert.h>
 #include <map>
@@ -105,7 +106,10 @@ private:
 
     std::shared_ptr<ResourcesManager> m_resources_manager;
     std::shared_ptr<CacheManager> m_cache_manager;
-    std::atomic_bool m_is_shutdown{false};
+    // One-shot software shutdown result, not a physical DMA completion fence.
+    static constexpr int SHUTDOWN_NOT_STARTED = -1;
+    static constexpr int SHUTDOWN_IN_PROGRESS = -2;
+    std::atomic<int> m_shutdown_status{SHUTDOWN_NOT_STARTED};
 };
 
 } /* namespace hailort */
