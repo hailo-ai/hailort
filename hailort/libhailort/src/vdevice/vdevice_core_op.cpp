@@ -427,7 +427,7 @@ hailo_status VDeviceCoreOp::shutdown_impl()
     } else {
         for (auto &core_op : m_core_ops) {
             auto shutdown_status = core_op.second->shutdown();
-            if (HAILO_SUCCESS != status) {
+            if (HAILO_SUCCESS != shutdown_status) {
                 LOGGER__ERROR("Failed shutdown core op for device {}", core_op.first);
                 status = shutdown_status; // continue on failure
             }
