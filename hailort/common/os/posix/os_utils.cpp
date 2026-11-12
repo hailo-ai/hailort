@@ -27,7 +27,12 @@ namespace hailort
 
 HailoRTOSLogger::HailoRTOSLogger()
 {
-    m_hailort_os_logger = spdlog::syslog_logger_mt("syslog", "hailort_service", LOG_PID);
+    std::shared_ptr<spdlog::logger> logger = spdlog::get("hailort_service");
+
+    if (logger != nullptr)
+        m_hailort_os_logger = logger;
+    else
+        m_hailort_os_logger = spdlog::syslog_logger_mt("syslog", "hailort_service", LOG_PID);
     m_hailort_os_logger->set_pattern("%v");
     m_hailort_os_logger->set_level(spdlog::level::debug);
 }
