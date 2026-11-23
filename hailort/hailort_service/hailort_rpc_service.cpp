@@ -150,8 +150,9 @@ void HailoRtRpcService::remove_disconnected_clients()
         for (auto pid_to_last_alive : m_clients_pids) {
             auto client_pid = pid_to_last_alive.first;
             auto duration = std::chrono::duration_cast<std::chrono::seconds>(now - pid_to_last_alive.second);
-            // Prune dead local clients immediately using is_pid_alive to avoid races.
-            if ((duration > hailort::HAILO_KEEPALIVE_INTERVAL) || (!OsUtils::is_pid_alive(client_pid))) {
+            // Client PIDs can belong to a different PID namespace (e.g. Docker).
+            // Use keepalive timeouts rather than checking PIDs in the host namespace.
+            if (duration > hailort::HAILO_KEEPALIVE_INTERVAL) {
                 pids_to_remove.insert(client_pid);
             }
         }
@@ -173,9 +174,11 @@ void HailoRtRpcService::remove_disconnected_clients()
         for (auto &client_pid : pids_to_remove) {
             ServiceResourceManager<OutputVStream>::get_instance().release_by_id(client_pid);
             ServiceResourceManager<InputVStream>::get_instance().release_by_id(client_pid);
+            // DMA buffers must unmap while their network group still retains
+            // the parent VDevice. Release buffer pools before network groups.
+            ServiceResourceManager<ServiceNetworkGroupBufferPool>::get_instance().release_by_id(client_pid);
             ServiceResourceManager<ConfiguredNetworkGroup>::get_instance().release_by_id(client_pid);
             ServiceResourceManager<VDeviceCallbacksQueue>::get_instance().release_by_id(client_pid);
-            ServiceResourceManager<ServiceNetworkGroupBufferPool>::get_instance().release_by_id(client_pid);
             ServiceResourceManager<VDevice>::get_instance().release_by_id(client_pid);
 
             LOGGER__INFO("Client disconnected, pid: {}", client_pid);
@@ -303,16 +306,20 @@ grpc::Status HailoRtRpcService::VDevice_release(grpc::ServerContext*, const Rele
 
 void HailoRtRpcService::release_resources_on_error(std::vector<uint32_t> ng_handles, std::vector<uint32_t> buffer_pool_handles, uint32_t pid)
 {
-    auto &networks_manager = ServiceResourceManager<ConfiguredNetworkGroup>::get_instance();
-    for (auto &current_ng_handle : ng_handles) {
-        networks_manager.release_resource(current_ng_handle, pid);
-    }
+    auto &buffer_pool_manager = ServiceResourceManager<ServiceNetworkGroupBufferPool>::get_instance();
     for (auto &buffer_pool_handle : buffer_pool_handles) {
         auto status = shutdown_cng_buffer_pool(buffer_pool_handle);
         if (status != HAILO_SUCCESS) {
             LOGGER__ERROR("Failed to shutdown cng buffer pool with handle={}, status={}", buffer_pool_handle, status);
         }
-        networks_manager.release_resource(buffer_pool_handle, pid);
+        buffer_pool_manager.release_resource(buffer_pool_handle, pid);
+    }
+
+    // The configured groups keep their parent VDevices alive until all DMA
+    // buffers held by their associated pools have been unmapped.
+    auto &networks_manager = ServiceResourceManager<ConfiguredNetworkGroup>::get_instance();
+    for (auto &current_ng_handle : ng_handles) {
+        networks_manager.release_resource(current_ng_handle, pid);
     }
 }
 
@@ -363,7 +370,11 @@ grpc::Status HailoRtRpcService::VDevice_configure(grpc::ServerContext*, const VD
 
     update_client_id_timestamp(request->pid());
     std::unique_lock<std::mutex> lock(m_vdevice_mutex);
-    auto lambda = [](std::shared_ptr<VDevice> vdevice, Hef &hef, NetworkGroupsParamsMap &configure_params_map) {
+    // A configured network group contains non-owning references to VDevice and
+    // its physical devices. Preserve the parent while any group is registered.
+    std::shared_ptr<VDevice> parent_vdevice;
+    auto lambda = [&parent_vdevice](std::shared_ptr<VDevice> vdevice, Hef &hef, NetworkGroupsParamsMap &configure_params_map) {
+        parent_vdevice = vdevice;
         return vdevice->configure(hef, configure_params_map);
     };
     auto &vdevice_manager = ServiceResourceManager<VDevice>::get_instance();
@@ -376,7 +387,20 @@ grpc::Status HailoRtRpcService::VDevice_configure(grpc::ServerContext*, const VD
     std::vector<uint32_t> buffer_pool_handles;
 
     for (auto network : networks.value()) {
-        auto ng_handle = networks_manager.register_resource(request->pid(), network);
+        // The registered alias owns the group and its parent, in that order.
+        // Shutdown must complete while the parent physical device is alive,
+        // including when VDevice_release happened before client disconnect.
+        auto owned_network = std::shared_ptr<ConfiguredNetworkGroup>(
+            network.get(),
+            [network, parent_vdevice](ConfiguredNetworkGroup *) mutable {
+                auto status = network->shutdown();
+                if (HAILO_SUCCESS != status) {
+                    LOGGER__ERROR("Failed to shutdown network group before VDevice release: {}", status);
+                }
+                network.reset();
+                parent_vdevice.reset();
+            });
+        auto ng_handle = networks_manager.register_resource(request->pid(), owned_network);
         ng_handles.push_back(ng_handle);
 
         bool allocate_for_raw_streams = false;

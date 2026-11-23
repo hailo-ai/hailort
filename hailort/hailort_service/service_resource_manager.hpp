@@ -198,12 +198,9 @@ public:
 protected:
     virtual bool should_resource_be_released(std::shared_ptr<Resource<T>> resource) override
     {
-        for (auto &id : resource->ids) {
-            if (OsUtils::is_pid_alive(id)) {
-                return false;
-            }
-        }
-        return true;
+        // Client IDs can be in a different PID namespace.
+        // Release only after the last registered owner leaves.
+        return resource->ids.empty();
     }
 
 private:
