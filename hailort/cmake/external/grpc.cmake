@@ -23,6 +23,7 @@ if(NOT grpc_POPULATED)
             SOURCE_DIR ${HAILO_EXTERNAL_DIR}/grpc-src
             BUILD_DIR ${HAILO_EXTERNAL_DIR}/grpc-build
             CONFIGURE_ARGS
+                -DCMAKE_POLICY_VERSION_MINIMUM=3.5
                 -DCMAKE_BUILD_TYPE=${TOOL_BUILD_TYPE}
         
                 -DgRPC_BUILD_TESTS:BOOL=OFF
